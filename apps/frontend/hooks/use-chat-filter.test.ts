@@ -73,7 +73,9 @@ describe("useChatFilter", () => {
         result.current.toggleFilterTag("new-tag");
       });
 
-      expect(mockReplace).toHaveBeenCalledWith("/test/path?tags=new-tag");
+      expect(mockReplace).toHaveBeenCalledWith("/test/path?tags=new-tag", {
+        scroll: false,
+      });
     });
 
     it("should remove a tag when already present", () => {
@@ -86,7 +88,9 @@ describe("useChatFilter", () => {
       });
 
       // URLSearchParams encodes commas as %2C
-      expect(mockReplace).toHaveBeenCalledWith("/test/path?tags=tag1%2Ctag3");
+      expect(mockReplace).toHaveBeenCalledWith("/test/path?tags=tag1%2Ctag3", {
+        scroll: false,
+      });
     });
 
     it("should update URL correctly with multiple tags", () => {
@@ -101,6 +105,7 @@ describe("useChatFilter", () => {
       // URLSearchParams encodes commas as %2C
       expect(mockReplace).toHaveBeenCalledWith(
         "/test/path?tags=existing-tag%2Canother-tag",
+        { scroll: false },
       );
     });
 
@@ -115,7 +120,9 @@ describe("useChatFilter", () => {
 
       // When tags array is empty, the params.delete("tags") is called
       // and the URL should not have tags param
-      expect(mockReplace).toHaveBeenCalledWith("/test/path?");
+      expect(mockReplace).toHaveBeenCalledWith("/test/path?", {
+        scroll: false,
+      });
     });
 
     it("should preserve existing search params when updating tags", () => {
@@ -134,9 +141,11 @@ describe("useChatFilter", () => {
       // URLSearchParams encodes commas as %2C
       expect(mockReplace).toHaveBeenCalledWith(
         expect.stringContaining("otherParam=value"),
+        { scroll: false },
       );
       expect(mockReplace).toHaveBeenCalledWith(
         expect.stringContaining("tags=tag1%2Ctag2"),
+        { scroll: false },
       );
     });
 
@@ -150,7 +159,9 @@ describe("useChatFilter", () => {
         result.current.toggleFilterTag("tag1");
       });
 
-      expect(mockReplace).toHaveBeenLastCalledWith("/test/path?");
+      expect(mockReplace).toHaveBeenLastCalledWith("/test/path?", {
+        scroll: false,
+      });
 
       // Reset mockSearchParams to reflect the removal
       mockSearchParams = createMockSearchParams(null);

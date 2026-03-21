@@ -163,6 +163,7 @@ export const agentSchema = z.object({
   skillIds: z.array(z.string()).optional(),
   subAgentIds: z.array(z.string()).optional(),
   inputPlaceholder: z.string().max(100).optional(),
+  avatarUrl: z.string().optional(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });

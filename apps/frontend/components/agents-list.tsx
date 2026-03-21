@@ -7,6 +7,7 @@ import {
   ItemActions,
   ItemDescription,
   ItemContent,
+  ItemMedia,
 } from "@/components/ui/item";
 import { Button } from "@/components/ui/button";
 import {
@@ -191,7 +192,7 @@ export const AgentsList = ({
 
     setCloneError(null);
 
-    const { id, createdAt, updatedAt, ...cloneData } = agentToClone;
+    const { id, createdAt, updatedAt, avatarUrl, ...cloneData } = agentToClone;
 
     const sanitizedData = Object.fromEntries(
       Object.entries({
@@ -261,6 +262,22 @@ export const AgentsList = ({
         {agents.map((agent) => (
           <li key={agent.id}>
             <Item variant="outline" className="h-full">
+              {agent.avatarUrl ? (
+                <ItemMedia variant="image" className="size-12 rounded-lg">
+                  <img
+                    src={agent.avatarUrl}
+                    alt={agent.name}
+                    className="size-full object-cover"
+                  />
+                </ItemMedia>
+              ) : (
+                <ItemMedia
+                  variant="icon"
+                  className="size-12 rounded-lg [&_svg]:!size-7"
+                >
+                  <Bot className="h-7 w-7 text-muted-foreground" />
+                </ItemMedia>
+              )}
               <ItemContent>
                 <ItemTitle>{agent.name}</ItemTitle>
                 <ItemDescription className="text-xs">

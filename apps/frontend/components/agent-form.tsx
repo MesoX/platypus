@@ -20,9 +20,9 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronsUpDown, Trash2 } from "lucide-react";
+import { ChevronsUpDown, Trash2, ImageIcon, Camera, X } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -38,7 +38,7 @@ import {
   type Provider,
   type Skill,
 } from "@platypus/schemas";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { fetcher, parseValidationErrors, joinUrl } from "@/lib/utils";
 import { useBackendUrl } from "@/app/client-context";
 import { useAuth } from "@/components/auth-provider";
@@ -64,6 +64,7 @@ const AgentForm = ({
 
   const { user } = useAuth();
   const backendUrl = useBackendUrl();
+  const { mutate } = useSWRConfig();
 
   // Fetch providers
   const { data: providersData, isLoading: providersLoading } = useSWR<{
@@ -136,6 +137,10 @@ const AgentForm = ({
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
   >({});
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
+  const [avatarDeleted, setAvatarDeleted] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const router = useRouter();
 
@@ -176,12 +181,12 @@ const AgentForm = ({
         skillIds: agent.skillIds || [],
         subAgentIds: agent.subAgentIds || [],
       });
+      if (agent.avatarUrl) {
+        setAvatarPreviewUrl(agent.avatarUrl);
+        setAvatarDeleted(false);
+      }
     }
   }, [agent]);
-
-  if (providersLoading || agentLoading) {
-    return <div className={classNames}>Loading...</div>;
-  }
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -216,6 +221,49 @@ const AgentForm = ({
       [id]: value === "" ? undefined : parseFloat(value),
     }));
   };
+
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAvatarFromFile(file);
+    }
+  };
+
+  const setAvatarFromFile = (file: File) => {
+    if (avatarPreviewUrl) {
+      URL.revokeObjectURL(avatarPreviewUrl);
+    }
+    setAvatarFile(file);
+    setAvatarPreviewUrl(URL.createObjectURL(file));
+    setAvatarDeleted(false);
+  };
+
+  const handleAvatarDelete = () => {
+    if (avatarPreviewUrl) {
+      URL.revokeObjectURL(avatarPreviewUrl);
+    }
+    setAvatarFile(null);
+    setAvatarPreviewUrl(null);
+    setAvatarDeleted(true);
+  };
+
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            setAvatarFromFile(file);
+          }
+          break;
+        }
+      }
+    };
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [avatarPreviewUrl]);
 
   const handleModelChange = (value: string) => {
     if (value.startsWith("provider:")) {
@@ -276,6 +324,42 @@ const AgentForm = ({
       });
 
       if (response.ok) {
+        const savedAgent = await response.json();
+        const savedAgentId = savedAgent.id || agentId;
+
+        if (avatarDeleted && agentId) {
+          await fetch(
+            joinUrl(
+              backendUrl,
+              `/organizations/${orgId}/workspaces/${workspaceId}/agents/${savedAgentId}/avatar`,
+            ),
+            {
+              method: "DELETE",
+              credentials: "include",
+            },
+          );
+        } else if (avatarFile) {
+          const avatarFormData = new FormData();
+          avatarFormData.append("file", avatarFile);
+          await fetch(
+            joinUrl(
+              backendUrl,
+              `/organizations/${orgId}/workspaces/${workspaceId}/agents/${savedAgentId}/avatar`,
+            ),
+            {
+              method: "POST",
+              body: avatarFormData,
+              credentials: "include",
+            },
+          );
+        }
+
+        await mutate(
+          joinUrl(
+            backendUrl,
+            `/organizations/${orgId}/workspaces/${workspaceId}/agents`,
+          ),
+        );
         router.push(`/${orgId}/workspace/${workspaceId}`);
       } else {
         // Parse standardschema.dev validation errors
@@ -320,9 +404,62 @@ const AgentForm = ({
     }
   };
 
+  if (providersLoading || agentLoading) {
+    return <div className={classNames}>Loading...</div>;
+  }
+
   return (
     <div className={classNames}>
       <FieldSet className="mb-6">
+        <div className="flex flex-col items-center">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              className="relative group cursor-pointer flex"
+              disabled={isSubmitting}
+            >
+              <div className="w-20 h-20 rounded-2xl bg-muted flex items-center justify-center overflow-hidden border-2 border-dashed border-muted-foreground/20 hover:border-muted-foreground/40 transition-colors">
+                {avatarPreviewUrl ? (
+                  <img
+                    src={avatarPreviewUrl}
+                    alt="Avatar"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <ImageIcon className="w-8 h-8 text-muted-foreground" />
+                )}
+              </div>
+              {avatarPreviewUrl && (
+                <div className="absolute inset-0 bg-black/50 rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity gap-2">
+                  <Camera className="w-6 h-6 text-white" />
+                </div>
+              )}
+            </button>
+          </div>
+          <div className="h-7 flex items-center justify-center">
+            {avatarPreviewUrl && (
+              <button
+                type="button"
+                onClick={handleAvatarDelete}
+                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-destructive whitespace-nowrap"
+                disabled={isSubmitting}
+              >
+                <X className="w-4 h-4" />
+                Remove
+              </button>
+            )}
+          </div>
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleAvatarChange}
+            className="hidden"
+            disabled={isSubmitting}
+          />
+        </div>
+
         <FieldGroup>
           <Field data-invalid={!!validationErrors.name}>
             <FieldLabel htmlFor="name">Name</FieldLabel>

@@ -166,6 +166,7 @@ export const agent = pgTable(
     skillIds: t.jsonb("skill_ids").$type<string[]>().default([]), // Array of skill ids
     subAgentIds: t.jsonb("sub_agent_ids").$type<string[]>().default([]), // Array of sub-agent ids
     inputPlaceholder: t.text("input_placeholder"),
+    avatarKey: t.text("avatar_key"),
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
     updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
   }),

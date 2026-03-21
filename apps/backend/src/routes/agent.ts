@@ -13,6 +13,34 @@ import {
 } from "../middleware/authorization.ts";
 import type { Variables } from "../server.ts";
 import { validateSubAgentAssignment } from "../services/sub-agent-validation.ts";
+import { getStorage } from "../storage/index.ts";
+import sharp from "sharp";
+
+const ALLOWED_AVATAR_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+];
+const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
+const MIN_AVATAR_DIMENSION = 64;
+const AVATAR_SIZE = 512;
+
+function agentWithAvatarUrl(
+  agent: Record<string, unknown>,
+  baseUrl: string,
+): Record<string, unknown> {
+  const avatarKey = agent.avatarKey as string | null | undefined;
+  const { avatarKey: _avatarKey, ...rest } = agent;
+  if (!avatarKey) {
+    return { ...rest, avatarUrl: undefined };
+  }
+  const publicUrl = process.env.STORAGE_PUBLIC_URL;
+  const avatarUrl = publicUrl
+    ? `${publicUrl}/${avatarKey}`
+    : `${baseUrl}/files/${avatarKey}`;
+  return { ...rest, avatarUrl };
+}
 
 const agent = new Hono<{ Variables: Variables }>();
 
@@ -50,6 +78,9 @@ agent.post(
       }
     }
 
+    const baseUrl =
+      process.env.BETTER_AUTH_URL ||
+      `http://localhost:${process.env.PORT || 4000}`;
     const record = await db
       .insert(agentTable)
       .values({
@@ -57,7 +88,7 @@ agent.post(
         ...data,
       })
       .returning();
-    return c.json(record[0], 201);
+    return c.json(agentWithAvatarUrl(record[0], baseUrl), 201);
   },
 );
 
@@ -69,11 +100,16 @@ agent.get(
   requireWorkspaceAccess,
   async (c) => {
     const workspaceId = c.req.param("workspaceId")!;
+    const baseUrl =
+      process.env.BETTER_AUTH_URL ||
+      `http://localhost:${process.env.PORT || 4000}`;
     const results = await db
       .select()
       .from(agentTable)
       .where(eq(agentTable.workspaceId, workspaceId));
-    return c.json({ results });
+    return c.json({
+      results: results.map((r) => agentWithAvatarUrl(r, baseUrl)),
+    });
   },
 );
 
@@ -85,6 +121,9 @@ agent.get(
   requireWorkspaceAccess,
   async (c) => {
     const agentId = c.req.param("agentId");
+    const baseUrl =
+      process.env.BETTER_AUTH_URL ||
+      `http://localhost:${process.env.PORT || 4000}`;
     const record = await db
       .select()
       .from(agentTable)
@@ -93,7 +132,7 @@ agent.get(
     if (record.length === 0) {
       return c.json({ message: "Agent not found" }, 404);
     }
-    return c.json(record[0]);
+    return c.json(agentWithAvatarUrl(record[0], baseUrl));
   },
 );
 
@@ -132,6 +171,9 @@ agent.put(
       }
     }
 
+    const baseUrl =
+      process.env.BETTER_AUTH_URL ||
+      `http://localhost:${process.env.PORT || 4000}`;
     const record = await db
       .update(agentTable)
       .set({
@@ -140,7 +182,130 @@ agent.put(
       })
       .where(eq(agentTable.id, agentId))
       .returning();
-    return c.json(record, 200);
+    return c.json(agentWithAvatarUrl(record[0], baseUrl), 200);
+  },
+);
+
+/** Upload avatar for an agent */
+agent.post(
+  "/:agentId/avatar",
+  requireAuth,
+  requireOrgAccess(),
+  requireWorkspaceAccess,
+  async (c) => {
+    const agentId = c.req.param("agentId");
+    const workspaceId = c.req.param("workspaceId")!;
+    const orgId = c.req.param("orgId")!;
+    const baseUrl =
+      process.env.BETTER_AUTH_URL ||
+      `http://localhost:${process.env.PORT || 4000}`;
+
+    const body = await c.req.parseBody();
+    const file = body["file"];
+    if (!file || !(file instanceof File)) {
+      return c.json({ message: "No file provided" }, 400);
+    }
+
+    if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
+      return c.json({ message: "Invalid file type" }, 400);
+    }
+
+    if (file.size > MAX_AVATAR_SIZE) {
+      return c.json({ message: "File too large (max 5MB)" }, 400);
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+
+    let metadata: sharp.Metadata;
+    try {
+      metadata = await sharp(buffer).metadata();
+    } catch {
+      return c.json({ message: "Invalid image" }, 400);
+    }
+
+    if (metadata.width && metadata.height) {
+      if (
+        metadata.width < MIN_AVATAR_DIMENSION ||
+        metadata.height < MIN_AVATAR_DIMENSION
+      ) {
+        return c.json(
+          {
+            message: `Image must be at least ${MIN_AVATAR_DIMENSION}x${MIN_AVATAR_DIMENSION} pixels`,
+          },
+          400,
+        );
+      }
+    }
+
+    const processedBuffer = await sharp(buffer)
+      .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: "cover" })
+      .webp()
+      .toBuffer();
+
+    const key = `${orgId}/${workspaceId}/agents/${agentId}/avatar-${nanoid()}.webp`;
+
+    const existing = await db
+      .select({ avatarKey: agentTable.avatarKey })
+      .from(agentTable)
+      .where(eq(agentTable.id, agentId))
+      .limit(1);
+
+    if (existing[0]?.avatarKey) {
+      try {
+        const storage = getStorage();
+        await storage.delete(existing[0].avatarKey);
+      } catch {
+        // Ignore deletion errors
+      }
+    }
+
+    const storage = getStorage();
+    await storage.put(key, processedBuffer, "image/webp");
+
+    const record = await db
+      .update(agentTable)
+      .set({ avatarKey: key, updatedAt: new Date() })
+      .where(eq(agentTable.id, agentId))
+      .returning();
+
+    return c.json(agentWithAvatarUrl(record[0], baseUrl));
+  },
+);
+
+/** Delete avatar for an agent */
+agent.delete(
+  "/:agentId/avatar",
+  requireAuth,
+  requireOrgAccess(),
+  requireWorkspaceAccess,
+  async (c) => {
+    const agentId = c.req.param("agentId");
+    const baseUrl =
+      process.env.BETTER_AUTH_URL ||
+      `http://localhost:${process.env.PORT || 4000}`;
+
+    const existing = await db
+      .select({ avatarKey: agentTable.avatarKey })
+      .from(agentTable)
+      .where(eq(agentTable.id, agentId))
+      .limit(1);
+
+    if (existing[0]?.avatarKey) {
+      try {
+        const storage = getStorage();
+        await storage.delete(existing[0].avatarKey);
+      } catch {
+        // Ignore deletion errors
+      }
+    }
+
+    const record = await db
+      .update(agentTable)
+      .set({ avatarKey: null, updatedAt: new Date() })
+      .where(eq(agentTable.id, agentId))
+      .returning();
+
+    return c.json(agentWithAvatarUrl(record[0], baseUrl));
   },
 );
 
@@ -152,6 +317,22 @@ agent.delete(
   requireWorkspaceAccess,
   async (c) => {
     const agentId = c.req.param("agentId");
+
+    const existing = await db
+      .select({ avatarKey: agentTable.avatarKey })
+      .from(agentTable)
+      .where(eq(agentTable.id, agentId))
+      .limit(1);
+
+    if (existing[0]?.avatarKey) {
+      try {
+        const storage = getStorage();
+        await storage.delete(existing[0].avatarKey);
+      } catch {
+        // Ignore deletion errors
+      }
+    }
+
     await db.delete(agentTable).where(eq(agentTable.id, agentId));
     return c.json({ message: "Agent deleted" });
   },

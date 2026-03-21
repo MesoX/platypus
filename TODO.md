@@ -74,5 +74,5 @@ A user may provider general context about themselves ("I'm a 40 year old white m
 [x] Tags are currently not very useful. There should be a way to filter chats by tags.
 [x] Bug: layout broken when columns are wider than the available screen space. Horizontal scroll not quite right.
 [x] Might be useful to allow adding comments to cards? Might be useful for agents to add commentary related to task progress?
-[ ] Allow setting avatars for agents
+[x] Allow setting avatars for agents
 [ ] It should be possible to disable sign-ups (via an environment variable?)

@@ -182,7 +182,7 @@ describe("Agent Routes", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual([mockAgent]);
+      expect(await res.json()).toEqual(mockAgent);
     });
 
     it("should return 400 if description is too long on update", async () => {
@@ -221,11 +221,8 @@ describe("Agent Routes", () => {
       mockDb.limit.mockResolvedValueOnce([{ role: "member" }]);
       // requireWorkspaceAccess
       mockDb.limit.mockResolvedValueOnce([{ ownerId: "user-1" }]);
-
-      mockDb.where
-        .mockReturnValueOnce(mockDb)
-        .mockReturnValueOnce(mockDb)
-        .mockResolvedValueOnce([]);
+      // Avatar lookup (agent has no avatar)
+      mockDb.limit.mockResolvedValueOnce([{ avatarKey: null }]);
 
       const res = await app.request(`${baseUrl}/agent-1`, {
         method: "DELETE",

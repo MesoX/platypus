@@ -185,10 +185,10 @@ describe("TagCloud", () => {
       />,
     );
 
-    // Should show loading skeleton with "Tag Cloud" title
-    expect(screen.getByText("Tag Cloud")).toBeInTheDocument();
+    // Should show loading skeleton with "Tags" title
+    expect(screen.getByText("Tags")).toBeInTheDocument();
     // Should show loading skeleton elements (animate-pulse class on container)
-    expect(screen.getByText("Tag Cloud").closest(".animate-pulse")).toBeNull();
+    expect(screen.getByText("Tags").closest(".animate-pulse")).toBeNull();
     // The loading skeleton is inside CardContent
     const skeletonContainer = document.querySelector(".animate-pulse");
     expect(skeletonContainer).toBeInTheDocument();

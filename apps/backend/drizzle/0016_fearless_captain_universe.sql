@@ -1,0 +1,1 @@
+ALTER TABLE "agent" ADD COLUMN "avatar_key" text;
