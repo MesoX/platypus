@@ -384,7 +384,7 @@ export const Chat = ({
 
   return (
     <div
-      className={`relative size-full flex flex-col overflow-hidden h-[calc(100vh-2.75rem)] ${messages.length === 0 ? "justify-center" : ""}`}
+      className={`relative size-full flex flex-col overflow-hidden h-full ${messages.length === 0 ? "justify-center" : ""}`}
     >
       <Conversation
         className={`overflow-y-hidden ${messages.length === 0 ? "flex-none" : ""}`}

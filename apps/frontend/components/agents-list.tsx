@@ -244,7 +244,7 @@ export const AgentsList = ({
 
   if (!providers.length) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-2.75rem)] p-8">
+      <div className="flex items-center justify-center h-full p-8">
         <div className="w-full xl:w-4/5 max-w-4xl">
           <NoProvidersEmptyState orgId={orgId} workspaceId={workspaceId} />
         </div>
