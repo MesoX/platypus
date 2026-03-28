@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,7 @@ import Link from "next/link";
 
 export default function SignInPage() {
   const { authClient } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,9 +32,7 @@ export default function SignInPage() {
         return;
       }
 
-      // Force a full page reload to ensure auth state is correctly propagated
-      // and to avoid race conditions with client-side routing
-      window.location.href = "/";
+      router.push("/");
     } catch (err) {
       setError("An unexpected error occurred");
     } finally {
