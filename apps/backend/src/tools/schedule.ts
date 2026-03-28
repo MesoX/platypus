@@ -79,6 +79,11 @@ export function createScheduleTools(workspaceId: string): Record<string, Tool> {
         .describe(
           "The schedule ID to update. If not provided, a new schedule will be created.",
         ),
+      label: z
+        .string()
+        .describe(
+          "The schedule name (for display purposes, required when updating by scheduleId)",
+        ),
       name: z
         .string()
         .min(1)
@@ -139,7 +144,7 @@ export function createScheduleTools(workspaceId: string): Record<string, Tool> {
         .describe("Maximum number of chat histories to retain"),
     }),
     execute: async (params) => {
-      const { scheduleId, ...fields } = params;
+      const { scheduleId, label: _label, ...fields } = params;
 
       // Update existing schedule
       if (scheduleId) {
@@ -320,6 +325,9 @@ export function createScheduleTools(workspaceId: string): Record<string, Tool> {
         .describe(
           "The ID of the schedule to delete (use list-schedules to find IDs)",
         ),
+      label: z
+        .string()
+        .describe("The schedule name (for display purposes)"),
     }),
     execute: async ({ scheduleId }) => {
       const result = await db

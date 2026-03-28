@@ -102,6 +102,9 @@ export function createKanbanTools(
       "Get the state of a kanban board including columns with nested card summaries (id, title, position, labelIds) and labels. Use getCard to fetch full card details.",
     inputSchema: z.object({
       boardId: z.string().describe("The ID of the board to get state for"),
+      label: z
+        .string()
+        .describe("The board name (for display purposes)"),
     }),
     execute: async ({ boardId }) => {
       const boardRecord = await db
@@ -175,6 +178,9 @@ export function createKanbanTools(
     description: "Get full details of a specific kanban card.",
     inputSchema: z.object({
       cardId: z.string().describe("The ID of the card to get"),
+      label: z
+        .string()
+        .describe("The card title (for display purposes)"),
     }),
     execute: async ({ cardId }) => {
       if (!(await verifyCard(cardId))) {
@@ -200,6 +206,11 @@ export function createKanbanTools(
         .optional()
         .describe(
           "The card ID to update. If not provided, a new card will be created.",
+        ),
+      label: z
+        .string()
+        .describe(
+          "The card title for display purposes (required when updating by cardId)",
         ),
       columnId: z
         .string()
@@ -285,6 +296,9 @@ export function createKanbanTools(
       "Move a kanban card to a different position or column. Use afterCardId=null to place at the beginning.",
     inputSchema: z.object({
       cardId: z.string().describe("The card ID to move"),
+      label: z
+        .string()
+        .describe("The card title (for display purposes)"),
       columnId: z.string().describe("The target column ID"),
       afterCardId: z
         .string()
@@ -368,6 +382,9 @@ export function createKanbanTools(
     description: "Delete a kanban card.",
     inputSchema: z.object({
       cardId: z.string().describe("The card ID to delete"),
+      label: z
+        .string()
+        .describe("The card title (for display purposes)"),
     }),
     execute: async ({ cardId }) => {
       if (!(await verifyCard(cardId))) {
@@ -384,6 +401,9 @@ export function createKanbanTools(
     description: "List all comments on a kanban card, ordered oldest first.",
     inputSchema: z.object({
       cardId: z.string().describe("The ID of the card to list comments for"),
+      label: z
+        .string()
+        .describe("The card title (for display purposes)"),
     }),
     execute: async ({ cardId }) => {
       if (!(await verifyCard(cardId))) {
@@ -442,6 +462,11 @@ export function createKanbanTools(
         .describe(
           "The comment ID to update. If not provided, a new comment will be created.",
         ),
+      label: z
+        .string()
+        .describe(
+          "A short description of the comment (for display purposes)",
+        ),
       cardId: z
         .string()
         .optional()
@@ -499,6 +524,11 @@ export function createKanbanTools(
     description: "Delete a kanban card comment.",
     inputSchema: z.object({
       commentId: z.string().describe("The comment ID to delete"),
+      label: z
+        .string()
+        .describe(
+          "A short description of the comment (for display purposes)",
+        ),
     }),
     execute: async ({ commentId }) => {
       if (!(await verifyComment(commentId))) {

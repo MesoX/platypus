@@ -9,16 +9,98 @@ import {
 import { cn } from "@/lib/utils";
 import type { ToolUIPart } from "ai";
 import {
+  ArrowRightLeftIcon,
+  BotIcon,
   CheckCircleIcon,
   ChevronDownIcon,
   CircleIcon,
   ClockIcon,
+  GlobeIcon,
+  KanbanSquareIcon,
+  TimerIcon,
   WrenchIcon,
   XCircleIcon,
+  type LucideIcon,
 } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { isValidElement } from "react";
 import { CodeBlock } from "./code-block";
+
+/**
+ * Converts a camelCase tool name (extracted from a `tool-*` type string)
+ * into a human-friendly label.
+ * e.g. "tool-getBoardState" → "Get board state"
+ */
+export function humanizeToolType(type: string): string {
+  // Strip the "tool-" prefix
+  const name = type.startsWith("tool-") ? type.slice(5) : type;
+  // Split on camelCase boundaries
+  const words = name.replace(/([a-z])([A-Z])/g, "$1 $2").split(" ");
+  // Capitalise the first word, lowercase the rest
+  return words
+    .map((w, i) =>
+      i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w.toLowerCase(),
+    )
+    .join(" ");
+}
+
+/** Maps each tool name to its owning toolset. */
+const toolToToolSet: Record<string, string> = {
+  // kanban
+  listBoards: "kanban",
+  getBoardState: "kanban",
+  getCard: "kanban",
+  upsertCard: "kanban",
+  moveCard: "kanban",
+  deleteCard: "kanban",
+  listComments: "kanban",
+  upsertComment: "kanban",
+  deleteComment: "kanban",
+  // schedule
+  listSchedules: "schedule",
+  upsertSchedule: "schedule",
+  deleteSchedule: "schedule",
+  // agent-management
+  listSkills: "agent-management",
+  getSkill: "agent-management",
+  upsertSkill: "agent-management",
+  deleteSkill: "agent-management",
+  listAgents: "agent-management",
+  getAgent: "agent-management",
+  createAgent: "agent-management",
+  updateAgent: "agent-management",
+  deleteAgent: "agent-management",
+  // time
+  getCurrentTime: "time",
+  convertTimezone: "time",
+  // math-conversions
+  convertTemperature: "math-conversions",
+  convertDistance: "math-conversions",
+  convertWeight: "math-conversions",
+  convertVolume: "math-conversions",
+  // web-fetch
+  fetchUrl: "web-fetch",
+};
+
+/** One icon per toolset, matching the workspace home page. */
+const toolSetIcons: Record<string, LucideIcon> = {
+  kanban: KanbanSquareIcon,
+  schedule: TimerIcon,
+  "agent-management": BotIcon,
+  time: ClockIcon,
+  "math-conversions": ArrowRightLeftIcon,
+  "web-fetch": GlobeIcon,
+};
+
+/** Returns an appropriate icon component for a given tool type string. */
+export function getToolIcon(type: string): LucideIcon {
+  const name = type.startsWith("tool-") ? type.slice(5) : type;
+  const toolSet = toolToToolSet[name];
+  if (toolSet) {
+    return toolSetIcons[toolSet] ?? WrenchIcon;
+  }
+  return WrenchIcon;
+}
 
 export type ToolProps = ComponentProps<typeof Collapsible>;
 
@@ -31,6 +113,8 @@ export const Tool = ({ className, ...props }: ToolProps) => (
 
 export type ToolHeaderProps = {
   title?: string;
+  /** Optional human-readable label shown after the tool name (e.g. card title, agent name). */
+  label?: string;
   type: ToolUIPart["type"];
   state: ToolUIPart["state"];
   className?: string;
@@ -68,27 +152,37 @@ const getStatusBadge = (status: ToolUIPart["state"]) => {
 export const ToolHeader = ({
   className,
   title,
+  label,
   type,
   state,
   ...props
-}: ToolHeaderProps) => (
-  <CollapsibleTrigger
-    className={cn(
-      "flex w-full items-center justify-between gap-4 p-3",
-      className,
-    )}
-    {...props}
-  >
-    <div className="flex items-center gap-2">
-      <WrenchIcon className="size-4 text-muted-foreground" />
-      <span className="font-medium text-sm">
-        {title ?? type.split("-").slice(1).join("-")}
-      </span>
-      {getStatusBadge(state)}
-    </div>
-    <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-  </CollapsibleTrigger>
-);
+}: ToolHeaderProps) => {
+  const Icon = getToolIcon(type);
+  return (
+    <CollapsibleTrigger
+      className={cn(
+        "flex w-full items-center justify-between gap-4 p-3",
+        className,
+      )}
+      {...props}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="font-medium text-sm truncate">
+          {title ?? humanizeToolType(type)}
+          {label && (
+            <span className="font-normal text-muted-foreground">
+              {" "}
+              &mdash; {label}
+            </span>
+          )}
+        </span>
+        {getStatusBadge(state)}
+      </div>
+      <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+    </CollapsibleTrigger>
+  );
+};
 
 export type ToolContentProps = ComponentProps<typeof CollapsibleContent>;
 

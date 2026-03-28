@@ -185,6 +185,9 @@ export function createAgentManagementTools(
     description: "Get full agent details by ID (excludes avatar).",
     inputSchema: z.object({
       agentId: z.string().describe("The ID of the agent to retrieve"),
+      label: z
+        .string()
+        .describe("The agent name (for display purposes)"),
     }),
     execute: async ({ agentId }) => {
       const result = await db
@@ -318,6 +321,9 @@ export function createAgentManagementTools(
     description: "Update an existing agent by ID. All fields are optional.",
     inputSchema: z.object({
       agentId: z.string().describe("The ID of the agent to update"),
+      label: z
+        .string()
+        .describe("The agent name (for display purposes)"),
       name: z.string().min(3).max(30).optional().describe("Agent display name"),
       description: z
         .string()
@@ -353,7 +359,7 @@ export function createAgentManagementTools(
         .optional()
         .describe("Placeholder text for chat input"),
     }),
-    execute: async ({ agentId, ...data }) => {
+    execute: async ({ agentId, label: _label, ...data }) => {
       // Deduplicate arrays
       if (data.toolSetIds) {
         data.toolSetIds = dedupeArray(data.toolSetIds);
@@ -404,6 +410,9 @@ export function createAgentManagementTools(
     description: "Delete an agent by ID. Also cleans up the agent's avatar.",
     inputSchema: z.object({
       agentId: z.string().describe("The ID of the agent to delete"),
+      label: z
+        .string()
+        .describe("The agent name (for display purposes)"),
     }),
     execute: async ({ agentId }) => {
       const existing = await db
