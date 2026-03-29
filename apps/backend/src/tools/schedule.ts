@@ -325,9 +325,7 @@ export function createScheduleTools(workspaceId: string): Record<string, Tool> {
         .describe(
           "The ID of the schedule to delete (use list-schedules to find IDs)",
         ),
-      label: z
-        .string()
-        .describe("The schedule name (for display purposes)"),
+      label: z.string().describe("The schedule name (for display purposes)"),
     }),
     execute: async ({ scheduleId }) => {
       const result = await db

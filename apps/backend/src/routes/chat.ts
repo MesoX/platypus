@@ -277,7 +277,13 @@ chat.post(
 
     // 2. Resolve Context (Agent vs Direct) & Provider
     const context = await resolveChatContext(data, orgId, workspaceId);
-    const { provider, agent, resolvedAgentId, resolvedModelId, resolvedMaxSteps } = context;
+    const {
+      provider,
+      agent,
+      resolvedAgentId,
+      resolvedModelId,
+      resolvedMaxSteps,
+    } = context;
 
     // 3. Initialize Model
     const [aiProvider, model] = createModel(provider, resolvedModelId);

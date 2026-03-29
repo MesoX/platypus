@@ -99,10 +99,14 @@ export const ChatMessage = ({
   onCopyMessage,
   copiedMessageId,
 }: ChatMessageProps) => {
-  const messageAgentId = (message.metadata as Record<string, unknown>)?.agentId as string | undefined;
-  const messageAgent = messageAgentId ? agents.find((a) => a.id === messageAgentId) : undefined;
-  const assistantAvatar = message.role === "assistant" && (
-    messageAgent?.avatarUrl ? (
+  const messageAgentId = (message.metadata as Record<string, unknown>)
+    ?.agentId as string | undefined;
+  const messageAgent = messageAgentId
+    ? agents.find((a) => a.id === messageAgentId)
+    : undefined;
+  const assistantAvatar =
+    message.role === "assistant" &&
+    (messageAgent?.avatarUrl ? (
       <img
         src={messageAgent.avatarUrl}
         alt=""
@@ -112,8 +116,7 @@ export const ChatMessage = ({
       <div className="flex size-6 items-center justify-center rounded-full bg-muted">
         <BotIcon className="size-3.5 text-muted-foreground" />
       </div>
-    )
-  );
+    ));
   const fileParts = message.parts?.filter(
     (part): part is FileUIPart =>
       part.type === "file" && !part.mediaType?.startsWith("image/"),
@@ -155,7 +158,11 @@ export const ChatMessage = ({
             if (!isFirstTextPart) return null;
 
             return (
-              <Message key={`${message.id}-${i}`} from={message.role} avatar={assistantAvatar}>
+              <Message
+                key={`${message.id}-${i}`}
+                from={message.role}
+                avatar={assistantAvatar}
+              >
                 <MessageContent className="max-w-full">
                   <Textarea
                     ref={editTextareaRef}
@@ -170,7 +177,11 @@ export const ChatMessage = ({
           }
 
           return (
-            <Message key={`${message.id}-${i}`} from={message.role} avatar={assistantAvatar}>
+            <Message
+              key={`${message.id}-${i}`}
+              from={message.role}
+              avatar={assistantAvatar}
+            >
               <MessageContent className="max-w-full">
                 <MessageResponse>{(part as TextUIPart).text}</MessageResponse>
               </MessageContent>
@@ -225,7 +236,9 @@ export const ChatMessage = ({
           );
         } else if (part.type.startsWith("tool-")) {
           const toolPart = part as ToolUIPart;
-          const toolInput = toolPart.input as Record<string, unknown> | undefined;
+          const toolInput = toolPart.input as
+            | Record<string, unknown>
+            | undefined;
           const toolLabel = (toolInput?.label ?? toolInput?.name) as
             | string
             | undefined;
@@ -251,7 +264,11 @@ export const ChatMessage = ({
         ) {
           const filePart = part as FileUIPart;
           return (
-            <Message key={`${message.id}-${i}`} from={message.role} avatar={assistantAvatar}>
+            <Message
+              key={`${message.id}-${i}`}
+              from={message.role}
+              avatar={assistantAvatar}
+            >
               <MessageContent className="max-w-full">
                 <img
                   src={filePart.url}

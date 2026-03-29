@@ -2,10 +2,7 @@ import { tool, type Tool } from "ai";
 import { z } from "zod";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../index.ts";
-import {
-  skill as skillTable,
-  agent as agentTable,
-} from "../db/schema.ts";
+import { skill as skillTable, agent as agentTable } from "../db/schema.ts";
 import { dedupeArray } from "../utils.ts";
 import { validateSubAgentAssignment } from "../services/sub-agent-validation.ts";
 import { getStorage } from "../storage/index.ts";
@@ -185,9 +182,7 @@ export function createAgentManagementTools(
     description: "Get full agent details by ID (excludes avatar).",
     inputSchema: z.object({
       agentId: z.string().describe("The ID of the agent to retrieve"),
-      label: z
-        .string()
-        .describe("The agent name (for display purposes)"),
+      label: z.string().describe("The agent name (for display purposes)"),
     }),
     execute: async ({ agentId }) => {
       const result = await db
@@ -250,10 +245,7 @@ export function createAgentManagementTools(
         .array(z.string())
         .optional()
         .describe("Tool set IDs to assign"),
-      skillIds: z
-        .array(z.string())
-        .optional()
-        .describe("Skill IDs to assign"),
+      skillIds: z.array(z.string()).optional().describe("Skill IDs to assign"),
       subAgentIds: z
         .array(z.string())
         .optional()
@@ -321,9 +313,7 @@ export function createAgentManagementTools(
     description: "Update an existing agent by ID. All fields are optional.",
     inputSchema: z.object({
       agentId: z.string().describe("The ID of the agent to update"),
-      label: z
-        .string()
-        .describe("The agent name (for display purposes)"),
+      label: z.string().describe("The agent name (for display purposes)"),
       name: z.string().min(3).max(30).optional().describe("Agent display name"),
       description: z
         .string()
@@ -345,10 +335,7 @@ export function createAgentManagementTools(
         .array(z.string())
         .optional()
         .describe("Tool set IDs to assign"),
-      skillIds: z
-        .array(z.string())
-        .optional()
-        .describe("Skill IDs to assign"),
+      skillIds: z.array(z.string()).optional().describe("Skill IDs to assign"),
       subAgentIds: z
         .array(z.string())
         .optional()
@@ -410,9 +397,7 @@ export function createAgentManagementTools(
     description: "Delete an agent by ID. Also cleans up the agent's avatar.",
     inputSchema: z.object({
       agentId: z.string().describe("The ID of the agent to delete"),
-      label: z
-        .string()
-        .describe("The agent name (for display purposes)"),
+      label: z.string().describe("The agent name (for display purposes)"),
     }),
     execute: async ({ agentId }) => {
       const existing = await db

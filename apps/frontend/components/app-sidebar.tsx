@@ -74,7 +74,6 @@ export function AppSidebar() {
   const backendUrl = useBackendUrl();
   const isMobile = useIsMobile();
 
-
   const pathname = usePathname();
   const router = useRouter();
 
