@@ -604,7 +604,6 @@ After adding your tool:
 
 1. Consider writing tests in `apps/backend/src/tools/__tests__/`
 2. Document complex tools with JSDoc comments
-3. Add Bruno API tests in `apps/backend/bruno/`
 4. Create custom frontend UI if needed (see "Advanced Patterns" section above)
    - Reference `ask-followup-question-tool.tsx` for interactive examples
    - Reference `load-skill-tool.tsx` for status display examples

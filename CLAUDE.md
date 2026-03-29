@@ -217,4 +217,3 @@ chore(tests): add missing test coverage
 
 - Postgres 18 is NOT supported due to Drizzle ORM compatibility issues
 - When writing Typescript, format code matching the conventions used by Prettier.
-- This project uses Bruno, the API Client, for working with and testing the API endpoints. The Bruno files are stored under `apps/backend/bruno`.
