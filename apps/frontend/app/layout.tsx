@@ -1,10 +1,11 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import ClientProvider from "./client-context";
 import { AuthProvider } from "@/components/auth-provider";
+import { ServiceWorkerRegister } from "@/components/service-worker-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,6 +21,21 @@ export const metadata: Metadata = {
   title: "Platypus",
   description:
     "A rich web interface for interacting with AI chatbots and agents",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Platypus",
+  },
+  icons: {
+    apple: "/icon-192x192.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#0d9488" },
+    { media: "(prefers-color-scheme: dark)", color: "#0d9488" },
+  ],
 };
 
 // Force dynamic rendering to ensure environment variables are read at runtime
@@ -38,6 +54,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased h-dvh overflow-hidden`}
       >
+        <ServiceWorkerRegister />
         <AuthProvider backendUrl={backendUrl}>
           <ThemeProvider
             attribute="class"
