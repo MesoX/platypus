@@ -13,7 +13,7 @@ export default function UserSettingsLayout({
   return (
     <ProtectedRoute>
       <SidebarProvider>
-        <div className="h-screen flex flex-col w-full overflow-hidden">
+        <div className="h-dvh flex flex-col w-full overflow-hidden">
           <Header
             leftContent={
               <div className="flex items-center gap-2">

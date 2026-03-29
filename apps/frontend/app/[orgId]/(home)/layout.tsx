@@ -14,7 +14,7 @@ export default async function OrgHomeLayout({
 
   return (
     <SidebarProvider>
-      <div className="h-screen flex flex-col w-full overflow-hidden">
+      <div className="h-dvh flex flex-col w-full overflow-hidden">
         <Header leftContent={<HeaderHomeButton />} />
         <div className="flex-1 flex flex-col items-center overflow-y-auto">
           <div className="flex flex-col md:flex-row w-full md:w-full lg:w-4/5 max-w-3xl py-8 px-4 md:px-0">

@@ -17,7 +17,7 @@ export default async function OrgSettingsLayout({
   return (
     <ProtectedRoute requireOrgAccess={true} requiredOrgRole="admin">
       <SidebarProvider>
-        <div className="h-screen flex flex-col w-full overflow-hidden">
+        <div className="h-dvh flex flex-col w-full overflow-hidden">
           <Header
             leftContent={
               <div className="flex items-center gap-2">
