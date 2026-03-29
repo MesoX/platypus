@@ -502,7 +502,7 @@ const ScheduleForm = ({
       });
 
       if (response.ok) {
-        router.push(`/${orgId}/workspace/${workspaceId}/schedules`);
+        router.push(`/${orgId}/workspace/${workspaceId}`);
       } else {
         // Parse validation errors
         const errorData = await response.json();
@@ -533,7 +533,7 @@ const ScheduleForm = ({
       );
 
       if (response.ok) {
-        router.push(`/${orgId}/workspace/${workspaceId}/schedules`);
+        router.push(`/${orgId}/workspace/${workspaceId}`);
       } else {
         toast.error("Failed to delete schedule");
         setIsDeleting(false);
