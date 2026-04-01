@@ -170,7 +170,14 @@ export function KanbanBoard({
       const activeColumn = localColumns.find((col) =>
         col.cards.some((c) => c.id === active.id),
       );
+      const overId = String(over.id);
+      const droppableColumnId = overId.startsWith("column-drop-")
+        ? overId.replace("column-drop-", "")
+        : null;
       const overColumn =
+        (droppableColumnId
+          ? localColumns.find((col) => col.id === droppableColumnId)
+          : null) ??
         localColumns.find((col) => col.id === over.id) ??
         localColumns.find((col) => col.cards.some((c) => c.id === over.id));
 

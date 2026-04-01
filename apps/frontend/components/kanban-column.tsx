@@ -64,7 +64,7 @@ const KanbanColumnComponentInner = function KanbanColumnComponent({
   });
 
   const { setNodeRef: setDroppableRef, isOver } = useDroppable({
-    id: column.id,
+    id: `column-drop-${column.id}`,
     data: { type: "column", column },
   });
 
