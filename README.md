@@ -6,9 +6,6 @@
 
 Platypus is an open-source, full-stack application designed to help you build AI agents. Built with a focus on extensibility and modern web standards, Platypus allows you to create agents that can reason, use tools, and interact with the world.
 
-> [!NOTE]
-> Platypus is currently a Work In Progress. Features are being added rapidly.
-
 ![](assets/00_screenshot.png)
 
 ## ✨ Key Features
@@ -188,7 +185,7 @@ This allows browsers to fetch files directly from S3 (or via CDN) instead of goi
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on branch naming, commit conventions, and how to submit a pull request.
 
 ---
 
