@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mockDb, mockSession, mockNoSession, resetMockDb } from "../test-utils.ts";
+import {
+  mockDb,
+  mockSession,
+  mockNoSession,
+  resetMockDb,
+} from "../test-utils.ts";
 import app from "../server.ts";
 
 vi.mock("@ai-sdk/mcp", () => ({
@@ -108,9 +113,7 @@ describe("MCP OAuth Callback Route", () => {
       .mockResolvedValueOnce([
         { id: "state-123", mcpId: "mcp-1", expiresAt: futureDate },
       ]) // state lookup
-      .mockResolvedValueOnce([
-        { id: "mcp-1", url: null, workspaceId: "ws-1" },
-      ]); // mcp lookup - no URL
+      .mockResolvedValueOnce([{ id: "mcp-1", url: null, workspaceId: "ws-1" }]); // mcp lookup - no URL
 
     const res = await app.request(baseUrl, {
       method: "POST",
@@ -156,9 +159,7 @@ describe("MCP OAuth Callback Route", () => {
       .mockResolvedValueOnce([
         { id: "mcp-1", url: "http://mcp.example.com", workspaceId: "ws-1" },
       ]) // mcp lookup
-      .mockResolvedValueOnce([
-        { id: "ws-1", organizationId: "org-1" },
-      ]); // workspace lookup
+      .mockResolvedValueOnce([{ id: "ws-1", organizationId: "org-1" }]); // workspace lookup
 
     vi.mocked(mcpAuth).mockResolvedValueOnce("AUTHORIZED");
 

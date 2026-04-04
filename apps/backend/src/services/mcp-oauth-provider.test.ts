@@ -16,27 +16,21 @@ describe("mcp-oauth-provider", () => {
 
   describe("buildOAuthCallbackUrl", () => {
     it("should use default frontend URL when FRONTEND_URL is not set", async () => {
-      const { buildOAuthCallbackUrl } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { buildOAuthCallbackUrl } = await import("./mcp-oauth-provider.ts");
       const url = buildOAuthCallbackUrl();
       expect(url).toBe("http://localhost:3001/oauth/mcp/callback");
     });
 
     it("should use FRONTEND_URL env var when set", async () => {
       process.env.FRONTEND_URL = "https://app.example.com";
-      const { buildOAuthCallbackUrl } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { buildOAuthCallbackUrl } = await import("./mcp-oauth-provider.ts");
       const url = buildOAuthCallbackUrl();
       expect(url).toBe("https://app.example.com/oauth/mcp/callback");
     });
 
     it("should strip trailing slashes from FRONTEND_URL", async () => {
       process.env.FRONTEND_URL = "https://app.example.com///";
-      const { buildOAuthCallbackUrl } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { buildOAuthCallbackUrl } = await import("./mcp-oauth-provider.ts");
       const url = buildOAuthCallbackUrl();
       expect(url).toBe("https://app.example.com/oauth/mcp/callback");
     });
@@ -44,9 +38,8 @@ describe("mcp-oauth-provider", () => {
 
   describe("buildMcpTransportConfig", () => {
     it("should return basic config for None auth type", async () => {
-      const { buildMcpTransportConfig } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
       const mcp = {
         id: "mcp-1",
         url: "http://mcp.example.com",
@@ -61,9 +54,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should add Bearer auth header for Bearer auth type", async () => {
-      const { buildMcpTransportConfig } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
       const mcp = {
         id: "mcp-1",
         url: "http://mcp.example.com",
@@ -80,9 +72,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should add authProvider for OAuth auth type with access token", async () => {
-      const { buildMcpTransportConfig } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
       const mcp = {
         id: "mcp-1",
         url: "http://mcp.example.com",
@@ -97,9 +88,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should not add authProvider for OAuth without access token", async () => {
-      const { buildMcpTransportConfig } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
       const mcp = {
         id: "mcp-1",
         url: "http://mcp.example.com",
@@ -147,9 +137,8 @@ describe("mcp-oauth-provider", () => {
 
   describe("DatabaseOAuthClientProvider", () => {
     it("should return callbackUrl as redirectUrl", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -160,9 +149,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should return correct clientMetadata", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const callbackUrl = "http://localhost:3001/oauth/mcp/callback";
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
@@ -176,9 +164,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should return undefined tokens when no access token exists", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -190,9 +177,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should return tokens from database", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -219,9 +205,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should save tokens to database", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -248,9 +233,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should return client information from database", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -271,9 +255,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should return undefined client information when no client id", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -285,9 +268,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should save client information to database", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -310,9 +292,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should capture authorization URL via redirectToAuthorization", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -324,9 +305,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should return undefined pending auth URL when not set", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -335,9 +315,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should generate and return state", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -351,9 +330,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should save state to mcpOauthState table", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -373,9 +351,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should read code verifier from mcpOauthState via state lookup", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -391,9 +368,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should throw when no code verifier found", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
@@ -405,9 +381,8 @@ describe("mcp-oauth-provider", () => {
     });
 
     it("should return stored state via storedState()", async () => {
-      const { DatabaseOAuthClientProvider } = await import(
-        "./mcp-oauth-provider.ts"
-      );
+      const { DatabaseOAuthClientProvider } =
+        await import("./mcp-oauth-provider.ts");
       const provider = new DatabaseOAuthClientProvider(
         { id: "mcp-1" } as any,
         "http://localhost:3001/oauth/mcp/callback",
