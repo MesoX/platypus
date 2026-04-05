@@ -26,6 +26,7 @@ Platypus is an open-source, full-stack application designed to help you build AI
 - **🧠 Memory:** Platypus automatically extracts facts and preferences from your conversations in the background and injects them into future chats, so agents remember things about you over time.
 - **📋 Kanban Boards:** Organize work visually with drag-and-drop Kanban boards. Agents can create, move, and update cards autonomously via built-in Kanban tools.
 - **⏰ Schedules:** Schedule agents to run automatically at specified times using cron expressions, with support for timezones and one-off executions.
+- **💬 Telegram Integration (Experimental):** Connect a Telegram bot to any workspace so users can chat with agents directly from Telegram. Includes pairing-code authentication, session management, and sub-agent delegation.
 - **⚡ Modern Tech Stack:** Built on the bleeding edge with **Next.js**, **Hono.js**, **Drizzle ORM**, and **Tailwind CSS**.
 - **🌐 Provider Agnostic:** Powered by the Vercel AI SDK, supporting OpenAI, Anthropic, Google, Amazon Bedrock, and OpenRouter.
 - **⚖️ MIT Licensed:** Open source and free to use.
@@ -52,6 +53,7 @@ The fastest way to get Platypus running is using Docker Compose.
     - `MEMORY_EXTRACTION_INTERVAL_MS` (optional): How often (in milliseconds) the background memory extraction job runs. Defaults to `300000` (5 minutes).
     - `SCHEDULE_MAX_CONCURRENT` (optional): Maximum number of schedules to execute in parallel. Defaults to `5`.
     - `FRONTEND_URL` (optional): The URL of the frontend application, used for generating resource links in tool responses. Defaults to `http://localhost:3000`.
+
     ```yaml
     services:
       backend:
@@ -107,6 +109,7 @@ The fastest way to get Platypus running is using Docker Compose.
     - `ADMIN_PASSWORD`: A secure password for the initial admin user.
     - `TIMEZONE` (optional): IANA timezone name for e.g., "America/New_York", "Europe/London". Defaults to UTC.
     - `FRONTEND_URL` (optional): The URL of the frontend application, used for generating resource links in tool responses. Defaults to `http://localhost:3001`.
+
     ```env
     BETTER_AUTH_SECRET: "your-secure-random-string-here"
     ADMIN_EMAIL: "admin@example.com"
