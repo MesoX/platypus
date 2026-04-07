@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { FileUIPart, UIMessage } from "ai";
+import type { LinkSafetyConfig } from "streamdown";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -318,16 +319,28 @@ export const MessageBranchPage = ({
   );
 };
 
+const defaultLinkSafety: LinkSafetyConfig = {
+  enabled: true,
+  onLinkCheck: (url: string) => {
+    try {
+      return new URL(url).origin === window.location.origin;
+    } catch {
+      return false;
+    }
+  },
+};
+
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown
+      linkSafety={defaultLinkSafety}
+      {...props}
       className={cn(
         "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className,
       )}
-      {...props}
     />
   ),
   (prevProps, nextProps) => prevProps.children === nextProps.children,
