@@ -44,7 +44,7 @@ export const ErrorDialog = ({
           <Alert variant="destructive">
             <TriangleAlert />
             <AlertTitle>Error Details</AlertTitle>
-            <AlertDescription>{message}</AlertDescription>
+            <AlertDescription className="break-all">{message}</AlertDescription>
           </Alert>
         </div>
         <DialogFooter>
