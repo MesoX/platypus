@@ -141,26 +141,23 @@ const Workspace = () => {
       <div className="flex flex-col gap-8 px-4 md:px-8 py-8 pb-32 max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex flex-col">
-          <Skeleton className="h-4 w-24 mb-2" />
+          <Skeleton className="h-4 w-24 mb-1" />
           <div className="flex items-center gap-3">
             <Skeleton className="size-8 rounded" />
             <Skeleton className="h-9 w-48" />
           </div>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+        {/* Stats Cards - mobile */}
+        <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pb-1 lg:hidden">
           {Array.from({ length: 5 }).map((_, i) => (
-            <Card key={i} className="gap-2">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
-                <Skeleton className="h-4 w-20" />
-                <Skeleton className="h-4 w-4" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-8 w-12 mb-1" />
-                <Skeleton className="h-3 w-28" />
-              </CardContent>
-            </Card>
+            <Skeleton key={i} className="h-9 w-24 min-w-fit rounded-xl" />
+          ))}
+        </div>
+        {/* Stats Cards - desktop */}
+        <div className="hidden lg:grid gap-4 grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-[104px] w-full rounded-xl" />
           ))}
         </div>
 
