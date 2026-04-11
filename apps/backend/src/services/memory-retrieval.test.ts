@@ -5,7 +5,7 @@ import {
   retrieveWorkspaceLevelMemories,
   retrieveMemories,
   formatMemoriesForSystemPrompt,
-  formatMemoriesForPrompt,
+  formatMemoriesForExtractionPrompt,
 } from "./memory-retrieval.ts";
 
 const makeMemory = (overrides: Partial<any> = {}) => ({
@@ -89,48 +89,23 @@ describe("formatMemoriesForSystemPrompt", () => {
     expect(formatMemoriesForSystemPrompt([])).toBe("");
   });
 
-  it("returns header + NDJSON lines for non-empty", () => {
+  it("returns header + TSV rows for non-empty", () => {
     const memories = [makeMemory()];
     const result = formatMemoriesForSystemPrompt(memories);
 
     expect(result).toMatch(/^The following memories/);
-    expect(result).toContain("\n");
+    expect(result).toContain("id\ttype\tentity\tobservation");
   });
 
-  it("sets scope to 'user' when workspaceId is null", () => {
-    const memory = makeMemory({ workspaceId: null });
-    const result = formatMemoriesForSystemPrompt([memory]);
-    const lines = result.split("\n");
-    const ndjsonLine = lines.find((line) => {
-      try {
-        JSON.parse(line);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-
-    expect(ndjsonLine).toBeDefined();
-    const parsed = JSON.parse(ndjsonLine!);
-    expect(parsed.scope).toBe("user");
-  });
-
-  it("sets scope to 'workspace' when workspaceId is set", () => {
+  it("excludes scope column", () => {
     const memory = makeMemory({ workspaceId: "ws-1" });
     const result = formatMemoriesForSystemPrompt([memory]);
     const lines = result.split("\n");
-    const ndjsonLine = lines.find((line) => {
-      try {
-        JSON.parse(line);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    const headerLine = lines[2];
+    const dataLine = lines[lines.length - 1];
 
-    expect(ndjsonLine).toBeDefined();
-    const parsed = JSON.parse(ndjsonLine!);
-    expect(parsed.scope).toBe("workspace");
+    expect(headerLine).toBe("id\ttype\tentity\tobservation");
+    expect(dataLine.split("\t")).toHaveLength(4);
   });
 
   it("maps entityType to type and entityName to entity", () => {
@@ -141,36 +116,28 @@ describe("formatMemoriesForSystemPrompt", () => {
     });
     const result = formatMemoriesForSystemPrompt([memory]);
     const lines = result.split("\n");
-    const ndjsonLine = lines.find((line) => {
-      try {
-        JSON.parse(line);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    const dataLine = lines[lines.length - 1];
+    const fields = dataLine.split("\t");
 
-    expect(ndjsonLine).toBeDefined();
-    const parsed = JSON.parse(ndjsonLine!);
-    expect(parsed.type).toBe("preference");
-    expect(parsed.entity).toBe("theme");
+    expect(fields[1]).toBe("preference");
+    expect(fields[2]).toBe("theme");
   });
 });
 
-describe("formatMemoriesForPrompt", () => {
+describe("formatMemoriesForExtractionPrompt", () => {
   it("returns 'No existing memories.' for empty array", () => {
-    expect(formatMemoriesForPrompt([])).toBe("No existing memories.");
+    expect(formatMemoriesForExtractionPrompt([])).toBe("No existing memories.");
   });
 
-  it("returns NDJSON lines without header for non-empty", () => {
+  it("returns TSV header + data rows for non-empty", () => {
     const memories = [makeMemory(), makeMemory({ id: "mem-2" })];
-    const result = formatMemoriesForPrompt(memories);
+    const result = formatMemoriesForExtractionPrompt(memories);
     const lines = result.split("\n");
 
-    expect(lines).toHaveLength(2);
-    lines.forEach((line) => {
-      expect(() => JSON.parse(line)).not.toThrow();
-    });
+    expect(lines).toHaveLength(3); // header + 2 data rows
+    expect(lines[0]).toBe("id\ttype\tentity\tobservation\tscope");
+    expect(lines[1].split("\t")).toHaveLength(5);
+    expect(lines[2].split("\t")).toHaveLength(5);
     expect(result).not.toMatch(/^The following memories/);
   });
 });

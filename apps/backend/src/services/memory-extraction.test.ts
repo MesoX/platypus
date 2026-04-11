@@ -21,7 +21,7 @@ vi.mock("./memory-retrieval.ts", () => ({
   retrieveUserLevelMemories: (...args: any[]) => mockRetrieveUserLevel(...args),
   retrieveWorkspaceLevelMemories: (...args: any[]) =>
     mockRetrieveWorkspaceLevel(...args),
-  formatMemoriesForPrompt: (...args: any[]) =>
+  formatMemoriesForExtractionPrompt: (...args: any[]) =>
     mockFormatMemoriesForPrompt(...args),
 }));
 

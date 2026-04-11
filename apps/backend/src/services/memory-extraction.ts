@@ -5,7 +5,7 @@ import { db } from "../index.ts";
 import {
   retrieveUserLevelMemories,
   retrieveWorkspaceLevelMemories,
-  formatMemoriesForPrompt,
+  formatMemoriesForExtractionPrompt,
 } from "./memory-retrieval.ts";
 import {
   chat as chatTable,
@@ -42,14 +42,14 @@ const buildExtractionPrompt = (
 ): string => {
   return `You are a memory extraction assistant. Analyze the conversation and extract persistent facts about the user that should be remembered for future conversations.
 
-The user's existing memories are provided below in newline-delimited JSON format. You MUST:
+The user's existing memories are provided below in TSV format (tab-separated values). You MUST:
 - NOT re-extract information that already exists in the current memories
 - If a conversation reveals updated information that contradicts an existing memory, include the existing memory's ID in the "updates" array with the corrected observation
 - If the conversation explicitly indicates that an existing memory is wrong or no longer accurate, include its ID in the "deletes" array
 - If the user explicitly asks to forget or remove something, include its ID in the "deletes" array
 - Only return genuinely NEW information not covered by existing memories
 
-Existing memories (NDJSON format):
+Existing memories (TSV format):
 ${existingMemoriesFormatted}
 
 Entity types: "preference", "fact", "goal", "constraint", "style", "person"
@@ -109,7 +109,7 @@ const processChat = async (
 
   // Format for the prompt
   const conversationText = formatConversation(messages);
-  const existingMemoriesFormatted = formatMemoriesForPrompt(existingMemories);
+  const existingMemoriesFormatted = formatMemoriesForExtractionPrompt(existingMemories);
 
   // Build the extraction prompt
   const extractionPrompt = buildExtractionPrompt(

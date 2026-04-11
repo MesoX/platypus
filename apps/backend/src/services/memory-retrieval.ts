@@ -71,23 +71,47 @@ export async function retrieveMemories(
     .orderBy(desc(memoryTable.createdAt));
 }
 
+const TSV_HEADER = "id\ttype\tentity\tobservation\tscope";
+const TSV_HEADER_NO_SCOPE = "id\ttype\tentity\tobservation";
+
+function sanitizeTSVField(value: string): string {
+  return value.replace(/[\t\n\r]/g, " ");
+}
+
 /**
- * Formats a single memory as a compact NDJSON line.
+ * Formats a single memory as a TSV row including scope column.
  */
-function formatMemoryAsNDJSON(memory: typeof memoryTable.$inferSelect): string {
-  return JSON.stringify({
-    id: memory.id,
-    type: memory.entityType,
-    entity: memory.entityName,
-    observation: memory.observation,
-    scope: memory.workspaceId ? "workspace" : "user",
-  });
+function formatMemoryAsTSVRow(
+  memory: typeof memoryTable.$inferSelect,
+): string {
+  const scope = memory.workspaceId ? "workspace" : "user";
+  return [
+    memory.id,
+    memory.entityType,
+    memory.entityName,
+    memory.observation,
+    scope,
+  ]
+    .map(sanitizeTSVField)
+    .join("\t");
+}
+
+/**
+ * Formats a single memory as a TSV row excluding scope column.
+ */
+function formatMemoryAsTSVRowNoScope(
+  memory: typeof memoryTable.$inferSelect,
+): string {
+  return [memory.id, memory.entityType, memory.entityName, memory.observation]
+    .map(sanitizeTSVField)
+    .join("\t");
 }
 
 /**
  * Formats memories for injection into the system prompt.
  *
- * Uses newline-delimited JSON (NDJSON) format for token efficiency.
+ * Uses TSV format (tab-separated values with a single header row) for token efficiency.
+ * Excludes the scope column as it is not useful to the LLM during regular chat.
  *
  * @param memories - Array of memories to format
  * @returns Formatted string for system prompt, or empty string if no memories
@@ -102,7 +126,8 @@ export function formatMemoriesForSystemPrompt(
   const lines = [
     "The following memories about the user have been extracted from previous conversations. Use these to personalize your responses:",
     "",
-    ...memories.map(formatMemoryAsNDJSON),
+    TSV_HEADER_NO_SCOPE,
+    ...memories.map(formatMemoryAsTSVRowNoScope),
   ];
 
   return lines.join("\n");
@@ -111,17 +136,17 @@ export function formatMemoriesForSystemPrompt(
 /**
  * Formats existing memories for inclusion in prompts (e.g., extraction).
  *
- * Uses newline-delimited JSON (NDJSON) format for token efficiency.
+ * Uses TSV format (tab-separated values with a single header row) for token efficiency.
  *
  * @param memories - Array of memories to format
  * @returns Formatted string, or "No existing memories." if empty
  */
-export function formatMemoriesForPrompt(
+export function formatMemoriesForExtractionPrompt(
   memories: (typeof memoryTable.$inferSelect)[],
 ): string {
   if (memories.length === 0) {
     return "No existing memories.";
   }
 
-  return memories.map(formatMemoryAsNDJSON).join("\n");
+  return [TSV_HEADER, ...memories.map(formatMemoryAsTSVRow)].join("\n");
 }
