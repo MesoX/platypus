@@ -2,7 +2,12 @@ import { tool, type Tool } from "ai";
 import { z } from "zod";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../index.ts";
-import { skill as skillTable, agent as agentTable } from "../db/schema.ts";
+import {
+  skill as skillTable,
+  agent as agentTable,
+  mcp as mcpTable,
+} from "../db/schema.ts";
+import { getToolSets } from "../tools/index.ts";
 import { dedupeArray } from "../utils.ts";
 import { validateSubAgentAssignment } from "../services/sub-agent-validation.ts";
 import { getStorage } from "../storage/index.ts";
@@ -15,6 +20,38 @@ export function createAgentManagementTools(
   orgId: string,
   frontendUrl: string | undefined,
 ): Record<string, Tool> {
+  // ---------------------------------------------------------------------------
+  // Tool-set discovery
+  // ---------------------------------------------------------------------------
+
+  const listToolSets = tool({
+    description:
+      "List all available tool sets and MCP servers. Use the returned IDs when assigning toolSetIds to agents.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const toolSetsList = Object.entries(getToolSets()).map(
+        ([id, toolSet]) => ({
+          id,
+          name: toolSet.name,
+          category: toolSet.category,
+          description: toolSet.description,
+        }),
+      );
+
+      const mcps = await db
+        .select()
+        .from(mcpTable)
+        .where(eq(mcpTable.workspaceId, workspaceId));
+      const mcpList = mcps.map((mcp) => ({
+        id: mcp.id,
+        name: mcp.name,
+        category: "MCP",
+      }));
+
+      return [...toolSetsList, ...mcpList];
+    },
+  });
+
   // ---------------------------------------------------------------------------
   // Skill tools
   // ---------------------------------------------------------------------------
@@ -481,6 +518,7 @@ export function createAgentManagementTools(
   });
 
   return {
+    listToolSets,
     listSkills,
     getSkill,
     upsertSkill,
