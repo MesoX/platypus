@@ -123,7 +123,7 @@ export const resolveChatContext = async (
   orgId: string,
   workspaceId: string,
 ): Promise<ChatContext> => {
-  const { agentId, providerId, modelId, search } = data;
+  const { agentId, providerId, modelId } = data;
 
   let resolvedProviderId: string;
   let resolvedModelId: string;
@@ -186,15 +186,6 @@ export const resolveChatContext = async (
     throw new Error(
       `Model id '${resolvedModelId}' not enabled for provider '${resolvedProviderId}'`,
     );
-  }
-
-  // If `search === true` and we're using the OpenRouter provider, append ":online" to the modelId
-  if (
-    search &&
-    provider.providerType === "OpenRouter" &&
-    !(resolvedModelId || "").includes(":online")
-  ) {
-    resolvedModelId = `${resolvedModelId}:online`;
   }
 
   return {

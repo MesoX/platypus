@@ -235,7 +235,7 @@ describe("chat-execution", () => {
       ).rejects.toThrow("Model id 'gpt-4' not enabled for provider 'p1'");
     });
 
-    it("appends :online for OpenRouter when search=true", async () => {
+    it("does not modify modelId when search=true", async () => {
       const openRouterProvider = {
         ...providerRecord,
         providerType: "OpenRouter" as const,
@@ -249,19 +249,7 @@ describe("chat-execution", () => {
         "ws-1",
       );
 
-      expect(result.resolvedModelId).toBe("openai/gpt-4:online");
-    });
-
-    it("does not append :online for non-OpenRouter with search=true", async () => {
-      mockDb.limit.mockResolvedValueOnce([providerRecord]);
-
-      const result = await resolveChatContext(
-        { providerId: "p1", modelId: "gpt-4", search: true },
-        "org-1",
-        "ws-1",
-      );
-
-      expect(result.resolvedModelId).toBe("gpt-4");
+      expect(result.resolvedModelId).toBe("openai/gpt-4");
     });
   });
 
