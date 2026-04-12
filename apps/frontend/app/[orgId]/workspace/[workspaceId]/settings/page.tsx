@@ -17,9 +17,9 @@ const WorkspaceSettingsPage = () => {
       <h1 className="text-2xl font-bold mb-4">Workspace Settings</h1>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
         <div>
-          <p className="text-sm text-muted-foreground mb-2">Organization ID</p>
+          <p className="text-sm mb-2">Organization ID</p>
           <div className="flex items-center justify-between">
-            <p className="font-mono">{orgId}</p>
+            <p className="font-mono text-muted-foreground">{orgId}</p>
             <Button
               className="cursor-pointer text-muted-foreground"
               variant="ghost"
@@ -34,9 +34,9 @@ const WorkspaceSettingsPage = () => {
           </div>
         </div>
         <div>
-          <p className="text-sm text-muted-foreground mb-2">Workspace ID</p>
+          <p className="text-sm mb-2">Workspace ID</p>
           <div className="flex items-center justify-between">
-            <p className="font-mono">{workspaceId}</p>
+            <p className="font-mono text-muted-foreground">{workspaceId}</p>
             <Button
               className="cursor-pointer text-muted-foreground"
               variant="ghost"
