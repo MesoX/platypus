@@ -139,25 +139,37 @@ function AssigneePicker({
           <ScrollArea className="max-h-64">
             <div className="p-1">
               {user && (
-                <button
-                  className={cn(
-                    "flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm hover:bg-muted transition-colors",
-                  )}
-                  onClick={() => handleSelect("user", user.id)}
-                >
-                  <Avatar className="size-5">
-                    {user.image && (
-                      <AvatarImage src={user.image} alt={user.name} />
+                <>
+                  <p className="text-xs font-medium text-muted-foreground px-2 py-1.5">
+                    Users
+                  </p>
+                  <button
+                    className={cn(
+                      "flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm hover:bg-muted transition-colors",
                     )}
-                    <AvatarFallback className="text-[8px]">
-                      {getInitials(user.name)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="truncate flex-1 text-left">{user.name}</span>
-                  {isAssigned("user", user.id) && (
-                    <Check className="size-3.5 text-primary shrink-0" />
-                  )}
-                </button>
+                    onClick={() => handleSelect("user", user.id)}
+                  >
+                    <Avatar className="size-5">
+                      {user.image && (
+                        <AvatarImage src={user.image} alt={user.name} />
+                      )}
+                      <AvatarFallback className="text-[8px]">
+                        {getInitials(user.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="truncate flex-1 text-left">
+                      {user.name}
+                    </span>
+                    {isAssigned("user", user.id) && (
+                      <Check className="size-3.5 text-primary shrink-0" />
+                    )}
+                  </button>
+                </>
+              )}
+              {agents && agents.length > 0 && (
+                <p className="text-xs font-medium text-muted-foreground px-2 py-1.5">
+                  Agents
+                </p>
               )}
               {agents?.map((agent) => (
                 <button
