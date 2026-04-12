@@ -4,6 +4,7 @@ import {
   rewriteStorageUrls,
   extractStorageKeys,
   deleteFiles,
+  inlineFileUrls,
   STORAGE_URL_PREFIX,
 } from "./utils.ts";
 import type { PlatypusUIMessage } from "../types.ts";
@@ -307,6 +308,107 @@ describe("Storage Utils", () => {
 
       // Should not throw
       await expect(deleteFiles(messages)).resolves.not.toThrow();
+    });
+  });
+
+  describe("inlineFileUrls", () => {
+    const backendOrigin = "http://localhost:4000";
+
+    it("should inline storage:// URLs as data URLs", async () => {
+      // First store a file
+      const dataUrl = createPngDataUrl();
+      const messages: PlatypusUIMessage[] = [
+        createMessageWithFile("msg-1", dataUrl),
+      ];
+
+      const context = {
+        orgId: "org-1",
+        workspaceId: "ws-1",
+        chatId: "chat-1",
+      };
+
+      const storedMessages = await extractFiles(messages, context);
+
+      // Now inline the storage:// URLs back to data URLs
+      const inlined = await inlineFileUrls(storedMessages, backendOrigin);
+
+      const filePart = inlined[0].parts[1];
+      expect((filePart as any).url).toMatch(/^data:image\/png;base64,/);
+    });
+
+    it("should inline /files/ HTTP URLs as data URLs", async () => {
+      // Store a file first
+      const dataUrl = createPngDataUrl();
+      const storeMessages: PlatypusUIMessage[] = [
+        createMessageWithFile("msg-1", dataUrl),
+      ];
+
+      const context = {
+        orgId: "org-1",
+        workspaceId: "ws-1",
+        chatId: "chat-1",
+      };
+
+      const storedMessages = await extractFiles(storeMessages, context);
+
+      // Rewrite to HTTP URLs
+      const httpMessages = rewriteStorageUrls(storedMessages, backendOrigin);
+
+      // Now inline them back
+      const inlined = await inlineFileUrls(httpMessages, backendOrigin);
+
+      const filePart = inlined[0].parts[1];
+      expect((filePart as any).url).toMatch(/^data:image\/png;base64,/);
+    });
+
+    it("should leave existing data URLs unchanged", async () => {
+      const dataUrl = createPngDataUrl();
+      const messages: PlatypusUIMessage[] = [
+        createMessageWithFile("msg-1", dataUrl),
+      ];
+
+      const inlined = await inlineFileUrls(messages, backendOrigin);
+
+      const filePart = inlined[0].parts[1];
+      expect((filePart as any).url).toBe(dataUrl);
+    });
+
+    it("should leave unrecognized URLs unchanged", async () => {
+      const externalUrl = "https://example.com/image.png";
+      const messages: PlatypusUIMessage[] = [
+        createMessageWithFile("msg-1", externalUrl),
+      ];
+
+      const inlined = await inlineFileUrls(messages, backendOrigin);
+
+      const filePart = inlined[0].parts[1];
+      expect((filePart as any).url).toBe(externalUrl);
+    });
+
+    it("should handle messages without parts", async () => {
+      const messages: PlatypusUIMessage[] = [
+        { id: "msg-1", role: "user", parts: [] },
+      ];
+
+      const inlined = await inlineFileUrls(messages, backendOrigin);
+      expect(inlined).toHaveLength(1);
+      expect(inlined[0].parts).toHaveLength(0);
+    });
+
+    it("should leave part unchanged when file is not found in storage", async () => {
+      const storageUrl = "storage://org-1/ws-1/chat-1/msg-1/0-nonexist.png";
+      const messages: PlatypusUIMessage[] = [
+        {
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "file", url: storageUrl, mimeType: "image/png" }],
+        },
+      ];
+
+      const inlined = await inlineFileUrls(messages, backendOrigin);
+
+      const filePart = inlined[0].parts[0];
+      expect((filePart as any).url).toBe(storageUrl);
     });
   });
 });
