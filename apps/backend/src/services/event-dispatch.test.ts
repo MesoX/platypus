@@ -48,7 +48,7 @@ const makeEventTrigger = (overrides: Record<string, unknown> = {}) => ({
   name: "Test Event Trigger",
   instruction: "Handle the event",
   enabled: true,
-  maxChatsToKeep: 10,
+  maxRunsToKeep: 10,
   search: false,
   config: {
     events: ["card.created", "card.updated"],

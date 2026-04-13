@@ -68,7 +68,6 @@ export const chatSchema = z.object({
   seed: z.number().optional(),
   presencePenalty: z.number().optional(),
   frequencyPenalty: z.number().optional(),
-  triggerId: z.string().nullable().optional(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -129,7 +128,6 @@ export const chatListItemSchema = chatSchema.pick({
   agentId: true,
   providerId: true,
   modelId: true,
-  triggerId: true,
   createdAt: true,
   updatedAt: true,
 });
@@ -685,7 +683,7 @@ export const triggerSchema = z.object({
   description: z.string().max(500).nullable().optional(),
   instruction: z.string().min(1).max(10000),
   enabled: z.boolean().default(true),
-  maxChatsToKeep: z.number().int().min(1).max(1000).default(50),
+  maxRunsToKeep: z.number().int().min(1).max(1000).default(50),
   search: z.boolean().default(false),
   config: z.union([cronTriggerConfigSchema, eventTriggerConfigSchema]),
   lastRunAt: z.date().nullable().optional(),
@@ -704,7 +702,7 @@ export const triggerCreateSchema = triggerSchema.pick({
   description: true,
   instruction: true,
   enabled: true,
-  maxChatsToKeep: true,
+  maxRunsToKeep: true,
   search: true,
   config: true,
 });
@@ -715,7 +713,7 @@ export const triggerUpdateSchema = triggerSchema
     description: true,
     instruction: true,
     enabled: true,
-    maxChatsToKeep: true,
+    maxRunsToKeep: true,
     agentId: true,
     search: true,
     type: true,
@@ -734,16 +732,25 @@ export const triggerRunStatusSchema = z.enum([
 
 export type TriggerRunStatus = z.infer<typeof triggerRunStatusSchema>;
 
+export const triggerRunStatsSchema = z.object({
+  steps: z.number(),
+  toolCalls: z.array(z.object({ name: z.string(), count: z.number() })),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+});
+
+export type TriggerRunStats = z.infer<typeof triggerRunStatsSchema>;
+
 export const triggerRunSchema = z.object({
   id: z.string(),
   triggerId: z.string(),
-  chatId: z.string().nullable().optional(),
   status: triggerRunStatusSchema,
   eventType: z.string().nullable().optional(),
   eventData: z.any().nullable().optional(),
   startedAt: z.date(),
   completedAt: z.date().nullable().optional(),
   errorMessage: z.string().nullable().optional(),
+  stats: triggerRunStatsSchema.nullable().optional(),
   createdAt: z.date(),
 });
 

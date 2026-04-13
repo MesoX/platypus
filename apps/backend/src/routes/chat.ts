@@ -39,7 +39,7 @@ import {
   type ChatSubmitData,
   type Provider,
 } from "@platypus/schemas";
-import { and, desc, eq, or, sql, isNull } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/authentication.ts";
 import {
   requireOrgAccess,
@@ -169,13 +169,7 @@ chat.get(
         updatedAt: chatTable.updatedAt,
       })
       .from(chatTable)
-      .where(
-        and(
-          eq(chatTable.workspaceId, workspaceId),
-          isNull(chatTable.triggerId),
-          searchFilter,
-        ),
-      )
+      .where(and(eq(chatTable.workspaceId, workspaceId), searchFilter))
       .orderBy(desc(chatTable.createdAt))
       .limit(limit)
       .offset(offset);

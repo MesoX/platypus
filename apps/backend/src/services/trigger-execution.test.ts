@@ -71,7 +71,7 @@ const baseTrigger = {
   description: null,
   instruction: "Do something",
   enabled: true,
-  maxChatsToKeep: 10,
+  maxRunsToKeep: 10,
   search: false,
   config: { cronExpression: "0 * * * *", timezone: "UTC", isOneOff: false },
   lastRunAt: null,
@@ -158,7 +158,19 @@ function setupDefaultMocks() {
     systemPrompt: "You are helpful",
     temperature: 0.7,
   });
-  mockGenerateText.mockResolvedValue({ text: "Agent response" });
+  mockGenerateText.mockResolvedValue({
+    text: "Agent response",
+    steps: [
+      {
+        toolCalls: [
+          { toolName: "tool1", args: {} },
+          { toolName: "tool1", args: {} },
+        ],
+      },
+      { toolCalls: [{ toolName: "tool2", args: {} }] },
+    ],
+    totalUsage: { inputTokens: 100, outputTokens: 50 },
+  });
   mockDb.returning.mockResolvedValue([{ id: "test-id" }]);
 }
 
@@ -170,13 +182,12 @@ describe("trigger-execution", () => {
   });
 
   describe("executeTrigger", () => {
-    it("should execute a trigger and return a chat ID", async () => {
+    it("should execute a trigger and return a run ID", async () => {
       setupDefaultMocks();
 
-      const chatId = await executeTrigger(baseTrigger as any);
+      const runId = await executeTrigger(baseTrigger as any);
 
-      expect(chatId).toBe("test-id");
-      expect(mockDb.insert).toHaveBeenCalled();
+      expect(runId).toBe("test-id");
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt: "Do something",
@@ -273,16 +284,24 @@ describe("trigger-execution", () => {
       expect(mockCreateSearchTools).toHaveBeenCalled();
     });
 
-    it("should mark run as success on completion", async () => {
+    it("should mark run as success with stats on completion", async () => {
       setupDefaultMocks();
 
       await executeTrigger(baseTrigger as any);
 
-      // The success update should have been called
+      // The success update should have been called with stats
       expect(mockDb.set).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "success",
-          chatId: "test-id",
+          stats: {
+            steps: 2,
+            toolCalls: [
+              { name: "tool1", count: 2 },
+              { name: "tool2", count: 1 },
+            ],
+            inputTokens: 100,
+            outputTokens: 50,
+          },
         }),
       );
     });
@@ -360,7 +379,7 @@ describe("trigger-execution", () => {
       );
     });
 
-    it("should perform retention cleanup when maxChatsToKeep > 0", async () => {
+    it("should perform retention cleanup when maxRunsToKeep > 0", async () => {
       mockValidateCronExpression.mockReturnValue(new Date());
       // Retention queries return enough items to trigger deletion
       mockDb.limit.mockResolvedValue(
@@ -370,13 +389,13 @@ describe("trigger-execution", () => {
 
       await updateTriggerAfterRun("trigger-1", baseTrigger as any);
 
-      // retainNewest should query both chats and runs
+      // retainNewest should query runs
       expect(mockDb.select).toHaveBeenCalled();
     });
 
-    it("should skip retention cleanup when maxChatsToKeep is 0", async () => {
+    it("should skip retention cleanup when maxRunsToKeep is 0", async () => {
       mockValidateCronExpression.mockReturnValue(new Date());
-      const trigger = { ...baseTrigger, maxChatsToKeep: 0 } as any;
+      const trigger = { ...baseTrigger, maxRunsToKeep: 0 } as any;
 
       // Reset to track calls after update
       resetMockDb();

@@ -2,15 +2,23 @@
 
 import { use } from "react";
 import { BackButton } from "@/components/back-button";
-import { type Trigger, type TriggerRun } from "@platypus/schemas";
+import {
+  type Trigger,
+  type TriggerRun,
+  type TriggerRunStats,
+} from "@platypus/schemas";
 import useSWR from "swr";
 import { fetcher, joinUrl } from "@/lib/utils";
-import Link from "next/link";
 import { useBackendUrl } from "@/app/client-context";
 import { useAuth } from "@/components/auth-provider";
 import { format, formatDistanceToNow } from "date-fns";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
+import { Loader2, Footprints, Wrench, MessageSquare } from "lucide-react";
 
 const TriggerRunsPage = ({
   params,
@@ -96,49 +104,86 @@ const TriggerRunsPage = ({
           </p>
         ) : (
           <div className="border rounded-lg divide-y">
-            {runs.map((run) => (
-              <div
-                key={run.id}
-                className="flex justify-between items-center p-4"
-              >
-                <div className="flex items-center gap-4">
-                  {getStatusBadge(run.status)}
-                  <div>
-                    <p className="font-medium">
-                      {format(new Date(run.startedAt), "PPp")}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {formatDistanceToNow(new Date(run.startedAt), {
-                        addSuffix: true,
-                      })}
-                    </p>
-                    {run.eventType && (
+            {runs.map((run) => {
+              const stats = run.stats as TriggerRunStats | null | undefined;
+              return (
+                <div key={run.id} className="p-4">
+                  <div className="flex items-center gap-4">
+                    {getStatusBadge(run.status)}
+                    <div>
+                      <p className="font-medium">
+                        {format(new Date(run.startedAt), "PPp")}
+                      </p>
                       <p className="text-sm text-muted-foreground">
-                        Event: {run.eventType}
+                        {formatDistanceToNow(new Date(run.startedAt), {
+                          addSuffix: true,
+                        })}
                       </p>
-                    )}
-                    {run.completedAt && (
-                      <p className="text-sm text-muted-foreground">
-                        Duration: {getDuration(run)}
-                      </p>
-                    )}
-                    {run.errorMessage && (
-                      <p className="text-sm text-destructive mt-1">
-                        {run.errorMessage}
-                      </p>
-                    )}
+                      {run.eventType && (
+                        <p className="text-sm text-muted-foreground">
+                          Event: {run.eventType}
+                        </p>
+                      )}
+                      {run.completedAt && (
+                        <p className="text-sm text-muted-foreground">
+                          Duration: {getDuration(run)}
+                        </p>
+                      )}
+                      {stats && (
+                        <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Footprints className="h-3 w-3" />
+                            {stats.steps} step{stats.steps !== 1 ? "s" : ""}
+                          </span>
+                          {stats.toolCalls.length > 0 ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="flex items-center gap-1 cursor-default">
+                                  <Wrench className="h-3 w-3" />
+                                  {stats.toolCalls.reduce(
+                                    (sum, tc) => sum + tc.count,
+                                    0,
+                                  )}{" "}
+                                  tool call
+                                  {stats.toolCalls.reduce(
+                                    (sum, tc) => sum + tc.count,
+                                    0,
+                                  ) !== 1
+                                    ? "s"
+                                    : ""}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <ul className="text-left">
+                                  {stats.toolCalls.map((tc) => (
+                                    <li key={tc.name}>
+                                      {tc.name} &times;{tc.count}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <Wrench className="h-3 w-3" />0 tool calls
+                            </span>
+                          )}
+                          <span className="flex items-center gap-1">
+                            <MessageSquare className="h-3 w-3" />
+                            {stats.inputTokens} in / {stats.outputTokens} out
+                          </span>
+                        </div>
+                      )}
+                      {run.errorMessage && (
+                        <p className="text-sm text-destructive mt-1">
+                          {run.errorMessage}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-                {run.chatId && (
-                  <Link
-                    href={`/${orgId}/workspace/${workspaceId}/chat/${run.chatId}`}
-                    className="text-sm text-primary hover:underline"
-                  >
-                    View chat
-                  </Link>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

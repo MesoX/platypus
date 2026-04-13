@@ -6,7 +6,6 @@ import { db } from "../index.ts";
 import {
   trigger as triggerTable,
   triggerRun as triggerRunTable,
-  chat as chatTable,
   agent as agentTable,
   workspace as workspaceTable,
   provider as providerTable,
@@ -24,10 +23,10 @@ import {
 } from "./chat-execution.ts";
 import { logger } from "../logger.ts";
 import { validateCronExpression } from "../utils/cron.ts";
-import type { PlatypusUIMessage } from "../types.ts";
 import type {
   Provider,
   CronTriggerConfig,
+  TriggerRunStats,
   WebhookEvent,
 } from "@platypus/schemas";
 
@@ -63,7 +62,7 @@ async function retainNewest(
       {
         triggerId: fkValue,
         deletedCount: deleted.length,
-        maxChatsToKeep: limit,
+        maxRunsToKeep: limit,
       },
       `Cleaned up old ${label}`,
     );
@@ -78,7 +77,7 @@ export type EventContext = {
 /**
  * Executes a trigger by running the agent with the configured instruction.
  * For event triggers, event context is prepended to the instruction.
- * Returns the created chat ID.
+ * Returns the trigger run ID.
  */
 export const executeTrigger = async (
   trigger: typeof triggerTable.$inferSelect,
@@ -101,14 +100,14 @@ export const executeTrigger = async (
   // Helper to update run status
   const updateRunStatus = async (
     status: "running" | "success" | "failed",
-    data?: { chatId?: string; errorMessage?: string },
+    data?: { errorMessage?: string; stats?: TriggerRunStats },
   ) => {
     await db
       .update(triggerRunTable)
       .set({
         status,
-        chatId: data?.chatId ?? null,
         errorMessage: data?.errorMessage ?? null,
+        stats: data?.stats ?? null,
         completedAt:
           status === "success" || status === "failed" ? new Date() : null,
       })
@@ -220,7 +219,6 @@ export const executeTrigger = async (
   }
 
   // 12. Execute agent with instruction
-  const chatId = nanoid();
   const startTime = Date.now();
 
   try {
@@ -228,7 +226,6 @@ export const executeTrigger = async (
       {
         triggerId: id,
         runId,
-        chatId,
         agentId,
         type: trigger.type,
         instruction: effectiveInstruction.substring(0, 100) + "...",
@@ -255,49 +252,42 @@ export const executeTrigger = async (
 
     const duration = Date.now() - startTime;
 
-    // Build the chat messages from the result
-    const messages: PlatypusUIMessage[] = [
-      {
-        id: nanoid(),
-        role: "user",
-        parts: [{ type: "text", text: effectiveInstruction }],
-      },
-      {
-        id: nanoid(),
-        role: "assistant",
-        parts: [{ type: "text", text: result.text }],
-      },
-    ];
+    // Extract execution stats from the result
+    const toolCallCounts = new Map<string, number>();
+    for (const step of result.steps) {
+      for (const tc of step.toolCalls) {
+        toolCallCounts.set(
+          tc.toolName,
+          (toolCallCounts.get(tc.toolName) ?? 0) + 1,
+        );
+      }
+    }
 
-    // 13. Save chat record
-    await db.insert(chatTable).values({
-      id: chatId,
-      workspaceId,
-      title: `Triggered: ${trigger.name}`,
-      messages,
-      agentId: agent.id,
-      triggerId: id,
-      memoryExtractionStatus: "completed", // Skip memory extraction for triggered chats
-      tags: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    const stats: TriggerRunStats = {
+      steps: result.steps.length,
+      toolCalls: Array.from(toolCallCounts, ([name, count]) => ({
+        name,
+        count,
+      })),
+      inputTokens: result.totalUsage.inputTokens ?? 0,
+      outputTokens: result.totalUsage.outputTokens ?? 0,
+    };
 
-    // Update run status to success
-    await updateRunStatus("success", { chatId });
+    // Update run status to success with stats
+    await updateRunStatus("success", { stats });
 
     logger.info(
       {
         triggerId: id,
         runId,
-        chatId,
         duration,
         responseLength: result.text.length,
+        stats,
       },
       "Trigger execution completed",
     );
 
-    return chatId;
+    return runId;
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
@@ -306,7 +296,6 @@ export const executeTrigger = async (
         error,
         triggerId: id,
         runId,
-        chatId,
         duration: Date.now() - startTime,
       },
       "Trigger execution failed",
@@ -340,7 +329,7 @@ export const updateTriggerAfterRun = async (
   trigger: typeof triggerTable.$inferSelect,
 ): Promise<void> => {
   const now = new Date();
-  const { maxChatsToKeep, type, config } = trigger;
+  const { maxRunsToKeep, type, config } = trigger;
 
   let nextRunAt: Date | null = null;
   let enabled = true;
@@ -376,28 +365,17 @@ export const updateTriggerAfterRun = async (
     })
     .where(eq(triggerTable.id, triggerId));
 
-  // Retention cleanup: delete old chats and runs beyond maxChatsToKeep (in parallel)
-  if (maxChatsToKeep > 0) {
-    await Promise.all([
-      retainNewest(
-        chatTable,
-        chatTable.triggerId,
-        chatTable.id,
-        chatTable.createdAt,
-        triggerId,
-        maxChatsToKeep,
-        "trigger chats",
-      ),
-      retainNewest(
-        triggerRunTable,
-        triggerRunTable.triggerId,
-        triggerRunTable.id,
-        triggerRunTable.startedAt,
-        triggerId,
-        maxChatsToKeep,
-        "trigger runs",
-      ),
-    ]);
+  // Retention cleanup: delete old runs beyond maxRunsToKeep
+  if (maxRunsToKeep > 0) {
+    await retainNewest(
+      triggerRunTable,
+      triggerRunTable.triggerId,
+      triggerRunTable.id,
+      triggerRunTable.startedAt,
+      triggerId,
+      maxRunsToKeep,
+      "trigger runs",
+    );
   }
 
   logger.info(

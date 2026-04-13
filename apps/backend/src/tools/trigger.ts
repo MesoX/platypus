@@ -56,7 +56,7 @@ export function createTriggerTools(
           type: triggerTable.type,
           instruction: triggerTable.instruction,
           enabled: triggerTable.enabled,
-          maxChatsToKeep: triggerTable.maxChatsToKeep,
+          maxRunsToKeep: triggerTable.maxRunsToKeep,
           search: triggerTable.search,
           config: triggerTable.config,
           lastRunAt: triggerTable.lastRunAt,
@@ -162,13 +162,13 @@ export function createTriggerTools(
         .boolean()
         .optional()
         .describe("Whether the trigger is enabled"),
-      maxChatsToKeep: z
+      maxRunsToKeep: z
         .number()
         .int()
         .min(1)
         .max(1000)
         .optional()
-        .describe("Maximum number of chat histories to retain"),
+        .describe("Maximum number of run records to retain"),
       search: z
         .boolean()
         .optional()
@@ -277,8 +277,8 @@ export function createTriggerTools(
         if (fields.description !== undefined)
           updateData.description = fields.description;
         if (fields.enabled !== undefined) updateData.enabled = fields.enabled;
-        if (fields.maxChatsToKeep !== undefined)
-          updateData.maxChatsToKeep = fields.maxChatsToKeep;
+        if (fields.maxRunsToKeep !== undefined)
+          updateData.maxRunsToKeep = fields.maxRunsToKeep;
         if (fields.search !== undefined) updateData.search = fields.search;
         if (fields.type !== undefined) updateData.type = fields.type;
         if (fields.config !== undefined) updateData.config = effectiveConfig;
@@ -347,7 +347,7 @@ export function createTriggerTools(
       }
 
       const enabled = fields.enabled ?? true;
-      const maxChatsToKeep = fields.maxChatsToKeep ?? 10;
+      const maxRunsToKeep = fields.maxRunsToKeep ?? 10;
       const search = fields.search ?? false;
       const id = nanoid();
       const now = new Date();
@@ -382,7 +382,7 @@ export function createTriggerTools(
             description: fields.description || null,
             instruction,
             enabled,
-            maxChatsToKeep,
+            maxRunsToKeep,
             search,
             config: { cronExpression, timezone },
             nextRunAt,
@@ -429,7 +429,7 @@ export function createTriggerTools(
             description: fields.description || null,
             instruction,
             enabled,
-            maxChatsToKeep,
+            maxRunsToKeep,
             search,
             config: eventConfig,
             createdAt: now,

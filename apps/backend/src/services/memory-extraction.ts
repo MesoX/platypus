@@ -276,7 +276,6 @@ const findChatsToProcess = async (): Promise<
     .where(
       and(
         inArray(chatTable.workspaceId, workspaceIds),
-        isNull(chatTable.triggerId), // Exclude triggered chats
         or(
           eq(chatTable.memoryExtractionStatus, "pending"),
           and(

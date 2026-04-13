@@ -115,11 +115,6 @@ export const chat = pgTable(
       .text("memory_extraction_status")
       .default("pending"), // "pending" | "processing" | "completed" | "failed"
 
-    // Trigger association
-    triggerId: t
-      .text("trigger_id")
-      .references(() => trigger.id, { onDelete: "cascade" }),
-
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
     updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
   }),
@@ -131,7 +126,6 @@ export const chat = pgTable(
       t.lastMemoryProcessedAt,
       t.updatedAt,
     ),
-    index("idx_chat_trigger_id").on(t.triggerId),
   ],
 );
 
@@ -368,7 +362,7 @@ export const trigger = pgTable(
     description: t.text("description"),
     instruction: t.text("instruction").notNull(),
     enabled: t.boolean("enabled").notNull().default(true),
-    maxChatsToKeep: t.integer("max_chats_to_keep").notNull().default(10),
+    maxRunsToKeep: t.integer("max_runs_to_keep").notNull().default(10),
     search: t.boolean("search").notNull().default(false),
     config: t.jsonb("config").notNull(),
     lastRunAt: t.timestamp("last_run_at"),
@@ -391,15 +385,13 @@ export const triggerRun = pgTable(
       .text("trigger_id")
       .notNull()
       .references(() => trigger.id, { onDelete: "cascade" }),
-    chatId: t
-      .text("chat_id")
-      .references(() => chat.id, { onDelete: "set null" }),
     status: t.text("status").notNull().default("pending"), // pending | running | success | failed
     eventType: t.text("event_type"),
     eventData: t.jsonb("event_data"),
     startedAt: t.timestamp("started_at").notNull().defaultNow(),
     completedAt: t.timestamp("completed_at"),
     errorMessage: t.text("error_message"),
+    stats: t.jsonb("stats"),
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
   }),
   (t) => [

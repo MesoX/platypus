@@ -347,7 +347,7 @@ const TriggerForm = ({
     timezone: getBrowserTimezone(),
     isOneOff: false,
     enabled: true,
-    maxChatsToKeep: 10,
+    maxRunsToKeep: 10,
     search: false,
   });
 
@@ -396,7 +396,7 @@ const TriggerForm = ({
             ? (trigger.config as CronTriggerConfig).isOneOff
             : false,
         enabled: trigger.enabled,
-        maxChatsToKeep: trigger.maxChatsToKeep,
+        maxRunsToKeep: trigger.maxRunsToKeep,
         search: trigger.search ?? false,
       });
 
@@ -508,7 +508,7 @@ const TriggerForm = ({
         description: formData.description || undefined,
         instruction: formData.instruction,
         enabled: formData.enabled,
-        maxChatsToKeep: formData.maxChatsToKeep,
+        maxRunsToKeep: formData.maxRunsToKeep,
         search: formData.search,
       };
 
@@ -1082,20 +1082,20 @@ const TriggerForm = ({
             )}
 
           <Field className="w-1/2">
-            <FieldLabel htmlFor="maxChatsToKeep">Max Chats to Keep</FieldLabel>
+            <FieldLabel htmlFor="maxRunsToKeep">Max Runs to Keep</FieldLabel>
             <Input
-              id="maxChatsToKeep"
+              id="maxRunsToKeep"
               type="number"
               min="1"
               max="1000"
-              value={formData.maxChatsToKeep}
+              value={formData.maxRunsToKeep}
               onChange={(e) =>
-                handleNumberChange("maxChatsToKeep", e.target.value)
+                handleNumberChange("maxRunsToKeep", e.target.value)
               }
               disabled={isSubmitting}
             />
             <FieldDescription>
-              Maximum number of chat records to keep (oldest will be deleted)
+              Maximum number of run records to keep (oldest will be deleted)
             </FieldDescription>
           </Field>
 
@@ -1171,7 +1171,7 @@ const TriggerForm = ({
         open={isDeleteDialogOpen}
         onOpenChange={setIsDeleteDialogOpen}
         title="Delete Trigger"
-        description="Are you sure you want to delete this trigger? This will also delete all chat history for this trigger. This action cannot be undone."
+        description="Are you sure you want to delete this trigger? This will also delete all run history for this trigger. This action cannot be undone."
         confirmLabel="Delete"
         confirmVariant="destructive"
         onConfirm={handleDelete}
