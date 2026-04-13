@@ -570,19 +570,25 @@ export function KanbanCardDialog({
                   onToggle={toggleAssignee}
                 />
 
-                <div className="text-xs text-muted-foreground space-y-1.5">
-                  {card.createdByName && (
-                    <p>
-                      <span className="font-medium">Created by:</span>{" "}
-                      {card.createdByName}
-                    </p>
-                  )}
-                  {card.lastEditedByName && (
-                    <p>
-                      <span className="font-medium">Last edited by:</span>{" "}
-                      {card.lastEditedByName}
-                    </p>
-                  )}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    Created
+                  </p>
+                  <p className="text-xs text-muted-foreground/70">
+                    {format(new Date(card.createdAt), "MMM d, yyyy 'at' h:mm a")}
+                    {card.createdByName && <> by {card.createdByName}</>}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    Updated
+                  </p>
+                  <p className="text-xs text-muted-foreground/70">
+                    {format(new Date(card.updatedAt), "MMM d, yyyy 'at' h:mm a")}
+                    {card.lastEditedByName && (
+                      <> by {card.lastEditedByName}</>
+                    )}
+                  </p>
                 </div>
               </div>
             </TabsContent>
@@ -985,19 +991,25 @@ export function KanbanCardDialog({
                 onToggle={toggleAssignee}
               />
 
-              <div className="text-xs text-muted-foreground space-y-1.5">
-                {card.createdByName && (
-                  <p>
-                    <span className="font-medium">Created by:</span>{" "}
-                    {card.createdByName}
-                  </p>
-                )}
-                {card.lastEditedByName && (
-                  <p>
-                    <span className="font-medium">Last edited by:</span>{" "}
-                    {card.lastEditedByName}
-                  </p>
-                )}
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">
+                  Created
+                </p>
+                <div className="text-xs text-muted-foreground">
+                  {format(new Date(card.createdAt), "MMM d, yyyy 'at' h:mm a")}
+                  {card.createdByName && <> by {card.createdByName}</>}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">
+                  Updated
+                </p>
+                <div className="text-xs text-muted-foreground">
+                  {format(new Date(card.updatedAt), "MMM d, yyyy 'at' h:mm a")}
+                  {card.lastEditedByName && (
+                    <> by {card.lastEditedByName}</>
+                  )}
+                </div>
               </div>
             </div>
           </div>
