@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ExpandableTextarea } from "@/components/expandable-textarea";
+import { AgentAvatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -674,6 +675,7 @@ const TriggerForm = ({
               <SelectContent>
                 {agents.map((agent) => (
                   <SelectItem key={agent.id} value={agent.id}>
+                    <AgentAvatar agent={agent} className="size-5" />
                     {agent.name}
                   </SelectItem>
                 ))}
