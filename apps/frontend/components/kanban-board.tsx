@@ -57,6 +57,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type ColumnWithCards = KanbanColumn & { cards: KanbanCard[] };
 
@@ -680,7 +681,45 @@ export function KanbanBoard({
     return <div className="p-4 text-destructive">Failed to load board.</div>;
   }
   if (!data) {
-    return <div className="p-4">Loading...</div>;
+    return (
+      <div className="flex flex-col h-full min-w-0 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
+          <Skeleton className="h-7 w-40" />
+          <Skeleton className="size-9 rounded-md" />
+        </div>
+        <div className="flex-1 min-h-0 min-w-0 overflow-x-auto">
+          <div className="flex gap-4 p-4 h-full min-w-fit">
+            {Array.from({ length: 4 }).map((_, colIndex) => (
+              <div
+                key={colIndex}
+                className="flex flex-col w-80 min-w-80 shrink-0 bg-muted/50 rounded-lg"
+              >
+                <div className="p-3">
+                  <Skeleton className="h-5 w-32" />
+                </div>
+                <div className="flex-1 overflow-y-hidden p-2 space-y-2 min-h-[100px]">
+                  {Array.from({
+                    length:
+                      colIndex === 0
+                        ? 3
+                        : colIndex === 1
+                          ? 5
+                          : colIndex === 2
+                            ? 2
+                            : 4,
+                  }).map((_, cardIndex) => (
+                    <Skeleton
+                      key={cardIndex}
+                      className="h-20 w-full rounded-lg"
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
