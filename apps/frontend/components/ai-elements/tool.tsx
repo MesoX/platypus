@@ -62,6 +62,8 @@ const toolToToolSet: Record<string, string> = {
   upsertTrigger: "triggers",
   deleteTrigger: "triggers",
   // agent-management
+  listToolSets: "agent-management",
+  listModelProviders: "agent-management",
   listSkills: "agent-management",
   getSkill: "agent-management",
   upsertSkill: "agent-management",

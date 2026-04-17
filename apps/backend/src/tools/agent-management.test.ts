@@ -77,6 +77,7 @@ describe("createAgentManagementTools", () => {
   it("returns the expected tool names", () => {
     expect(Object.keys(tools)).toEqual([
       "listToolSets",
+      "listModelProviders",
       "listSkills",
       "getSkill",
       "upsertSkill",
@@ -87,6 +88,19 @@ describe("createAgentManagementTools", () => {
       "updateAgent",
       "deleteAgent",
     ]);
+  });
+
+  describe("listModelProviders", () => {
+    it("returns providers for workspace and org", async () => {
+      const providers = [
+        { id: "p1", name: "Provider 1", modelIds: ["model-a", "model-b"] },
+        { id: "p2", name: "Provider 2", modelIds: ["model-c"] },
+      ];
+      mockDb.where.mockResolvedValue(providers);
+
+      const result = await tools.listModelProviders.execute({}, ctx);
+      expect(result).toEqual(providers);
+    });
   });
 
   describe("listAgents", () => {

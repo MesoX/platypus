@@ -1,11 +1,12 @@
 import { tool, type Tool } from "ai";
 import { z } from "zod";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import { db } from "../index.ts";
 import {
   skill as skillTable,
   agent as agentTable,
   mcp as mcpTable,
+  provider as providerTable,
 } from "../db/schema.ts";
 import { getToolSets } from "../tools/index.ts";
 import { dedupeArray } from "../utils.ts";
@@ -49,6 +50,32 @@ export function createAgentManagementTools(
       }));
 
       return [...toolSetsList, ...mcpList];
+    },
+  });
+
+  // ---------------------------------------------------------------------------
+  // Provider discovery
+  // ---------------------------------------------------------------------------
+
+  const listModelProviders = tool({
+    description:
+      "List all configured providers and their available model IDs. Use the returned provider IDs and model IDs when creating or updating agents.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const providers = await db
+        .select({
+          id: providerTable.id,
+          name: providerTable.name,
+          modelIds: providerTable.modelIds,
+        })
+        .from(providerTable)
+        .where(
+          or(
+            eq(providerTable.workspaceId, workspaceId),
+            eq(providerTable.organizationId, orgId),
+          ),
+        );
+      return providers;
     },
   });
 
@@ -519,6 +546,7 @@ export function createAgentManagementTools(
 
   return {
     listToolSets,
+    listModelProviders,
     listSkills,
     getSkill,
     upsertSkill,
