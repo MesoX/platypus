@@ -38,7 +38,6 @@ import { fetcher, joinUrl } from "@/lib/utils";
 import Link from "next/link";
 import { useBackendUrl } from "@/app/client-context";
 import { useAuth } from "@/components/auth-provider";
-import { format } from "date-fns";
 import { describeSchedule } from "@/lib/cron-utils";
 import { toast } from "sonner";
 
@@ -195,18 +194,6 @@ export const TriggerList = ({
                             (trigger.config as CronTriggerConfig).timezone,
                           )}
                         </span>
-                        {trigger.nextRunAt && trigger.enabled && (
-                          <span>
-                            Next run:{" "}
-                            {format(new Date(trigger.nextRunAt), "PPp")}
-                          </span>
-                        )}
-                        {trigger.lastRunAt && (
-                          <span>
-                            Last run:{" "}
-                            {format(new Date(trigger.lastRunAt), "PPp")}
-                          </span>
-                        )}
                       </>
                     ) : (
                       <span className="flex items-center gap-1 flex-wrap">
