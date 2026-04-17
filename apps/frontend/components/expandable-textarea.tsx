@@ -34,26 +34,52 @@ function ExpandableTextarea({
   const [activeTab, setActiveTab] = React.useState<"write" | "preview">(
     "write",
   );
+  const [draftValue, setDraftValue] = React.useState("");
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-  const currentLength = typeof value === "string" ? value.length : 0;
+  const draftRef = React.useRef(draftValue);
+  draftRef.current = draftValue;
+
+  const commitDraft = () => {
+    if (onChange && draftRef.current !== value) {
+      const event = {
+        target: { value: draftRef.current, id: id ?? "" },
+      } as React.ChangeEvent<HTMLTextAreaElement>;
+      onChange(event);
+    }
+  };
+
+  const closeExpanded = () => {
+    commitDraft();
+    setActiveTab("write");
+    setIsExpanded(false);
+  };
+
+  const openExpanded = () => {
+    setDraftValue(typeof value === "string" ? value : "");
+    setIsExpanded(true);
+  };
 
   const toggleExpand = () => {
     if (isExpanded) {
-      setActiveTab("write");
+      closeExpanded();
+    } else {
+      openExpanded();
     }
-    setIsExpanded(!isExpanded);
   };
 
   React.useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isExpanded) {
-        setIsExpanded(false);
-        setActiveTab("write");
+        closeExpanded();
       }
     };
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
   }, [isExpanded]);
+
+  const displayValue = isExpanded ? draftValue : value;
+  const currentLength =
+    typeof displayValue === "string" ? displayValue.length : 0;
 
   const renderTextarea = (expanded: boolean) => (
     <Textarea
@@ -63,8 +89,8 @@ function ExpandableTextarea({
         className,
       )}
       maxLength={maxLength}
-      value={value}
-      onChange={onChange}
+      value={expanded ? draftValue : value}
+      onChange={expanded ? (e) => setDraftValue(e.target.value) : onChange}
       id={id}
       ref={expanded ? textareaRef : undefined}
       {...props}
@@ -210,10 +236,10 @@ function ExpandableTextarea({
                       renderTextarea(true)
                     ) : (
                       <div className="h-full overflow-y-auto rounded-md border bg-transparent px-3 py-2">
-                        {typeof value === "string" && value.length > 0 ? (
+                        {draftValue.length > 0 ? (
                           <div className="prose prose-sm dark:prose-invert max-w-none [overflow-wrap:anywhere]">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {value}
+                              {draftValue}
                             </ReactMarkdown>
                           </div>
                         ) : (
