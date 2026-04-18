@@ -182,6 +182,7 @@ export const mcp = pgTable(
       }),
     name: t.text("name").notNull(),
     url: t.text("url"),
+    headers: t.jsonb("headers").$type<Record<string, string>>(),
     authType: t.text("auth_type").notNull(),
     bearerToken: t.text("bearer_token"),
     oauthAccessToken: t.text("oauth_access_token"),

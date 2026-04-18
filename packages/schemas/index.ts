@@ -290,6 +290,7 @@ const mcpBaseSchema = z.object({
   workspaceId: z.string(),
   name: z.string().min(3).max(30),
   url: z.url(),
+  headers: z.record(z.string(), z.string()).optional(),
   authType: z.enum(["None", "Bearer", "OAuth"]),
   bearerToken: z.string().optional(),
   oauthClientId: z.string().optional(),
@@ -316,6 +317,7 @@ export const mcpCreateSchema = mcpBaseSchema
     workspaceId: true,
     name: true,
     url: true,
+    headers: true,
     authType: true,
     bearerToken: true,
     oauthClientId: true,
@@ -327,6 +329,7 @@ export const mcpUpdateSchema = mcpBaseSchema
   .pick({
     name: true,
     url: true,
+    headers: true,
     authType: true,
     bearerToken: true,
     oauthClientId: true,
@@ -337,6 +340,7 @@ export const mcpUpdateSchema = mcpBaseSchema
 export const mcpTestSchema = mcpBaseSchema
   .pick({
     url: true,
+    headers: true,
     authType: true,
     bearerToken: true,
   })

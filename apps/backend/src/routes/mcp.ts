@@ -221,10 +221,12 @@ mcp.post(
           transport: {
             type: "http",
             url: data.url,
-            headers:
-              data.authType === "Bearer"
+            headers: {
+              ...data.headers,
+              ...(data.authType === "Bearer"
                 ? { Authorization: `Bearer ${data.bearerToken}` }
-                : undefined,
+                : {}),
+            },
           },
         });
       }

@@ -37,16 +37,21 @@ import {
   ExternalLink,
   ShieldCheck,
   ShieldOff,
+  Plus,
 } from "lucide-react";
 import {
   OAUTH_MCP_SUCCESS_EVENT,
   OAUTH_MCP_ERROR_EVENT,
 } from "@/lib/constants";
 
+type HeaderRow = { key: string; value: string };
+
 type McpFormData = Omit<
   MCP,
   "id" | "createdAt" | "updatedAt" | "workspaceId" | "oauthAuthorized"
->;
+> & {
+  headerRows: HeaderRow[];
+};
 
 const McpForm = ({
   classNames,
@@ -69,6 +74,7 @@ const McpForm = ({
     bearerToken: "",
     oauthClientId: "",
     oauthClientSecret: "",
+    headerRows: [],
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -103,6 +109,15 @@ const McpForm = ({
 
   useEffect(() => {
     if (mcp) {
+      const existingHeaders = (mcp as any).headers as
+        | Record<string, string>
+        | undefined;
+      const headerRows: HeaderRow[] = existingHeaders
+        ? Object.entries(existingHeaders).map(([key, value]) => ({
+            key,
+            value,
+          }))
+        : [];
       setFormData({
         name: mcp.name,
         url: mcp.url || "",
@@ -110,6 +125,7 @@ const McpForm = ({
         bearerToken: mcp.bearerToken || "",
         oauthClientId: mcp.oauthClientId || "",
         oauthClientSecret: "",
+        headerRows,
       });
     }
   }, [mcp]);
@@ -163,12 +179,25 @@ const McpForm = ({
     setTestResult(null);
   };
 
+  /** Convert headerRows to a Record, filtering out empty keys */
+  const buildHeadersObject = (): Record<string, string> | undefined => {
+    const headers: Record<string, string> = {};
+    for (const row of formData.headerRows) {
+      const key = row.key.trim();
+      if (key) {
+        headers[key] = row.value;
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  };
+
   /** Builds the save payload from current form state */
   const buildPayload = () => {
     const payload: Record<string, unknown> = {
       workspaceId,
       name: formData.name,
       url: formData.url,
+      headers: buildHeadersObject(),
       authType: formData.authType,
       bearerToken:
         formData.authType === "Bearer" ? formData.bearerToken : undefined,
@@ -273,6 +302,7 @@ const McpForm = ({
     try {
       const payload: Record<string, unknown> = {
         url: formData.url,
+        headers: buildHeadersObject(),
         authType: formData.authType,
         bearerToken:
           formData.authType === "Bearer" ? formData.bearerToken : undefined,
@@ -574,6 +604,86 @@ const McpForm = ({
               </FieldDescription>
             </FieldGroup>
           )}
+
+          {/* Custom Headers */}
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <FieldLabel>Custom Headers</FieldLabel>
+              <FieldDescription>
+                Optional HTTP headers sent with every request to the MCP server.
+              </FieldDescription>
+            </div>
+            {formData.headerRows.map((row, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <Input
+                  placeholder="Header Name"
+                  value={row.key}
+                  onChange={(e) => {
+                    const newRows = [...formData.headerRows];
+                    newRows[index] = { ...newRows[index], key: e.target.value };
+                    setFormData((prev) => ({
+                      ...prev,
+                      headerRows: newRows,
+                    }));
+                    setTestResult(null);
+                  }}
+                  disabled={isSubmitting}
+                />
+                <Input
+                  placeholder="Header Value"
+                  value={row.value}
+                  onChange={(e) => {
+                    const newRows = [...formData.headerRows];
+                    newRows[index] = {
+                      ...newRows[index],
+                      value: e.target.value,
+                    };
+                    setFormData((prev) => ({
+                      ...prev,
+                      headerRows: newRows,
+                    }));
+                    setTestResult(null);
+                  }}
+                  disabled={isSubmitting}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 cursor-pointer"
+                  onClick={() => {
+                    const newRows = formData.headerRows.filter(
+                      (_, i) => i !== index,
+                    );
+                    setFormData((prev) => ({
+                      ...prev,
+                      headerRows: newRows,
+                    }));
+                    setTestResult(null);
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="cursor-pointer"
+              onClick={() =>
+                setFormData((prev) => ({
+                  ...prev,
+                  headerRows: [...prev.headerRows, { key: "", value: "" }],
+                }))
+              }
+              disabled={isSubmitting}
+            >
+              <Plus className="h-4 w-4" />
+              Add Header
+            </Button>
+          </div>
 
           {/* OAuth Authorization Section */}
           {formData.authType === "OAuth" && (

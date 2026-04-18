@@ -35,13 +35,21 @@ export const buildMcpTransportConfig = (mcp: McpRecord) => {
     url: mcp.url!,
   };
 
+  const customHeaders = mcp.headers ?? {};
+
   if (mcp.authType === "OAuth" && mcp.oauthAccessToken) {
     const callbackUrl = buildOAuthCallbackUrl();
     config.authProvider = new DatabaseOAuthClientProvider(mcp, callbackUrl);
+    if (Object.keys(customHeaders).length > 0) {
+      config.headers = customHeaders;
+    }
   } else if (mcp.authType === "Bearer") {
     config.headers = {
+      ...customHeaders,
       Authorization: `Bearer ${mcp.bearerToken}`,
     };
+  } else if (Object.keys(customHeaders).length > 0) {
+    config.headers = customHeaders;
   }
 
   return config;

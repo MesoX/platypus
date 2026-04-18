@@ -87,6 +87,85 @@ describe("mcp-oauth-provider", () => {
       expect(config.authProvider).toBeDefined();
     });
 
+    it("should pass custom headers with None auth type", async () => {
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
+      const mcp = {
+        id: "mcp-1",
+        url: "http://mcp.example.com",
+        authType: "None",
+        headers: { "X-Custom": "value", "X-Another": "test" },
+      } as any;
+
+      const config = buildMcpTransportConfig(mcp);
+      expect(config).toEqual({
+        type: "http",
+        url: "http://mcp.example.com",
+        headers: { "X-Custom": "value", "X-Another": "test" },
+      });
+    });
+
+    it("should merge custom headers with Bearer auth, Authorization wins", async () => {
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
+      const mcp = {
+        id: "mcp-1",
+        url: "http://mcp.example.com",
+        authType: "Bearer",
+        bearerToken: "my-token",
+        headers: {
+          "X-Custom": "value",
+          Authorization: "should-be-overridden",
+        },
+      } as any;
+
+      const config = buildMcpTransportConfig(mcp);
+      expect(config).toEqual({
+        type: "http",
+        url: "http://mcp.example.com",
+        headers: {
+          "X-Custom": "value",
+          Authorization: "Bearer my-token",
+        },
+      });
+    });
+
+    it("should not set headers when headers is undefined", async () => {
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
+      const mcp = {
+        id: "mcp-1",
+        url: "http://mcp.example.com",
+        authType: "None",
+        headers: undefined,
+      } as any;
+
+      const config = buildMcpTransportConfig(mcp);
+      expect(config).toEqual({
+        type: "http",
+        url: "http://mcp.example.com",
+      });
+      expect(config.headers).toBeUndefined();
+    });
+
+    it("should not set headers when headers is empty object", async () => {
+      const { buildMcpTransportConfig } =
+        await import("./mcp-oauth-provider.ts");
+      const mcp = {
+        id: "mcp-1",
+        url: "http://mcp.example.com",
+        authType: "None",
+        headers: {},
+      } as any;
+
+      const config = buildMcpTransportConfig(mcp);
+      expect(config).toEqual({
+        type: "http",
+        url: "http://mcp.example.com",
+      });
+      expect(config.headers).toBeUndefined();
+    });
+
     it("should not add authProvider for OAuth without access token", async () => {
       const { buildMcpTransportConfig } =
         await import("./mcp-oauth-provider.ts");
