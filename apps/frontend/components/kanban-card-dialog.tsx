@@ -45,6 +45,7 @@ import {
   Users,
   User,
   Pencil,
+  Copy,
 } from "lucide-react";
 import { cn, fetcher, joinUrl } from "@/lib/utils";
 import { useBackendUrl } from "@/app/client-context";
@@ -318,6 +319,12 @@ export function KanbanCardDialog({
 
   if (!card) return null;
 
+  const handleCopyToClipboard = () => {
+    const markdown = body ? `# ${title}\n\n${body}` : `# ${title}`;
+    navigator.clipboard.writeText(markdown);
+    toast.success("Copied to clipboard");
+  };
+
   const toggleLabel = (labelId: string) => {
     setSelectedLabelIds((prev) =>
       prev.includes(labelId)
@@ -397,25 +404,53 @@ export function KanbanCardDialog({
             </TabsList>
             <TabsContent
               value="details"
-              className="flex-1 overflow-y-auto space-y-4 mt-0 pt-4 min-w-0"
+              className="flex-1 min-h-0 flex flex-col mt-0 pt-4 min-w-0"
             >
               <div
-                className="space-y-4"
+                className="flex flex-col min-h-0 flex-1"
                 onBlur={(e) => {
                   if (!e.currentTarget.contains(e.relatedTarget)) {
                     setIsEditing(false);
                   }
                 }}
               >
-                {isEditing ? (
-                  <>
+                <div className="shrink-0 mb-4">
+                  {isEditing ? (
                     <Input
                       autoFocus={focusField === "title"}
                       value={title}
                       onChange={(e) => setTitle(e.target.value)}
-                      className="text-lg font-semibold"
+                      className="text-xl font-semibold"
                       placeholder="Card title"
                     />
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <h1 className="text-xl font-semibold [overflow-wrap:anywhere]">
+                        {title}
+                      </h1>
+                      <div className="flex items-center gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={handleCopyToClipboard}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => enterEditing("title")}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+                  {isEditing ? (
                     <Textarea
                       autoFocus={focusField === "body"}
                       value={body}
@@ -424,22 +459,7 @@ export function KanbanCardDialog({
                       rows={6}
                       className="min-h-[150px]"
                     />
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-lg font-semibold [overflow-wrap:anywhere]">
-                        {title}
-                      </h2>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => enterEditing("title")}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                  ) : (
                     <div className="min-h-[150px]">
                       {body ? (
                         <div className="prose prose-sm dark:prose-invert max-w-none [overflow-wrap:anywhere]">
@@ -453,158 +473,164 @@ export function KanbanCardDialog({
                         </p>
                       )}
                     </div>
-                  </>
-                )}
-              </div>
+                  )}
 
-              <div className="border-t pt-4 space-y-4 min-w-0">
-                {columns.length > 1 && selectedColumnId && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">
-                      Column
-                    </p>
-                    <Select
-                      value={selectedColumnId}
-                      onValueChange={setSelectedColumnId}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {columns.map((col) => (
-                          <SelectItem key={col.id} value={col.id}>
-                            {col.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {labels.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">
-                      Labels
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {labels.map((label) => {
-                        const isActive = selectedLabelIds.includes(label.id);
-                        return (
-                          <Badge
-                            key={label.id}
+                  <div className="border-t pt-4 space-y-4 min-w-0">
+                    {columns.length > 1 && selectedColumnId && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-2">
+                          Column
+                        </p>
+                        <Select
+                          value={selectedColumnId}
+                          onValueChange={setSelectedColumnId}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {columns.map((col) => (
+                              <SelectItem key={col.id} value={col.id}>
+                                {col.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    {labels.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-2">
+                          Labels
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {labels.map((label) => {
+                            const isActive = selectedLabelIds.includes(
+                              label.id,
+                            );
+                            return (
+                              <Badge
+                                key={label.id}
+                                className={cn(
+                                  "cursor-pointer transition-opacity border-0",
+                                  !isActive && "opacity-40",
+                                )}
+                                style={{ backgroundColor: label.color }}
+                                onClick={() => toggleLabel(label.id)}
+                              >
+                                {label.name}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Priority */}
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                        Priority
+                      </p>
+                      <Select
+                        value={selectedPriority}
+                        onValueChange={(v) =>
+                          setSelectedPriority(v as KanbanCardPriority)
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {KANBAN_CARD_PRIORITIES.map((p) => (
+                            <SelectItem key={p.value} value={p.value}>
+                              <div className="flex items-center gap-2">
+                                {p.color && (
+                                  <span
+                                    className="size-2 rounded-full shrink-0"
+                                    style={{ backgroundColor: p.color }}
+                                  />
+                                )}
+                                <span>{p.label}</span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Due Date */}
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                        Due Date
+                      </p>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
                             className={cn(
-                              "cursor-pointer transition-opacity border-0",
-                              !isActive && "opacity-40",
+                              "w-full justify-start text-left font-normal",
+                              !selectedDueDate && "text-muted-foreground",
                             )}
-                            style={{ backgroundColor: label.color }}
-                            onClick={() => toggleLabel(label.id)}
                           >
-                            {label.name}
-                          </Badge>
-                        );
-                      })}
+                            <CalendarIcon className="size-3.5" />
+                            {selectedDueDate
+                              ? format(new Date(selectedDueDate), "MMM d, yyyy")
+                              : "Set due date"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={
+                              selectedDueDate
+                                ? new Date(selectedDueDate)
+                                : undefined
+                            }
+                            onSelect={(date) =>
+                              setSelectedDueDate(
+                                date ? date.toISOString() : null,
+                              )
+                            }
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+
+                    {/* Assignees */}
+                    <AssigneePicker
+                      user={user}
+                      agents={agentsData?.results}
+                      selectedAssignees={selectedAssignees}
+                      onToggle={toggleAssignee}
+                    />
+
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                        Created
+                      </p>
+                      <p className="text-xs text-muted-foreground/70">
+                        {format(
+                          new Date(card.createdAt),
+                          "MMM d, yyyy 'at' h:mm a",
+                        )}
+                        {card.createdByName && <> by {card.createdByName}</>}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                        Updated
+                      </p>
+                      <p className="text-xs text-muted-foreground/70">
+                        {format(
+                          new Date(card.updatedAt),
+                          "MMM d, yyyy 'at' h:mm a",
+                        )}
+                        {card.lastEditedByName && (
+                          <> by {card.lastEditedByName}</>
+                        )}
+                      </p>
                     </div>
                   </div>
-                )}
-
-                {/* Priority */}
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">
-                    Priority
-                  </p>
-                  <Select
-                    value={selectedPriority}
-                    onValueChange={(v) =>
-                      setSelectedPriority(v as KanbanCardPriority)
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {KANBAN_CARD_PRIORITIES.map((p) => (
-                        <SelectItem key={p.value} value={p.value}>
-                          <div className="flex items-center gap-2">
-                            {p.color && (
-                              <span
-                                className="size-2 rounded-full shrink-0"
-                                style={{ backgroundColor: p.color }}
-                              />
-                            )}
-                            <span>{p.label}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Due Date */}
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">
-                    Due Date
-                  </p>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !selectedDueDate && "text-muted-foreground",
-                        )}
-                      >
-                        <CalendarIcon className="size-3.5" />
-                        {selectedDueDate
-                          ? format(new Date(selectedDueDate), "MMM d, yyyy")
-                          : "Set due date"}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={
-                          selectedDueDate
-                            ? new Date(selectedDueDate)
-                            : undefined
-                        }
-                        onSelect={(date) =>
-                          setSelectedDueDate(date ? date.toISOString() : null)
-                        }
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                {/* Assignees */}
-                <AssigneePicker
-                  user={user}
-                  agents={agentsData?.results}
-                  selectedAssignees={selectedAssignees}
-                  onToggle={toggleAssignee}
-                />
-
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">
-                    Created
-                  </p>
-                  <p className="text-xs text-muted-foreground/70">
-                    {format(
-                      new Date(card.createdAt),
-                      "MMM d, yyyy 'at' h:mm a",
-                    )}
-                    {card.createdByName && <> by {card.createdByName}</>}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">
-                    Updated
-                  </p>
-                  <p className="text-xs text-muted-foreground/70">
-                    {format(
-                      new Date(card.updatedAt),
-                      "MMM d, yyyy 'at' h:mm a",
-                    )}
-                    {card.lastEditedByName && <> by {card.lastEditedByName}</>}
-                  </p>
                 </div>
               </div>
             </TabsContent>
@@ -724,22 +750,50 @@ export function KanbanCardDialog({
           <div className="flex flex-row gap-2 min-h-0 flex-1 overflow-hidden">
             {/* Main content - Title, Body, and Comments */}
             <div
-              className="flex-1 min-w-0 space-y-4 overflow-y-auto pr-6"
+              className="flex-1 min-w-0 flex flex-col min-h-0 pr-6"
               onBlur={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget)) {
                   setIsEditing(false);
                 }
               }}
             >
-              {isEditing ? (
-                <>
+              <div className="shrink-0 mb-4">
+                {isEditing ? (
                   <Input
                     autoFocus={focusField === "title"}
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    className="text-lg font-semibold"
+                    className="text-xl font-semibold"
                     placeholder="Card title"
                   />
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <h1 className="text-xl font-semibold [overflow-wrap:anywhere]">
+                      {title}
+                    </h1>
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={handleCopyToClipboard}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => enterEditing("title")}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+                {isEditing ? (
                   <Textarea
                     autoFocus={focusField === "body"}
                     value={body}
@@ -748,22 +802,7 @@ export function KanbanCardDialog({
                     rows={6}
                     className="min-h-[150px]"
                   />
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold [overflow-wrap:anywhere]">
-                      {title}
-                    </h2>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => enterEditing("title")}
-                    >
-                      <Pencil className="h-3.5 w-3.5 mr-0.5" />
-                      Edit
-                    </Button>
-                  </div>
+                ) : (
                   <div className="min-h-[150px]">
                     {body ? (
                       <div className="prose prose-sm dark:prose-invert max-w-none [overflow-wrap:anywhere]">
@@ -777,114 +816,114 @@ export function KanbanCardDialog({
                       </p>
                     )}
                   </div>
-                </>
-              )}
-
-              {/* Comments section */}
-              <div className="border-t pt-4">
-                <p className="text-sm font-medium mb-3">Comments</p>
-                {comments.length > 0 && (
-                  <div className="space-y-3 mb-4">
-                    {comments.map((comment) => (
-                      <div key={comment.id} className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium">
-                            {comment.createdByName ?? "Unknown"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatRelativeTime(new Date(comment.createdAt))}
-                          </span>
-                        </div>
-                        {editingCommentId === comment.id ? (
-                          <div className="space-y-2">
-                            <Textarea
-                              value={editingCommentBody}
-                              onChange={(e) =>
-                                setEditingCommentBody(e.target.value)
-                              }
-                              rows={3}
-                              autoFocus
-                            />
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                onClick={() => handleEditComment(comment.id)}
-                                disabled={!editingCommentBody.trim()}
-                              >
-                                Save
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  setEditingCommentId(null);
-                                  setEditingCommentBody("");
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="prose prose-sm dark:prose-invert max-w-none [overflow-wrap:anywhere]">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {comment.body}
-                              </ReactMarkdown>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                className="text-xs text-muted-foreground hover:text-foreground"
-                                onClick={() => {
-                                  setEditingCommentId(comment.id);
-                                  setEditingCommentBody(comment.body);
-                                }}
-                              >
-                                Edit
-                              </button>
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <button className="text-xs text-muted-foreground hover:text-destructive">
-                                    Delete
-                                  </button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-4">
-                                  <p className="text-sm mb-3">
-                                    Delete this comment?
-                                  </p>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    className="w-full"
-                                    onClick={() =>
-                                      handleDeleteComment(comment.id)
-                                    }
-                                  >
-                                    Delete
-                                  </Button>
-                                </PopoverContent>
-                              </Popover>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
                 )}
-                <div className="space-y-2">
-                  <Textarea
-                    value={newCommentBody}
-                    onChange={(e) => setNewCommentBody(e.target.value)}
-                    placeholder="Add a comment..."
-                    rows={3}
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleAddComment}
-                    disabled={!newCommentBody.trim()}
-                  >
-                    Comment
-                  </Button>
+
+                {/* Comments section */}
+                <div className="border-t pt-4">
+                  <p className="text-sm font-medium mb-3">Comments</p>
+                  {comments.length > 0 && (
+                    <div className="space-y-3 mb-4">
+                      {comments.map((comment) => (
+                        <div key={comment.id} className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium">
+                              {comment.createdByName ?? "Unknown"}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatRelativeTime(new Date(comment.createdAt))}
+                            </span>
+                          </div>
+                          {editingCommentId === comment.id ? (
+                            <div className="space-y-2">
+                              <Textarea
+                                value={editingCommentBody}
+                                onChange={(e) =>
+                                  setEditingCommentBody(e.target.value)
+                                }
+                                rows={3}
+                                autoFocus
+                              />
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleEditComment(comment.id)}
+                                  disabled={!editingCommentBody.trim()}
+                                >
+                                  Save
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setEditingCommentId(null);
+                                    setEditingCommentBody("");
+                                  }}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="prose prose-sm dark:prose-invert max-w-none [overflow-wrap:anywhere]">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {comment.body}
+                                </ReactMarkdown>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  className="text-xs text-muted-foreground hover:text-foreground"
+                                  onClick={() => {
+                                    setEditingCommentId(comment.id);
+                                    setEditingCommentBody(comment.body);
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <button className="text-xs text-muted-foreground hover:text-destructive">
+                                      Delete
+                                    </button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-auto p-4">
+                                    <p className="text-sm mb-3">
+                                      Delete this comment?
+                                    </p>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="w-full"
+                                      onClick={() =>
+                                        handleDeleteComment(comment.id)
+                                      }
+                                    >
+                                      Delete
+                                    </Button>
+                                  </PopoverContent>
+                                </Popover>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Textarea
+                      value={newCommentBody}
+                      onChange={(e) => setNewCommentBody(e.target.value)}
+                      placeholder="Add a comment..."
+                      rows={3}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleAddComment}
+                      disabled={!newCommentBody.trim()}
+                    >
+                      Comment
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
