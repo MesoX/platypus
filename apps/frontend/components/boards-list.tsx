@@ -97,7 +97,7 @@ export const BoardsList = ({
 
   return (
     <>
-      <ul className="grid grid-cols-1 lg:grid-cols-2 grid-rows-1 gap-4">
+      <ul className="grid grid-cols-1 lg:grid-cols-2 grid-rows-1 gap-2 lg:gap-4">
         {boards.map((board) => (
           <li key={board.id}>
             <Item variant="outline" className="h-full cursor-pointer" asChild>

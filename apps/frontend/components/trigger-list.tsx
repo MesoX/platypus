@@ -153,7 +153,7 @@ export const TriggerList = ({
 
   return (
     <>
-      <ul className="grid grid-cols-1 lg:grid-cols-2 grid-rows-1 gap-4">
+      <ul className="grid grid-cols-1 lg:grid-cols-2 grid-rows-1 gap-2 lg:gap-4">
         {triggers.map((trigger) => (
           <li key={trigger.id}>
             <Item variant="outline" className="h-full cursor-pointer" asChild>
