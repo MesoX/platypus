@@ -8,7 +8,7 @@ import {
   BotIcon,
   XCircleIcon,
 } from "lucide-react";
-import type { ToolUIPart, TextUIPart, UIMessage, DynamicToolUIPart } from "ai";
+import type { ToolUIPart } from "ai";
 import { Badge } from "@/components/ui/badge";
 import {
   Collapsible,
@@ -21,28 +21,10 @@ import {
   MessageContent,
   MessageResponse,
 } from "./ai-elements/message";
-import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
-} from "./ai-elements/reasoning";
-import {
-  Tool,
-  ToolContent,
-  ToolHeader,
-  ToolInput,
-  ToolOutput,
-} from "./ai-elements/tool";
-import { DynamicToolHeader } from "./dynamic-tool-header";
-import { LoadSkillTool } from "./load-skill-tool";
+import { Shimmer } from "./ai-elements/shimmer";
 import type { ReactNode } from "react";
 
-const getStatusBadge = (status: ToolUIPart["state"], preliminary?: boolean) => {
-  // When the state is "output-available" but the result is preliminary,
-  // the sub-agent is still streaming — treat it as "Running".
-  const effectiveStatus =
-    status === "output-available" && preliminary ? "input-available" : status;
-
+const getStatusBadge = (status: ToolUIPart["state"]) => {
   const labels: Record<ToolUIPart["state"], string> = {
     "input-streaming": "Pending",
     "input-available": "Running",
@@ -65,8 +47,8 @@ const getStatusBadge = (status: ToolUIPart["state"], preliminary?: boolean) => {
 
   return (
     <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
-      {icons[effectiveStatus]}
-      {labels[effectiveStatus]}
+      {icons[status]}
+      {labels[status]}
     </Badge>
   );
 };
@@ -79,7 +61,6 @@ const extractSubAgentName = (toolName: string): string => {
   const prefix = "delegateTo";
   if (toolName.startsWith(prefix)) {
     const namePart = toolName.slice(prefix.length);
-    // Convert camelCase to Title Case by splitting on uppercase letters
     return namePart.replace(/([A-Z])/g, " $1").trim();
   }
   return toolName;
@@ -90,96 +71,17 @@ interface SubAgentToolProps {
 }
 
 /**
- * Renders a sub-agent tool invocation with a robot icon and nested chat UI.
- * When expanded, shows the sub-agent's response as a chat message including
- * reasoning and tool calls, similar to the main chat.
+ * Renders a sub-agent tool invocation. Shows a working indicator while the
+ * sub-agent runs, then the plain-text result when complete.
  */
 export const SubAgentTool = ({ toolPart }: SubAgentToolProps) => {
   const input = toolPart.input as { task?: string };
-  const output = toolPart.output as UIMessage | null;
+  const output = toolPart.output as string | null;
   const errorText = toolPart.errorText;
   const subAgentName = extractSubAgentName(toolPart.type.replace("tool-", ""));
-
-  // Render the sub-agent's output message parts similar to the main chat
-  const renderSubAgentMessage = () => {
-    if (!output || !output.parts) return null;
-
-    return output.parts.map((part, index) => {
-      if (part.type === "text") {
-        const textPart = part as TextUIPart;
-        return (
-          <Message key={`text-${index}`} from="assistant">
-            <MessageContent className="max-w-full">
-              <MessageResponse>{textPart.text}</MessageResponse>
-            </MessageContent>
-          </Message>
-        );
-      } else if (part.type === "reasoning") {
-        return (
-          <Reasoning key={`reasoning-${index}`} defaultOpen={false}>
-            <ReasoningTrigger className="cursor-pointer" />
-            <ReasoningContent>{part.text}</ReasoningContent>
-          </Reasoning>
-        );
-      } else if (part.type === "dynamic-tool") {
-        const toolPartInner = part as DynamicToolUIPart;
-        return (
-          <Tool key={`tool-${index}`}>
-            <DynamicToolHeader
-              state={toolPartInner.state}
-              title={toolPartInner.toolName}
-            />
-            <ToolContent>
-              <ToolInput input={toolPartInner.input} />
-              <ToolOutput
-                output={toolPartInner.output}
-                errorText={toolPartInner.errorText}
-              />
-            </ToolContent>
-          </Tool>
-        );
-      } else if (part.type === "tool-loadSkill") {
-        return (
-          <LoadSkillTool key={`tool-${index}`} toolPart={part as ToolUIPart} />
-        );
-      } else if (part.type.startsWith("tool-delegateTo")) {
-        // Nested sub-agent calls should NOT happen - backend enforces this
-        // If this appears, it's an error - show a warning instead of recursing
-        const nestedToolPart = part as ToolUIPart;
-        const nestedName = extractSubAgentName(
-          nestedToolPart.type.replace("tool-", ""),
-        );
-        return (
-          <Tool key={`tool-${index}`}>
-            <ToolHeader state="output-error" type={nestedToolPart.type} />
-            <ToolContent>
-              <div className="p-3 text-destructive text-sm">
-                Error: Sub-agent "{nestedName}" cannot call other sub-agents.
-                This should not happen - the backend should prevent sub-agents
-                from having delegate tools.
-              </div>
-            </ToolContent>
-          </Tool>
-        );
-      } else if (part.type.startsWith("tool-")) {
-        const toolPartInner = part as ToolUIPart;
-        return (
-          <Tool key={`tool-${index}`}>
-            <ToolHeader state={toolPartInner.state} type={toolPartInner.type} />
-            <ToolContent>
-              <ToolInput input={toolPartInner.input} />
-              <ToolOutput
-                output={toolPartInner.output}
-                errorText={toolPartInner.errorText}
-              />
-            </ToolContent>
-          </Tool>
-        );
-      }
-      // Skip other part types
-      return null;
-    });
-  };
+  const isRunning =
+    toolPart.state === "input-streaming" ||
+    toolPart.state === "input-available";
 
   return (
     <Collapsible className="not-prose mb-4 w-full rounded-md border group/subagent">
@@ -187,12 +89,7 @@ export const SubAgentTool = ({ toolPart }: SubAgentToolProps) => {
         <div className="flex items-center gap-2">
           <BotIcon className="size-4 text-muted-foreground" />
           <span className="font-medium text-sm">{subAgentName}</span>
-          {getStatusBadge(
-            errorText ? "output-error" : toolPart.state,
-            toolPart.state === "output-available"
-              ? toolPart.preliminary
-              : undefined,
-          )}
+          {getStatusBadge(errorText ? "output-error" : toolPart.state)}
         </div>
         <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]/subagent:rotate-180" />
       </CollapsibleTrigger>
@@ -212,7 +109,7 @@ export const SubAgentTool = ({ toolPart }: SubAgentToolProps) => {
           </div>
         </div>
 
-        {/* Error or Response (chat-like) */}
+        {/* Working indicator, error, or response */}
         {errorText ? (
           <div className="space-y-2 border-t p-4">
             <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
@@ -222,12 +119,20 @@ export const SubAgentTool = ({ toolPart }: SubAgentToolProps) => {
               {errorText}
             </div>
           </div>
+        ) : isRunning ? (
+          <div className="border-t p-4">
+            <Shimmer className="text-sm">Working...</Shimmer>
+          </div>
         ) : output ? (
           <div className="space-y-2 border-t p-4">
             <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
               Response
             </h4>
-            <div className="flex flex-col gap-2">{renderSubAgentMessage()}</div>
+            <Message from="assistant">
+              <MessageContent className="max-w-full">
+                <MessageResponse>{output}</MessageResponse>
+              </MessageContent>
+            </Message>
           </div>
         ) : null}
       </CollapsibleContent>

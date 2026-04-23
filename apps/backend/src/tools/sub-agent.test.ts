@@ -1,5 +1,13 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSubAgentTool, createSubAgentTools } from "./sub-agent.ts";
+
+vi.mock("ai", async () => {
+  const actual = await vi.importActual("ai");
+  return {
+    ...actual,
+    generateText: vi.fn().mockResolvedValue({ text: "Sub-agent result" }),
+  };
+});
 
 vi.mock("../logger.ts", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -60,61 +68,42 @@ describe("createSubAgentTool", () => {
     });
   });
 
-  describe("toModelOutput", () => {
-    it("extracts text from parts array", () => {
-      const { tool } = createSubAgentTool(baseOptions);
-      const toModelOutput = (tool as any).toModelOutput;
+  describe("execute", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
 
-      const result = toModelOutput({
-        output: {
-          parts: [
-            { type: "text", text: "First part" },
-            { type: "text", text: "Final answer" },
-          ],
-        },
+    it("returns text from generateText", async () => {
+      const { generateText } = await import("ai");
+      const { tool } = createSubAgentTool(baseOptions);
+      const result = await tool.execute({ task: "Do something" }, {} as any);
+      expect(result).toBe("Sub-agent result");
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: "Do something" }),
+      );
+    });
+
+    it("uses custom system prompt when provided", async () => {
+      const { generateText } = await import("ai");
+      const { tool } = createSubAgentTool({
+        ...baseOptions,
+        systemPrompt: "Custom instructions",
       });
-      expect(result).toEqual({ type: "text", value: "Final answer" });
+      await tool.execute({ task: "Do something" }, {} as any);
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({ system: "Custom instructions" }),
+      );
     });
 
-    it("extracts text from content field", () => {
+    it("uses default system prompt when none provided", async () => {
+      const { generateText } = await import("ai");
       const { tool } = createSubAgentTool(baseOptions);
-      const toModelOutput = (tool as any).toModelOutput;
-
-      const result = toModelOutput({
-        output: { content: "Direct content" },
-      });
-      expect(result).toEqual({ type: "text", value: "Direct content" });
-    });
-
-    it("returns default when output has no extractable text", () => {
-      const { tool } = createSubAgentTool(baseOptions);
-      const toModelOutput = (tool as any).toModelOutput;
-
-      const result = toModelOutput({ output: {} });
-      expect(result).toEqual({ type: "text", value: "Task completed." });
-    });
-
-    it("returns default for null output", () => {
-      const { tool } = createSubAgentTool(baseOptions);
-      const toModelOutput = (tool as any).toModelOutput;
-
-      const result = toModelOutput({ output: null });
-      expect(result).toEqual({ type: "text", value: "Task completed." });
-    });
-
-    it("skips non-text parts", () => {
-      const { tool } = createSubAgentTool(baseOptions);
-      const toModelOutput = (tool as any).toModelOutput;
-
-      const result = toModelOutput({
-        output: {
-          parts: [
-            { type: "tool-call", toolName: "test" },
-            { type: "text", text: "Actual text" },
-          ],
-        },
-      });
-      expect(result).toEqual({ type: "text", value: "Actual text" });
+      await tool.execute({ task: "Do something" }, {} as any);
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: expect.stringContaining("Research Agent"),
+        }),
+      );
     });
   });
 });

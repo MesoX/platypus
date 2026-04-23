@@ -1,4 +1,4 @@
-import { ToolLoopAgent, tool, readUIMessageStream, type Tool } from "ai";
+import { generateText, stepCountIs, tool, type Tool } from "ai";
 import { z } from "zod";
 import { logger } from "../logger.ts";
 
@@ -16,7 +16,7 @@ interface SubAgentToolOptions {
 }
 
 /**
- * Creates a server-side tool that executes a sub-agent using ToolLoopAgent.
+ * Creates a server-side tool that executes a sub-agent using generateText.
  * The sub-agent runs within the parent's tool execution and returns results directly.
  *
  * @param options Sub-agent configuration including model, tools, and prompts
@@ -33,16 +33,7 @@ export const createSubAgentTool = (options: SubAgentToolOptions) => {
     maxSteps = 50,
   } = options;
 
-  // Create the ToolLoopAgent instance
-  const agent = new ToolLoopAgent({
-    model,
-    instructions:
-      systemPrompt ||
-      `You are a specialized sub-agent named "${name}". Complete the task you are given thoroughly and accurately.`,
-    tools,
-  });
-
-  // Generate a slugified tool name (e.g., "delegate_to_research_agent")
+  // Generate a slugified tool name (e.g., "delegateToResearchAgent")
   const toolName = `delegateTo${name
     .replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => c.toUpperCase())
     .replace(/[^a-zA-Z0-9]/g, "")
@@ -61,41 +52,22 @@ export const createSubAgentTool = (options: SubAgentToolOptions) => {
             "A fully self-contained task description. Include ALL necessary context, constraints, and requirements directly. The task must be understandable without any prior conversation context.",
           ),
       }),
-      execute: async function* ({ task }, { abortSignal }) {
-        // Stream the sub-agent's execution
-        const result = await agent.stream({
+      execute: async ({ task }, { abortSignal }) => {
+        // Use generateText with maxSteps to run the sub-agent's tool-calling loop.
+        // This avoids the O(n²) memory pressure caused by streaming intermediate
+        // message states (readUIMessageStream yields the full accumulated message
+        // on every delta, creating thousands of large objects under GC pressure).
+        const { text } = await generateText({
+          model,
+          system:
+            systemPrompt ||
+            `You are a specialized sub-agent named "${name}". Complete the task you are given thoroughly and accurately.`,
           prompt: task,
+          tools,
+          stopWhen: stepCountIs(maxSteps),
           abortSignal,
         });
-
-        // Use readUIMessageStream to accumulate stream into full UIMessage
-        // This ensures toModelOutput receives a complete message with all text parts
-        for await (const message of readUIMessageStream({
-          stream: result.toUIMessageStream(),
-        })) {
-          yield message;
-        }
-      },
-      toModelOutput: ({ output }) => {
-        // Extract the final text response from the sub-agent's output
-        // The output is the last message from the sub-agent
-        if (output && typeof output === "object") {
-          // For UI messages, find the last text part
-          if ("parts" in output && Array.isArray(output.parts)) {
-            const textParts = output.parts.filter(
-              (p: any) => p.type === "text" && "text" in p,
-            );
-            const lastText = textParts.pop();
-            if (lastText && "text" in lastText) {
-              return { type: "text", value: lastText.text as string };
-            }
-          }
-          // Fallback for other message formats
-          if ("content" in output && typeof output.content === "string") {
-            return { type: "text", value: output.content };
-          }
-        }
-        return { type: "text", value: "Task completed." };
+        return text;
       },
     }),
   };
