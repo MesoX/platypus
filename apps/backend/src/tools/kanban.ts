@@ -239,54 +239,74 @@ export function createKanbanTools(
   const upsertCard = tool({
     description:
       "Create a new card or update an existing card. If cardId is provided, updates the existing card. If cardId is not provided, creates a new card (requires columnId and title).",
-    inputSchema: z.object({
-      cardId: z
-        .string()
-        .optional()
-        .describe(
-          "The card ID to update. If not provided, a new card will be created.",
-        ),
-      label: z
-        .string()
-        .describe(
-          "The card title for display purposes (required when updating by cardId)",
-        ),
-      columnId: z
-        .string()
-        .optional()
-        .describe("The column ID (required when creating a new card)"),
-      title: z
-        .string()
-        .optional()
-        .describe("The card title (required when creating a new card)"),
-      body: z.string().optional().describe("The card body/description"),
-      labelIds: z.array(z.string()).optional().describe("Label IDs to apply"),
-      assignees: z
-        .array(
-          z.object({
-            type: z.enum(["user", "agent"]),
-            id: z.string(),
-          }),
-        )
-        .max(1)
-        .optional()
-        .describe(
-          "Card assignee - array with at most one {type, id} object, or empty to unassign",
-        ),
-      dueDate: z
-        .string()
-        .optional()
-        .describe("Due date as ISO 8601 string, or null to clear"),
-      priority: z
-        .enum(["none", "low", "medium", "high", "urgent"])
-        .optional()
-        .describe("Priority level"),
-    }),
+    inputSchema: z
+      .object({
+        cardId: z
+          .string()
+          .optional()
+          .describe(
+            "The card ID to update. If not provided, a new card will be created.",
+          ),
+        label: z
+          .string()
+          .describe(
+            "The card title for display purposes (required when updating by cardId)",
+          ),
+        columnId: z
+          .string()
+          .optional()
+          .describe("The column ID (required when creating a new card)"),
+        title: z
+          .string()
+          .optional()
+          .describe("The card title (required when creating a new card)"),
+        body: z.string().optional().describe("The card body/description"),
+        bodyDiff: z
+          .union([
+            z.array(z.object({ search: z.string(), replace: z.string() })),
+            z.object({
+              mode: z.enum(["append", "prepend"]),
+              content: z.string(),
+            }),
+          ])
+          .optional()
+          .describe(
+            "Partial update to the card body. " +
+              "Provide an array of {search, replace} objects (applied sequentially) " +
+              "OR a single {mode: 'append'|'prepend', content} object for boundary additions. " +
+              "Mutually exclusive with `body`.",
+          ),
+        labelIds: z.array(z.string()).optional().describe("Label IDs to apply"),
+        assignees: z
+          .array(
+            z.object({
+              type: z.enum(["user", "agent"]),
+              id: z.string(),
+            }),
+          )
+          .max(1)
+          .optional()
+          .describe(
+            "Card assignee - array with at most one {type, id} object, or empty to unassign",
+          ),
+        dueDate: z
+          .string()
+          .optional()
+          .describe("Due date as ISO 8601 string, or null to clear"),
+        priority: z
+          .enum(["none", "low", "medium", "high", "urgent"])
+          .optional()
+          .describe("Priority level"),
+      })
+      .refine((v) => !(v.body !== undefined && v.bodyDiff !== undefined), {
+        message: "body and bodyDiff are mutually exclusive",
+      }),
     execute: async ({
       cardId,
       columnId,
       title,
       body,
+      bodyDiff,
       labelIds,
       assignees,
       dueDate,
@@ -304,6 +324,33 @@ export function createKanbanTools(
         };
         if (title !== undefined) updateData.title = title;
         if (body !== undefined) updateData.body = body;
+        if (bodyDiff !== undefined) {
+          const existing = await db
+            .select({ body: kanbanCardTable.body })
+            .from(kanbanCardTable)
+            .where(eq(kanbanCardTable.id, cardId))
+            .limit(1);
+          const currentBody = existing[0]?.body ?? "";
+
+          let newBody: string;
+          if (Array.isArray(bodyDiff)) {
+            newBody = currentBody;
+            for (const op of bodyDiff) {
+              if (!newBody.includes(op.search)) {
+                return {
+                  error: `bodyDiff search string not found: "${op.search}"`,
+                };
+              }
+              newBody = newBody.replace(op.search, op.replace);
+            }
+          } else {
+            newBody =
+              bodyDiff.mode === "append"
+                ? currentBody + bodyDiff.content
+                : bodyDiff.content + currentBody;
+          }
+          updateData.body = newBody;
+        }
         if (labelIds !== undefined) updateData.labelIds = labelIds;
         if (assignees !== undefined) updateData.assignees = assignees;
         if (dueDate !== undefined)

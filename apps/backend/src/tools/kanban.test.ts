@@ -147,6 +147,125 @@ describe("createKanbanTools", () => {
     });
   });
 
+  describe("upsertCard (update) — bodyDiff", () => {
+    function setupCardUpdate(existingBody: string, updatedCard: object) {
+      // verifyCard returns a record (limit call #1), body select returns body (limit call #2),
+      // update returning returns updated card, getBoardIdForCard returns boardId (limit call #3)
+      mockDb.limit
+        .mockResolvedValueOnce([{ id: "card-1" }]) // verifyCard
+        .mockResolvedValueOnce([{ body: existingBody }]) // SELECT body
+        .mockResolvedValueOnce([{ boardId: "board-1" }]); // getBoardIdForCard
+      mockDb.returning.mockResolvedValueOnce([updatedCard]);
+    }
+
+    it("applies search-replace to existing body", async () => {
+      setupCardUpdate("Hello world", { id: "card-1", body: "Hello there" });
+
+      const result = await tools.upsertCard.execute(
+        {
+          cardId: "card-1",
+          label: "test",
+          bodyDiff: [{ search: "world", replace: "there" }],
+        },
+        ctx,
+      );
+
+      const setCall = mockDb.set.mock.calls[0][0];
+      expect(setCall.body).toBe("Hello there");
+      expect(result).not.toHaveProperty("error");
+    });
+
+    it("returns error when search string not found", async () => {
+      mockDb.limit
+        .mockResolvedValueOnce([{ id: "card-1" }]) // verifyCard
+        .mockResolvedValueOnce([{ body: "Hello world" }]); // SELECT body
+
+      const result = await tools.upsertCard.execute(
+        {
+          cardId: "card-1",
+          label: "test",
+          bodyDiff: [{ search: "missing text", replace: "replacement" }],
+        },
+        ctx,
+      );
+
+      expect(result).toEqual({
+        error: 'bodyDiff search string not found: "missing text"',
+      });
+    });
+
+    it("applies multiple search-replace operations sequentially", async () => {
+      setupCardUpdate("foo bar baz", { id: "card-1", body: "qux quux baz" });
+
+      await tools.upsertCard.execute(
+        {
+          cardId: "card-1",
+          label: "test",
+          bodyDiff: [
+            { search: "foo", replace: "qux" },
+            { search: "bar", replace: "quux" },
+          ],
+        },
+        ctx,
+      );
+
+      const setCall = mockDb.set.mock.calls[0][0];
+      expect(setCall.body).toBe("qux quux baz");
+    });
+
+    it("appends content to existing body", async () => {
+      setupCardUpdate("existing content", {
+        id: "card-1",
+        body: "existing content\nnew line",
+      });
+
+      await tools.upsertCard.execute(
+        {
+          cardId: "card-1",
+          label: "test",
+          bodyDiff: { mode: "append", content: "\nnew line" },
+        },
+        ctx,
+      );
+
+      const setCall = mockDb.set.mock.calls[0][0];
+      expect(setCall.body).toBe("existing content\nnew line");
+    });
+
+    it("prepends content to existing body", async () => {
+      setupCardUpdate("existing content", {
+        id: "card-1",
+        body: "new line\nexisting content",
+      });
+
+      await tools.upsertCard.execute(
+        {
+          cardId: "card-1",
+          label: "test",
+          bodyDiff: { mode: "prepend", content: "new line\n" },
+        },
+        ctx,
+      );
+
+      const setCall = mockDb.set.mock.calls[0][0];
+      expect(setCall.body).toBe("new line\nexisting content");
+    });
+
+    it("rejects when both body and bodyDiff are provided", () => {
+      const result = tools.upsertCard.inputSchema.safeParse({
+        cardId: "card-1",
+        label: "test",
+        body: "full body",
+        bodyDiff: [{ search: "foo", replace: "bar" }],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.message).toBe(
+        "body and bodyDiff are mutually exclusive",
+      );
+    });
+  });
+
   describe("moveCard", () => {
     it("returns error when card not found", async () => {
       mockDb.limit.mockResolvedValue([]);
