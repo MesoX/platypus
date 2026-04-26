@@ -64,6 +64,7 @@ const Workspace = () => {
 
   const { data: chatsData, isLoading: isLoadingChats } = useSWR<{
     results: [];
+    totalCount: number;
   }>(
     backendUrl && user
       ? joinUrl(
@@ -225,7 +226,7 @@ const Workspace = () => {
 
   const workspace = workspaceData;
   const agentCount = agentsData?.results?.length || 0;
-  const chatCount = chatsData?.results?.length || 0;
+  const chatCount = chatsData?.totalCount ?? 0;
   const providerCount = providersData?.results?.length || 0;
   const skillCount = skillsData?.results?.length || 0;
   const triggerCount = triggersData?.results?.length || 0;

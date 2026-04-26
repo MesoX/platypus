@@ -66,10 +66,16 @@ describe("Chat Routes", () => {
 
       const mockChats = [{ id: "chat-1", title: "Chat 1" }];
       mockDb.offset.mockResolvedValueOnce(mockChats);
+      // Skip .where() calls from middleware (orgAccess, workspaceAccess) and paginated query
+      mockDb.where
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockResolvedValueOnce([{ totalCount: 1 }]); // count query
 
       const res = await app.request(baseUrl);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ results: mockChats });
+      expect(await res.json()).toEqual({ results: mockChats, totalCount: 1 });
     });
 
     it("should filter chats by single tag", async () => {
@@ -82,10 +88,15 @@ describe("Chat Routes", () => {
         { id: "chat-2", title: "Chat 2", tags: ["typescript", "react"] },
       ];
       mockDb.offset.mockResolvedValueOnce(mockChats);
+      mockDb.where
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockResolvedValueOnce([{ totalCount: 2 }]);
 
       const res = await app.request(`${baseUrl}?tags=typescript`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ results: mockChats });
+      expect(await res.json()).toEqual({ results: mockChats, totalCount: 2 });
     });
 
     it("should filter chats by multiple tags (OR logic)", async () => {
@@ -99,10 +110,15 @@ describe("Chat Routes", () => {
         { id: "chat-3", title: "Chat 3", tags: ["typescript", "react"] },
       ];
       mockDb.offset.mockResolvedValueOnce(mockChats);
+      mockDb.where
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockResolvedValueOnce([{ totalCount: 3 }]);
 
       const res = await app.request(`${baseUrl}?tags=typescript,react`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ results: mockChats });
+      expect(await res.json()).toEqual({ results: mockChats, totalCount: 3 });
     });
 
     it("should return empty array when tag filter has no matches", async () => {
@@ -111,10 +127,15 @@ describe("Chat Routes", () => {
       mockDb.limit.mockResolvedValueOnce([{ ownerId: "user-1" }]); // requireWorkspaceAccess
 
       mockDb.offset.mockResolvedValueOnce([]);
+      mockDb.where
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockResolvedValueOnce([{ totalCount: 0 }]);
 
       const res = await app.request(`${baseUrl}?tags=nonexistent-tag`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ results: [] });
+      expect(await res.json()).toEqual({ results: [], totalCount: 0 });
     });
 
     it("should return all chats when tags param is not provided (backward compatible)", async () => {
@@ -128,10 +149,15 @@ describe("Chat Routes", () => {
         { id: "chat-3", title: "Chat 3", tags: [] },
       ];
       mockDb.offset.mockResolvedValueOnce(mockChats);
+      mockDb.where
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockReturnValueOnce(mockDb)
+        .mockResolvedValueOnce([{ totalCount: 3 }]);
 
       const res = await app.request(baseUrl);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ results: mockChats });
+      expect(await res.json()).toEqual({ results: mockChats, totalCount: 3 });
     });
   });
 

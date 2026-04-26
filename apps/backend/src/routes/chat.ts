@@ -39,7 +39,7 @@ import {
   type ChatSubmitData,
   type Provider,
 } from "@platypus/schemas";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, or, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/authentication.ts";
 import {
   requireOrgAccess,
@@ -157,6 +157,11 @@ chat.get(
           )
         : undefined;
 
+    const whereClause = and(
+      eq(chatTable.workspaceId, workspaceId),
+      searchFilter,
+    );
+
     const records = await db
       .select({
         id: chatTable.id,
@@ -170,12 +175,17 @@ chat.get(
         updatedAt: chatTable.updatedAt,
       })
       .from(chatTable)
-      .where(and(eq(chatTable.workspaceId, workspaceId), searchFilter))
+      .where(whereClause)
       .orderBy(desc(chatTable.createdAt))
       .limit(limit)
       .offset(offset);
 
-    return c.json({ results: records });
+    const [{ totalCount }] = await db
+      .select({ totalCount: count() })
+      .from(chatTable)
+      .where(whereClause);
+
+    return c.json({ results: records, totalCount });
   },
 );
 

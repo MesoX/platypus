@@ -136,6 +136,7 @@ export type ChatListItem = z.infer<typeof chatListItemSchema>;
 
 export const chatListSchema = z.object({
   results: z.array(chatListItemSchema),
+  totalCount: z.number(),
 });
 
 export type ChatList = z.infer<typeof chatListSchema>;
