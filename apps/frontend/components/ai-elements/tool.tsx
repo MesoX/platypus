@@ -54,6 +54,7 @@ const toolToToolSet: Record<string, string> = {
   getCard: "kanban",
   upsertCard: "kanban",
   moveCard: "kanban",
+  copyCard: "kanban",
   deleteCard: "kanban",
   listComments: "kanban",
   upsertComment: "kanban",

@@ -711,6 +711,169 @@ export function createKanbanTools(
     },
   });
 
+  const copyCard = tool({
+    description:
+      "Copy a kanban card to a column on the same board, optionally including comments.",
+    inputSchema: z.object({
+      cardId: z.string().describe("The source card ID to copy"),
+      columnId: z
+        .string()
+        .describe("The target column ID (must be on the same board)"),
+      afterCardId: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          "Place the copy after this card ID, or null/omit to place at the end",
+        ),
+      includeComments: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Whether to copy comments from the source card"),
+      label: z.string().describe("The card title (for display purposes)"),
+    }),
+    execute: async ({ cardId, columnId, afterCardId, includeComments }) => {
+      // 1. Verify the source card exists in this workspace
+      if (!(await verifyCard(cardId))) {
+        return { error: "Card not found" };
+      }
+
+      // 2. Verify the target column exists in this workspace
+      if (!(await verifyColumn(columnId))) {
+        return { error: "Column not found" };
+      }
+
+      // 3. Verify both belong to the same board
+      const sourceBoardId = await getBoardIdForCard(cardId);
+
+      const targetColumnResult = await db
+        .select({ boardId: kanbanColumnTable.boardId })
+        .from(kanbanColumnTable)
+        .where(eq(kanbanColumnTable.id, columnId))
+        .limit(1);
+      const targetBoardId = targetColumnResult[0]?.boardId;
+
+      if (sourceBoardId !== targetBoardId) {
+        return { error: "Cross-board copy is not allowed" };
+      }
+
+      // 4. Fetch source card
+      const sourceCards = await db
+        .select()
+        .from(kanbanCardTable)
+        .where(eq(kanbanCardTable.id, cardId))
+        .limit(1);
+      const sourceCard = sourceCards[0];
+
+      // 5. Calculate position
+      let position: number;
+      if (afterCardId === null || afterCardId === undefined) {
+        // Place at end
+        const maxResult = await db
+          .select({ maxPos: max(kanbanCardTable.position) })
+          .from(kanbanCardTable)
+          .where(eq(kanbanCardTable.columnId, columnId));
+        position = (maxResult[0]?.maxPos ?? 0) + 1.0;
+      } else {
+        const cardsInColumn = await db
+          .select()
+          .from(kanbanCardTable)
+          .where(eq(kanbanCardTable.columnId, columnId))
+          .orderBy(asc(kanbanCardTable.position));
+
+        let result: ReturnType<typeof calculateCardPosition>;
+        try {
+          result = calculateCardPosition(cardsInColumn, afterCardId);
+        } catch {
+          return { error: "afterCardId not found in column" };
+        }
+
+        const { position: calcPos, needsRebalance, afterIndex } = result;
+
+        if (needsRebalance) {
+          // Rebalance existing cards and place new card at the right spot
+          const reorderedCards = [...cardsInColumn];
+          reorderedCards.splice(afterIndex + 1, 0, {
+            id: "__placeholder__",
+            position: 0,
+          } as any);
+          for (let i = 0; i < reorderedCards.length; i++) {
+            if (reorderedCards[i].id !== "__placeholder__") {
+              await db
+                .update(kanbanCardTable)
+                .set({ position: (i + 1) * 1.0, updatedAt: new Date() })
+                .where(eq(kanbanCardTable.id, reorderedCards[i].id));
+            }
+          }
+          position = (afterIndex + 2) * 1.0;
+        } else {
+          position = calcPos;
+        }
+      }
+
+      // 6. Insert new card
+      const { nanoid } = await import("nanoid");
+      const newId = nanoid();
+      const now = new Date();
+
+      const record = await db
+        .insert(kanbanCardTable)
+        .values({
+          id: newId,
+          columnId,
+          title: sourceCard.title,
+          body: sourceCard.body,
+          labelIds: sourceCard.labelIds,
+          assignees: sourceCard.assignees,
+          dueDate: sourceCard.dueDate,
+          priority: sourceCard.priority,
+          position,
+          createdByAgentId: agentId,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+
+      // 7. Copy comments if requested
+      if (includeComments) {
+        const comments = await db
+          .select()
+          .from(kanbanCardCommentTable)
+          .where(eq(kanbanCardCommentTable.cardId, cardId))
+          .orderBy(asc(kanbanCardCommentTable.createdAt));
+
+        for (const comment of comments) {
+          await db.insert(kanbanCardCommentTable).values({
+            id: nanoid(),
+            cardId: newId,
+            body: comment.body,
+            createdByAgentId: agentId,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+
+      // 8. Dispatch event
+      dispatchEvent(workspaceId, "card.created", {
+        ...record[0],
+        boardId: sourceBoardId,
+      });
+
+      const url = sourceBoardId
+        ? buildResourceUrl(
+            frontendUrl,
+            orgId,
+            workspaceId,
+            `boards/${sourceBoardId}`,
+          ) + `?cardId=${newId}`
+        : undefined;
+
+      return { ...record[0], ...(url && { url }) };
+    },
+  });
+
   const bulkEditCards = tool({
     description:
       "Update identical property values across multiple cards in a single operation. Only provided fields are applied — omitted fields are left unchanged. labelIds replaces existing labels; addLabelIds/removeLabelIds add or remove labels and are mutually exclusive with labelIds. When columnId is provided, cards are appended to the end of that column in the order they appear in cardIds. Returns per-card results with a summary.",
@@ -928,6 +1091,7 @@ export function createKanbanTools(
     getCard,
     upsertCard,
     moveCard,
+    copyCard,
     deleteCard,
     bulkEditCards,
     listComments,

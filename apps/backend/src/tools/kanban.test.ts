@@ -74,6 +74,7 @@ describe("createKanbanTools", () => {
       "getCard",
       "upsertCard",
       "moveCard",
+      "copyCard",
       "deleteCard",
       "bulkEditCards",
       "listComments",
@@ -280,6 +281,123 @@ describe("createKanbanTools", () => {
         ctx,
       );
       expect(result).toEqual({ error: "Card not found" });
+    });
+  });
+
+  describe("copyCard", () => {
+    it("copies a card to a column on the same board", async () => {
+      const sourceCard = {
+        id: "card-1",
+        columnId: "col-1",
+        title: "Source Card",
+        body: "Card body",
+        labelIds: ["label-1"],
+        assignees: [],
+        dueDate: null,
+        priority: "medium",
+        position: 1,
+      };
+      const newCard = { ...sourceCard, id: "new-card-id", columnId: "col-2" };
+
+      mockDb.limit
+        .mockResolvedValueOnce([{ id: "card-1" }]) // verifyCard
+        .mockResolvedValueOnce([{ id: "col-2" }]) // verifyColumn
+        .mockResolvedValueOnce([{ boardId: "board-1" }]) // getBoardIdForCard
+        .mockResolvedValueOnce([{ boardId: "board-1" }]) // target column boardId
+        .mockResolvedValueOnce([sourceCard]); // source card select
+      // Skip non-terminal where() calls, then resolve terminal where() for max position
+      for (let i = 0; i < 5; i++) mockDb.where.mockReturnValueOnce(mockDb);
+      mockDb.where.mockResolvedValueOnce([{ maxPos: 3 }]);
+      mockDb.returning.mockResolvedValueOnce([newCard]);
+
+      const result = await tools.copyCard.execute(
+        { cardId: "card-1", columnId: "col-2", label: "Source Card" },
+        ctx,
+      );
+
+      expect(result).not.toHaveProperty("error");
+      expect(result).toHaveProperty("url");
+    });
+
+    it("copies a card with comments when includeComments is true", async () => {
+      const sourceCard = {
+        id: "card-1",
+        columnId: "col-1",
+        title: "Source Card",
+        body: "Body",
+        labelIds: [],
+        assignees: [],
+        dueDate: null,
+        priority: "none",
+        position: 1,
+      };
+      const newCard = { ...sourceCard, id: "new-card-id" };
+      const comments = [
+        { id: "comment-1", cardId: "card-1", body: "Comment 1" },
+      ];
+
+      mockDb.limit
+        .mockResolvedValueOnce([{ id: "card-1" }]) // verifyCard
+        .mockResolvedValueOnce([{ id: "col-1" }]) // verifyColumn
+        .mockResolvedValueOnce([{ boardId: "board-1" }]) // getBoardIdForCard
+        .mockResolvedValueOnce([{ boardId: "board-1" }]) // target column boardId
+        .mockResolvedValueOnce([sourceCard]); // source card select
+      // Skip non-terminal where() calls, then resolve terminal where() for max position
+      for (let i = 0; i < 5; i++) mockDb.where.mockReturnValueOnce(mockDb);
+      mockDb.where.mockResolvedValueOnce([{ maxPos: 1 }]);
+      mockDb.returning.mockResolvedValueOnce([newCard]);
+      // comments query (orderBy resolves)
+      mockDb.orderBy.mockResolvedValueOnce(comments);
+
+      const result = await tools.copyCard.execute(
+        {
+          cardId: "card-1",
+          columnId: "col-1",
+          includeComments: true,
+          label: "Source Card",
+        },
+        ctx,
+      );
+
+      expect(result).not.toHaveProperty("error");
+      // insert called for the new card + once per comment
+      expect(mockDb.insert).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns error when source card not found", async () => {
+      mockDb.limit.mockResolvedValue([]);
+
+      const result = await tools.copyCard.execute(
+        { cardId: "bad-id", columnId: "col-1", label: "test" },
+        ctx,
+      );
+      expect(result).toEqual({ error: "Card not found" });
+    });
+
+    it("returns error when target column not found", async () => {
+      mockDb.limit
+        .mockResolvedValueOnce([{ id: "card-1" }]) // verifyCard passes
+        .mockResolvedValueOnce([]); // verifyColumn fails
+
+      const result = await tools.copyCard.execute(
+        { cardId: "card-1", columnId: "bad-col", label: "test" },
+        ctx,
+      );
+      expect(result).toEqual({ error: "Column not found" });
+    });
+
+    it("returns error when cross-board copy is attempted", async () => {
+      mockDb.limit
+        .mockResolvedValueOnce([{ id: "card-1" }]) // verifyCard
+        .mockResolvedValueOnce([{ id: "col-2" }]) // verifyColumn
+        .mockResolvedValueOnce([{ boardId: "board-1" }]) // getBoardIdForCard (source)
+        .mockResolvedValueOnce([{ boardId: "board-2" }]); // target column boardId
+
+      const result = await tools.copyCard.execute(
+        { cardId: "card-1", columnId: "col-2", label: "test" },
+        ctx,
+      );
+      expect(result).toEqual({ error: "Cross-board copy is not allowed" });
     });
   });
 
