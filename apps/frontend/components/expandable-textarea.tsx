@@ -189,36 +189,8 @@ function ExpandableTextarea({
                   className="relative w-full max-w-5xl h-full max-h-[80vh] bg-background rounded-lg border shadow-2xl flex flex-col p-4"
                 >
                   <div className="flex justify-between items-center mb-2">
-                    <div className="flex items-center gap-3">
-                      <div className="text-sm font-medium text-muted-foreground">
-                        {label || "Full Screen Editor"}
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          className={cn(
-                            "px-2 py-0.5 text-xs font-medium rounded cursor-pointer",
-                            activeTab === "write"
-                              ? "bg-muted text-foreground"
-                              : "text-muted-foreground hover:text-foreground",
-                          )}
-                          onClick={() => setActiveTab("write")}
-                        >
-                          Write
-                        </button>
-                        <button
-                          type="button"
-                          className={cn(
-                            "px-2 py-0.5 text-xs font-medium rounded cursor-pointer",
-                            activeTab === "preview"
-                              ? "bg-muted text-foreground"
-                              : "text-muted-foreground hover:text-foreground",
-                          )}
-                          onClick={() => setActiveTab("preview")}
-                        >
-                          Preview
-                        </button>
-                      </div>
+                    <div className="text-sm font-medium text-muted-foreground">
+                      {label || "Full Screen Editor"}
                     </div>
                     <Button
                       type="button"
@@ -230,6 +202,32 @@ function ExpandableTextarea({
                       <Minimize2 className="size-3.5" />
                       <span className="sr-only">Collapse</span>
                     </Button>
+                  </div>
+                  <div className="flex gap-1 mb-2">
+                    <button
+                      type="button"
+                      className={cn(
+                        "px-2 py-0.5 text-xs font-medium rounded cursor-pointer",
+                        activeTab === "write"
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setActiveTab("write")}
+                    >
+                      Write
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "px-2 py-0.5 text-xs font-medium rounded cursor-pointer",
+                        activeTab === "preview"
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setActiveTab("preview")}
+                    >
+                      Preview
+                    </button>
                   </div>
                   <div className="flex-1 overflow-hidden">
                     {activeTab === "write" ? (
