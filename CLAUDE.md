@@ -217,3 +217,17 @@ chore(tests): add missing test coverage
 
 - Postgres 18 is NOT supported due to Drizzle ORM compatibility issues
 - When writing Typescript, format code matching the conventions used by Prettier.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as GitHub issues on `willdady/platypus` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default canonical label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
