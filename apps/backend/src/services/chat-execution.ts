@@ -1,15 +1,5 @@
-import { createOpenAI, type OpenAIProvider } from "@ai-sdk/openai";
-import {
-  createOpenRouter,
-  type OpenRouterProvider,
-} from "@openrouter/ai-sdk-provider";
-import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
-import { createAnthropic, type AnthropicProvider } from "@ai-sdk/anthropic";
-import {
-  createGoogleGenerativeAI,
-  type GoogleGenerativeAIProvider,
-} from "@ai-sdk/google";
 import { experimental_createMCPClient as createMCPClient } from "@ai-sdk/mcp";
+import { openProvider } from "./provider.ts";
 import { and, eq, or, inArray } from "drizzle-orm";
 import { db } from "../index.ts";
 import {
@@ -167,7 +157,8 @@ export const prepareChatTurn = async (
   );
   const { provider, agent, resolvedModelId, resolvedMaxSteps } = context;
 
-  const [aiProvider, model] = createModel(provider, resolvedModelId);
+  const opened = openProvider(provider);
+  const model = opened.languageModel(resolvedModelId);
 
   const [
     { tools, mcpClients },
@@ -186,7 +177,7 @@ export const prepareChatTurn = async (
   const allMcpClients = [...mcpClients, ...subAgentMcpClients];
 
   if (request.search) {
-    Object.assign(tools, createSearchTools(provider, aiProvider));
+    Object.assign(tools, opened.searchTools?.() ?? {});
   }
 
   Object.assign(tools, subAgentTools);
@@ -264,56 +255,6 @@ export const prepareChatTurn = async (
 };
 
 // --- Helper Functions ---
-
-/**
- * Creates a LanguageModel instance based on the provider configuration.
- * Exported as a primitive because one-shot callers (e.g. metadata generation)
- * need a model without the rest of a Chat turn's apparatus.
- */
-export const createModel = (provider: Provider, modelId: string) => {
-  if (provider.providerType === "OpenAI") {
-    const openai = createOpenAI({
-      baseURL: provider.baseUrl ?? undefined,
-      apiKey: provider.apiKey ?? undefined,
-      headers: provider.headers ?? undefined,
-      organization: provider.organization ?? undefined,
-      project: provider.project ?? undefined,
-    });
-    return [openai, openai(modelId)] as const;
-  } else if (provider.providerType === "OpenRouter") {
-    const openRouter = createOpenRouter({
-      baseURL: provider.baseUrl ?? undefined,
-      apiKey: provider.apiKey ?? undefined,
-      headers: provider.headers ?? undefined,
-      extraBody: provider.extraBody ?? undefined,
-    });
-    return [openRouter, openRouter(modelId)] as const;
-  } else if (provider.providerType === "Bedrock") {
-    const bedrock = createAmazonBedrock({
-      baseURL: provider.baseUrl ?? undefined,
-      region: provider.region ?? undefined,
-      apiKey: provider.apiKey ?? undefined,
-      headers: provider.headers ?? undefined,
-    });
-    return [bedrock, bedrock(modelId)] as const;
-  } else if (provider.providerType === "Google") {
-    const google = createGoogleGenerativeAI({
-      baseURL: provider.baseUrl ?? undefined,
-      apiKey: provider.apiKey ?? undefined,
-      headers: provider.headers ?? undefined,
-    });
-    return [google, google(modelId)] as const;
-  } else if (provider.providerType === "Anthropic") {
-    const anthropic = createAnthropic({
-      baseURL: provider.baseUrl ?? undefined,
-      apiKey: provider.apiKey ?? undefined,
-      headers: provider.headers ?? undefined,
-    });
-    return [anthropic, anthropic(modelId)] as const;
-  } else {
-    throw new Error(`Unrecognized provider type '${provider.providerType}'`);
-  }
-};
 
 const fetchWorkspace = async (
   workspaceId: string,
@@ -484,37 +425,6 @@ export const loadTools = async (
 };
 
 /**
- * Creates provider-specific search tools if enabled.
- */
-export const createSearchTools = (
-  provider: Provider,
-  aiProvider: any,
-): Record<string, Tool> => {
-  const tools: Record<string, any> = {};
-
-  if (provider.providerType === "OpenAI") {
-    tools.web_search = (aiProvider as OpenAIProvider).tools.webSearch({
-      externalWebAccess: true,
-      searchContextSize: "high",
-    });
-  } else if (provider.providerType === "Google") {
-    tools.google_search = (
-      aiProvider as GoogleGenerativeAIProvider
-    ).tools.googleSearch({});
-  } else if (provider.providerType === "Anthropic") {
-    tools.web_search = (
-      aiProvider as AnthropicProvider
-    ).tools.webSearch_20250305({
-      maxUses: 5,
-    });
-  } else if (provider.providerType === "OpenRouter") {
-    tools.web_search = (aiProvider as OpenRouterProvider).tools.webSearch({});
-  }
-
-  return tools;
-};
-
-/**
  * Resolves the generation configuration (system prompt, temperature, etc.)
  * by merging agent settings with request overrides and rendering the prompt
  * from the supplied SystemPromptContext.
@@ -623,8 +533,9 @@ export const loadSubAgents = async (
         throw new Error(`Provider '${providerId}' not found for sub-agent`);
       }
 
-      const [, model] = createModel(subProviderRecord[0] as Provider, modelId);
-      return model;
+      return openProvider(subProviderRecord[0] as Provider).languageModel(
+        modelId,
+      );
     },
     async (subAgentId: string, toolSetIds: string[]) => {
       // Load tools for the sub-agent, passing the full record so dynamic

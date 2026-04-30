@@ -42,7 +42,6 @@ vi.mock("@ai-sdk/anthropic", () => ({
 }));
 
 import {
-  createModel,
   prepareChatTurn,
   NotFoundError,
   ValidationError,
@@ -114,62 +113,6 @@ describe("chat-execution", () => {
   beforeEach(() => {
     resetMockDb();
     vi.clearAllMocks();
-  });
-
-  describe("createModel", () => {
-    it("calls createOpenAI with correct params", () => {
-      createModel(baseProvider, "gpt-4");
-      expect(mockCreateOpenAI.creator).toHaveBeenCalledWith({
-        baseURL: undefined,
-        apiKey: "sk-test",
-        headers: undefined,
-        organization: undefined,
-        project: undefined,
-      });
-    });
-
-    it("calls createOpenRouter for OpenRouter", () => {
-      const provider = { ...baseProvider, providerType: "OpenRouter" as const };
-      createModel(provider, "openai/gpt-4");
-      expect(mockCreateOpenRouter.creator).toHaveBeenCalled();
-    });
-
-    it("calls createAmazonBedrock for Bedrock", () => {
-      const provider = { ...baseProvider, providerType: "Bedrock" as const };
-      createModel(provider, "anthropic.claude-v2");
-      expect(mockCreateAmazonBedrock.creator).toHaveBeenCalled();
-    });
-
-    it("calls createGoogleGenerativeAI for Google", () => {
-      const provider = { ...baseProvider, providerType: "Google" as const };
-      createModel(provider, "gemini-pro");
-      expect(mockCreateGoogleGenerativeAI.creator).toHaveBeenCalled();
-    });
-
-    it("calls createAnthropic for Anthropic", () => {
-      const provider = { ...baseProvider, providerType: "Anthropic" as const };
-      createModel(provider, "claude-3-opus-20240229");
-      expect(mockCreateAnthropic.creator).toHaveBeenCalled();
-    });
-
-    it("throws for unknown provider type", () => {
-      const provider = { ...baseProvider, providerType: "Unknown" as any };
-      expect(() => createModel(provider, "some-model")).toThrow(
-        "Unrecognized provider type 'Unknown'",
-      );
-    });
-
-    it("passes undefined for null optional fields", () => {
-      createModel(baseProvider, "gpt-4");
-      expect(mockCreateOpenAI.creator).toHaveBeenCalledWith(
-        expect.objectContaining({
-          baseURL: undefined,
-          headers: undefined,
-          organization: undefined,
-          project: undefined,
-        }),
-      );
-    });
   });
 
   describe("prepareChatTurn", () => {

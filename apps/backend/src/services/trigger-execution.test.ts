@@ -3,7 +3,8 @@ import { mockDb, resetMockDb } from "../test-utils.ts";
 
 const {
   mockGenerateText,
-  mockCreateModel,
+  mockOpenProvider,
+  mockSearchTools,
   mockLoadTools,
   mockLoadSkills,
   mockLoadSubAgents,
@@ -11,11 +12,11 @@ const {
   mockFetchMemories,
   mockResolveGenerationConfig,
   mockPrepareAgentTools,
-  mockCreateSearchTools,
   mockValidateCronExpression,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
-  mockCreateModel: vi.fn(),
+  mockOpenProvider: vi.fn(),
+  mockSearchTools: vi.fn(),
   mockLoadTools: vi.fn(),
   mockLoadSkills: vi.fn(),
   mockLoadSubAgents: vi.fn(),
@@ -23,7 +24,6 @@ const {
   mockFetchMemories: vi.fn(),
   mockResolveGenerationConfig: vi.fn(),
   mockPrepareAgentTools: vi.fn(),
-  mockCreateSearchTools: vi.fn(),
   mockValidateCronExpression: vi.fn(),
 }));
 
@@ -33,7 +33,6 @@ vi.mock("ai", () => ({
 }));
 
 vi.mock("./chat-execution.ts", () => ({
-  createModel: mockCreateModel,
   loadTools: mockLoadTools,
   loadSkills: mockLoadSkills,
   loadSubAgents: mockLoadSubAgents,
@@ -41,7 +40,10 @@ vi.mock("./chat-execution.ts", () => ({
   fetchMemories: mockFetchMemories,
   resolveGenerationConfig: mockResolveGenerationConfig,
   prepareAgentTools: mockPrepareAgentTools,
-  createSearchTools: mockCreateSearchTools,
+}));
+
+vi.mock("./provider.ts", () => ({
+  openProvider: mockOpenProvider,
 }));
 
 vi.mock("../utils/cron.ts", () => ({
@@ -139,7 +141,11 @@ function setupDefaultMocks() {
     .mockResolvedValueOnce([mockWorkspace]) // workspace query
     .mockResolvedValueOnce([mockProvider]); // provider query
 
-  mockCreateModel.mockReturnValue(["openai-provider", { modelId: "gpt-4" }]);
+  mockOpenProvider.mockReturnValue({
+    languageModel: vi.fn(() => ({ modelId: "gpt-4" })),
+    searchTools: mockSearchTools,
+  });
+  mockSearchTools.mockReturnValue({});
   mockLoadTools.mockResolvedValue({
     tools: { tool1: {} },
     mcpClients: [mockMcpClient],
@@ -277,12 +283,12 @@ describe("trigger-execution", () => {
 
     it("should enable search tools when trigger.search is true", async () => {
       setupDefaultMocks();
-      mockCreateSearchTools.mockReturnValue({ searchTool: {} });
+      mockSearchTools.mockReturnValue({ searchTool: {} });
 
       const trigger = { ...baseTrigger, search: true } as any;
       await executeTrigger(trigger);
 
-      expect(mockCreateSearchTools).toHaveBeenCalled();
+      expect(mockSearchTools).toHaveBeenCalled();
     });
 
     it("should mark run as success with stats on completion", async () => {

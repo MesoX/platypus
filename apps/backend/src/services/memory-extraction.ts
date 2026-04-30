@@ -11,7 +11,7 @@ import {
 import type { Provider } from "@platypus/schemas";
 import { logger } from "../logger.ts";
 import type { PlatypusUIMessage } from "../types.ts";
-import { createModel } from "./chat-execution.ts";
+import { openProvider } from "./provider.ts";
 import { generateEmbedding } from "./embedding.ts";
 
 /**
@@ -136,8 +136,7 @@ const processChat = async (
   );
 
   // Create the model
-  const [, model] = createModel(
-    extractionProvider as Provider,
+  const model = openProvider(extractionProvider as Provider).languageModel(
     extractionProvider.memoryExtractionModelId,
   );
 

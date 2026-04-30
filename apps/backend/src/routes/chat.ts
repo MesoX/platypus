@@ -19,12 +19,12 @@ import {
   workspace as workspaceTable,
 } from "../db/schema.ts";
 import {
-  createModel,
   prepareChatTurn,
   NotFoundError,
   ValidationError,
   type ChatTurn,
 } from "../services/chat-execution.ts";
+import { openProvider } from "../services/provider.ts";
 import {
   chatGenerateMetadataSchema,
   chatSubmitSchema,
@@ -457,7 +457,7 @@ chat.post(
     );
 
     // Instantiate model
-    let [_, model] = createModel(provider, provider.taskModelId);
+    const model = openProvider(provider).languageModel(provider.taskModelId);
 
     // Generate title
     const messages = (chat.messages as PlatypusUIMessage[]) || [];

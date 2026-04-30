@@ -11,7 +11,6 @@ import {
   provider as providerTable,
 } from "../db/schema.ts";
 import {
-  createModel,
   loadTools,
   resolveGenerationConfig,
   loadSkills,
@@ -19,8 +18,8 @@ import {
   fetchUserContexts,
   fetchMemories,
   prepareAgentTools,
-  createSearchTools,
 } from "./chat-execution.ts";
+import { openProvider } from "./provider.ts";
 import type { SystemPromptContext } from "../system-prompt.ts";
 import { logger } from "../logger.ts";
 import { validateCronExpression } from "../utils/cron.ts";
@@ -154,7 +153,8 @@ export const executeTrigger = async (
   const provider = providerRecord[0];
 
   // 4. Create model
-  const [aiProvider, model] = createModel(provider as Provider, agent.modelId);
+  const opened = openProvider(provider as Provider);
+  const model = opened.languageModel(agent.modelId);
 
   // 5. Load tools, skills, sub-agents, and user context in parallel
   const orgId = workspace.organizationId;
@@ -180,7 +180,7 @@ export const executeTrigger = async (
 
   // 5b. Configure Search (if enabled)
   if (trigger.search) {
-    Object.assign(tools, createSearchTools(provider as Provider, aiProvider));
+    Object.assign(tools, opened.searchTools?.() ?? {});
   }
 
   // Merge sub-agent delegate tools into the parent tool set
