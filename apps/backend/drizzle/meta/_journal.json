@@ -204,6 +204,13 @@
       "when": 1777694606994,
       "tag": "0028_bent_doctor_faustus",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1777717800000,
+      "tag": "0029_split_agent_management_toolset",
+      "breakpoints": true
     }
   ]
 }

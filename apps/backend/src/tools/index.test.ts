@@ -37,6 +37,8 @@ describe("Tool Set Registry", () => {
       expect(sets).toHaveProperty("web-fetch");
       expect(sets).toHaveProperty("kanban");
       expect(sets).toHaveProperty("triggers");
+      expect(sets).toHaveProperty("agent-discovery");
+      expect(sets).toHaveProperty("skill-management");
       expect(sets).toHaveProperty("agent-management");
       expect(sets).toHaveProperty("notifications");
     });
@@ -104,9 +106,56 @@ describe("Tool Set Registry", () => {
       expect(typeof set.tools).toBe("function");
     });
 
+    it("agent-discovery has a factory function for tools", () => {
+      const set = getToolSet("agent-discovery");
+      expect(typeof set.tools).toBe("function");
+    });
+
+    it("skill-management has a factory function for tools", () => {
+      const set = getToolSet("skill-management");
+      expect(typeof set.tools).toBe("function");
+    });
+
     it("agent-management has a factory function for tools", () => {
       const set = getToolSet("agent-management");
       expect(typeof set.tools).toBe("function");
+    });
+  });
+
+  describe("agent-management split toolsets contain expected tools", () => {
+    const ctx = {
+      workspaceId: "ws-1",
+      agentId: "a-1",
+      orgId: "org-1",
+      frontendUrl: "http://localhost:3000",
+      userId: "u-1",
+    };
+
+    it("agent-discovery exposes read-only agent and catalogue tools", () => {
+      const set = getToolSet("agent-discovery");
+      const tools =
+        typeof set.tools === "function" ? set.tools(ctx) : set.tools;
+      expect(Object.keys(tools).sort()).toEqual(
+        ["getAgent", "listAgents", "listModelProviders", "listToolSets"].sort(),
+      );
+    });
+
+    it("skill-management exposes the skill CRUD tools", () => {
+      const set = getToolSet("skill-management");
+      const tools =
+        typeof set.tools === "function" ? set.tools(ctx) : set.tools;
+      expect(Object.keys(tools).sort()).toEqual(
+        ["deleteSkill", "getSkill", "listSkills", "upsertSkill"].sort(),
+      );
+    });
+
+    it("agent-management exposes only write-side agent tools", () => {
+      const set = getToolSet("agent-management");
+      const tools =
+        typeof set.tools === "function" ? set.tools(ctx) : set.tools;
+      expect(Object.keys(tools).sort()).toEqual(
+        ["createAgent", "deleteAgent", "updateAgent"].sort(),
+      );
     });
 
     it("notifications has a factory function for tools", () => {

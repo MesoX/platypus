@@ -13,7 +13,7 @@ import { user } from "../db/auth-schema.ts";
 import { calculateCardPosition } from "../utils/kanban-positioning.ts";
 import { buildResourceUrl } from "../utils/resource-url.ts";
 import { dispatchEvent } from "../services/event-dispatch.ts";
-import { createListAgentsTool } from "./agent-management.ts";
+import { createListAgentsTool } from "./agent-discovery.ts";
 
 export function createKanbanTools(
   workspaceId: string,

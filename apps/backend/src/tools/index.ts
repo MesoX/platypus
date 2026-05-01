@@ -9,6 +9,8 @@ import { getCurrentTime, convertTimezone } from "./time.ts";
 import { fetchUrl } from "./fetch.ts";
 import { createKanbanTools } from "./kanban.ts";
 import { createTriggerTools } from "./trigger.ts";
+import { createAgentDiscoveryTools } from "./agent-discovery.ts";
+import { createSkillManagementTools } from "./skill-management.ts";
 import { createAgentManagementTools } from "./agent-management.ts";
 import { createNotificationTools } from "./notification.ts";
 import { createMemoryTools } from "./memory.ts";
@@ -110,10 +112,27 @@ registerToolSet("triggers", {
     createTriggerTools(workspaceId, orgId, frontendUrl),
 });
 
+registerToolSet("agent-discovery", {
+  name: "Agent Discovery",
+  category: "Productivity",
+  description:
+    "Read-only tools for discovering agents, providers, and tool sets in this workspace",
+  tools: ({ workspaceId, orgId, frontendUrl }) =>
+    createAgentDiscoveryTools(workspaceId, orgId, frontendUrl),
+});
+
+registerToolSet("skill-management", {
+  name: "Skill Management",
+  category: "Productivity",
+  description: "List, create, update, and delete skills in this workspace",
+  tools: ({ workspaceId, orgId, frontendUrl }) =>
+    createSkillManagementTools(workspaceId, orgId, frontendUrl),
+});
+
 registerToolSet("agent-management", {
   name: "Agent Management",
   category: "Productivity",
-  description: "Create, update, and delete agents and skills in this workspace",
+  description: "Create, update, and delete agents in this workspace",
   tools: ({ workspaceId, orgId, frontendUrl }) =>
     createAgentManagementTools(workspaceId, orgId, frontendUrl),
 });
