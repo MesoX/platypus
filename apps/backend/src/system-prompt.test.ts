@@ -11,6 +11,7 @@ const baseCtx = (): SystemPromptContext => ({
   memories: [],
   skills: [],
   subAgents: [],
+  runMode: "interactive",
 });
 
 const agentRecord = (
@@ -240,6 +241,46 @@ describe("renderSystemPrompt — sub-agents", () => {
     const out = renderSystemPrompt(ctx);
     expect(out).toContain("`delegateToHelper`");
     expect(out).toContain("No description provided");
+  });
+});
+
+describe("renderSystemPrompt — headless run mode", () => {
+  it("does not surface agent identity in interactive mode", () => {
+    const ctx = baseCtx();
+    ctx.agent = agentRecord({ systemPrompt: "You are a researcher." });
+    const out = renderSystemPrompt(ctx);
+    expect(out).not.toContain("agent-1");
+    expect(out).not.toContain("an agent named");
+    expect(out).toContain(
+      'The current user\'s name is "Alice" and their id is "user-1"',
+    );
+  });
+
+  it("surfaces agent identity with actionable phrasing in headless mode", () => {
+    const ctx = baseCtx();
+    ctx.runMode = "headless";
+    ctx.agent = agentRecord({ systemPrompt: "You are a researcher." });
+    const out = renderSystemPrompt(ctx);
+    expect(out).toContain('You are an agent named "Helper" with id `agent-1`');
+    expect(out).toContain("When a tool requires an agent identifier");
+  });
+
+  it("omits the agent-identity line in headless mode when no agent is resolved", () => {
+    const ctx = baseCtx();
+    ctx.runMode = "headless";
+    const out = renderSystemPrompt(ctx);
+    expect(out).not.toContain("an agent named");
+  });
+
+  it("reframes the user line as on-behalf-of in headless mode", () => {
+    const ctx = baseCtx();
+    ctx.runMode = "headless";
+    const out = renderSystemPrompt(ctx);
+    expect(out).toContain(
+      'This run was initiated on behalf of "Alice" (id `user-1`)',
+    );
+    expect(out).toContain("There is no live user in this conversation");
+    expect(out).not.toContain('The current user\'s name is "Alice"');
   });
 });
 

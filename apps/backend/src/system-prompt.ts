@@ -23,6 +23,13 @@ export type SystemPromptContext = {
   subAgents: Array<{ name: string; description?: string | null }>;
   /** Used as the system prompt when `agent` is null. */
   fallbackSystemPrompt?: string;
+  /**
+   * "interactive" — a live user is chatting; the agent may swap between turns.
+   * "headless" — a trigger or sub-agent run; the agent is fixed for the whole
+   * run and there is no live participant. Headless mode surfaces the agent's
+   * own identity and reframes the user line as an on-behalf-of owner.
+   */
+  runMode: "interactive" | "headless";
 };
 
 type Fragment = (ctx: SystemPromptContext) => string | null;
@@ -32,6 +39,11 @@ const agentPromptFragment: Fragment = (ctx) => {
   return prompt?.trim() || "You are a helpful AI assistant.";
 };
 
+const agentIdentityFragment: Fragment = (ctx) => {
+  if (ctx.runMode !== "headless" || !ctx.agent) return null;
+  return `You are an agent named "${ctx.agent.name}" with id \`${ctx.agent.id}\`. When a tool requires an agent identifier (for example, to assign a task or card to you), use this id.`;
+};
+
 const workspaceFragment: Fragment = (ctx) => {
   const preamble = `You are operating within the context of a workspace. The workspace id is "${ctx.workspace.id}".`;
   const context = ctx.workspace.context?.trim();
@@ -39,8 +51,12 @@ const workspaceFragment: Fragment = (ctx) => {
   return `${preamble}\n\n<workspace>\n${context}\n</workspace>`;
 };
 
-const userFragment: Fragment = (ctx) =>
-  `The current user's name is "${ctx.user.name}" and their id is "${ctx.user.id}".`;
+const userFragment: Fragment = (ctx) => {
+  if (ctx.runMode === "headless") {
+    return `This run was initiated on behalf of "${ctx.user.name}" (id \`${ctx.user.id}\`). There is no live user in this conversation — do not address them directly. Use their context to inform decisions, but operate autonomously.`;
+  }
+  return `The current user's name is "${ctx.user.name}" and their id is "${ctx.user.id}".`;
+};
 
 const userContextFragment: Fragment = (ctx) => {
   const global = ctx.user.globalContext?.trim();
@@ -98,6 +114,7 @@ Each task description MUST be entirely self-contained — sub-agents cannot see 
 
 const FRAGMENTS: Fragment[] = [
   agentPromptFragment,
+  agentIdentityFragment,
   workspaceFragment,
   userFragment,
   userContextFragment,

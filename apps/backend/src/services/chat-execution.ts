@@ -135,6 +135,12 @@ export type PrepareChatTurnInput = {
    */
   origin?: string;
   frontendUrl?: string;
+  /**
+   * Defaults to "interactive" when omitted. Headless callers (triggers,
+   * sub-agents) must pass "headless" so the system prompt reframes the
+   * user line and surfaces the agent's own identity.
+   */
+  runMode?: "interactive" | "headless";
 };
 
 // --- Public Module: prepare a Chat turn ---
@@ -151,8 +157,16 @@ export type PrepareChatTurnInput = {
 export const prepareChatTurn = async (
   input: PrepareChatTurnInput,
 ): Promise<ChatTurn> => {
-  const { orgId, workspaceId, user, request, messages, origin, frontendUrl } =
-    input;
+  const {
+    orgId,
+    workspaceId,
+    user,
+    request,
+    messages,
+    origin,
+    frontendUrl,
+    runMode = "interactive",
+  } = input;
 
   const workspace = await fetchWorkspace(workspaceId);
   const context = await resolveChatContext(
@@ -200,6 +214,7 @@ export const prepareChatTurn = async (
     skills,
     subAgents,
     fallbackSystemPrompt: request.systemPrompt,
+    runMode,
   };
 
   const generation = resolveGenerationConfig(

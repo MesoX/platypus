@@ -95,6 +95,7 @@ export class AgentRunner {
       messages: input.messages,
       origin,
       frontendUrl,
+      runMode: scope.principal.kind === "user" ? "interactive" : "headless",
     });
   }
 
