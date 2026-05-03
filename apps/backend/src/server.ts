@@ -18,6 +18,7 @@ import { member } from "./routes/member.ts";
 import { context } from "./routes/context.ts";
 import { trigger } from "./routes/trigger.ts";
 import { kanban } from "./routes/kanban.ts";
+import { dashboard } from "./routes/dashboard.ts";
 import { notification } from "./routes/notification.ts";
 import { webhook } from "./routes/webhook.ts";
 import { mcpOauthCallback } from "./routes/mcp-oauth-callback.ts";
@@ -142,6 +143,10 @@ app.route("/organizations/:orgId/providers", orgProvider);
 app.route("/organizations/:orgId/workspaces/:workspaceId/tools", tool);
 app.route("/organizations/:orgId/workspaces/:workspaceId/triggers", trigger);
 app.route("/organizations/:orgId/workspaces/:workspaceId/boards", kanban);
+app.route(
+  "/organizations/:orgId/workspaces/:workspaceId/dashboards",
+  dashboard,
+);
 app.route(
   "/organizations/:orgId/workspaces/:workspaceId/notifications",
   notification,

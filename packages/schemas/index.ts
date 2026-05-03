@@ -1015,3 +1015,100 @@ export const webhookUpdateSchema = z.object({
   enabled: z.boolean().optional(),
   events: z.array(webhookEventSchema).min(1).optional(),
 });
+
+// Dashboard
+
+export const rglLayoutItemSchema = z.object({
+  i: z.string(),
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  w: z.number().int().min(1),
+  h: z.number().int().min(1),
+});
+
+export type RglLayoutItem = z.infer<typeof rglLayoutItemSchema>;
+
+export const widgetTypeSchema = z.enum(["metric", "text", "image"]);
+
+export type WidgetType = z.infer<typeof widgetTypeSchema>;
+
+export const metricWidgetDataSchema = z.object({
+  value: z.number(),
+  label: z.string(),
+  unit: z.string().optional(),
+  change: z.string().optional(),
+});
+
+export type MetricWidgetData = z.infer<typeof metricWidgetDataSchema>;
+
+export const textWidgetDataSchema = z.object({
+  content: z.string(),
+});
+
+export type TextWidgetData = z.infer<typeof textWidgetDataSchema>;
+
+export const imageWidgetDataSchema = z.object({
+  url: z.string(),
+});
+
+export type ImageWidgetData = z.infer<typeof imageWidgetDataSchema>;
+
+export const widgetDataSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("metric"), data: metricWidgetDataSchema }),
+  z.object({ type: z.literal("text"), data: textWidgetDataSchema }),
+  z.object({ type: z.literal("image"), data: imageWidgetDataSchema }),
+]);
+
+export const widgetSchema = z.object({
+  id: z.string(),
+  dashboardId: z.string(),
+  type: widgetTypeSchema,
+  title: z.string(),
+  data: z
+    .union([
+      metricWidgetDataSchema,
+      textWidgetDataSchema,
+      imageWidgetDataSchema,
+    ])
+    .nullable(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export type Widget = z.infer<typeof widgetSchema>;
+
+export const widgetCreateSchema = z.object({
+  type: widgetTypeSchema,
+  title: z.string().min(1).max(200),
+});
+
+export const widgetUpdateDataSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("metric"), data: metricWidgetDataSchema }),
+  z.object({ type: z.literal("text"), data: textWidgetDataSchema }),
+  z.object({ type: z.literal("image"), data: imageWidgetDataSchema }),
+]);
+
+export const dashboardSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  name: z.string(),
+  description: z.string().max(500).nullable().optional(),
+  desktopLayout: z.array(rglLayoutItemSchema),
+  mobileLayout: z.array(rglLayoutItemSchema),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export type Dashboard = z.infer<typeof dashboardSchema>;
+
+export const dashboardCreateSchema = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(500).nullable().optional(),
+});
+
+export const dashboardUpdateSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(500).nullable().optional(),
+  desktopLayout: z.array(rglLayoutItemSchema).optional(),
+  mobileLayout: z.array(rglLayoutItemSchema).optional(),
+});

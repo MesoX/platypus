@@ -184,3 +184,9 @@
     cursor: pointer;
   }
 }
+
+/* Override react-grid-layout placeholder outside any @layer so it beats the
+   unlayered stylesheet imported from the package. */
+.react-grid-item.react-grid-placeholder {
+  background: var(--primary) !important;
+}

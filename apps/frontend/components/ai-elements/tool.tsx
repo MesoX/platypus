@@ -19,6 +19,7 @@ import {
   ClockIcon,
   GlobeIcon,
   KanbanSquareIcon,
+  LayoutDashboardIcon,
   SparklesIcon,
   ZapIcon,
   WrenchIcon,
@@ -97,6 +98,11 @@ const toolToToolSet: Record<string, string> = {
   // memory
   memorySearch: "memory",
   memoryGet: "memory",
+  // dashboards
+  listDashboards: "dashboards",
+  listWidgets: "dashboards",
+  getWidget: "dashboards",
+  updateWidgetData: "dashboards",
 };
 
 /** One icon per toolset, matching the workspace home page. */
@@ -111,6 +117,7 @@ const toolSetIcons: Record<string, LucideIcon> = {
   "web-fetch": GlobeIcon,
   notifications: BellIcon,
   memory: BrainIcon,
+  dashboards: LayoutDashboardIcon,
 };
 
 /** Returns an appropriate icon component for a given tool type string. */

@@ -4,6 +4,7 @@ import { AgentsList } from "@/components/agents-list";
 import { SkillsList } from "@/components/skills-list";
 import { TriggerList } from "@/components/trigger-list";
 import { BoardsList } from "@/components/boards-list";
+import { DashboardsList } from "@/components/dashboards-list";
 import { CollapsibleSection } from "@/components/collapsible-section";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +19,7 @@ import {
   Sparkles,
   Zap,
   KanbanSquare,
+  LayoutDashboard,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
@@ -123,6 +125,18 @@ const Workspace = () => {
     fetcher,
   );
 
+  const { data: dashboardsData, isLoading: isLoadingDashboards } = useSWR<{
+    results: [];
+  }>(
+    backendUrl && user
+      ? joinUrl(
+          backendUrl,
+          `/organizations/${orgId}/workspaces/${workspaceId}/dashboards`,
+        )
+      : null,
+    fetcher,
+  );
+
   const { data: orgData, isLoading: isLoadingOrg } = useSWR<Organization>(
     backendUrl && user ? joinUrl(backendUrl, `/organizations/${orgId}`) : null,
     fetcher,
@@ -138,6 +152,7 @@ const Workspace = () => {
     isLoadingSkills ||
     isLoadingTriggers ||
     isLoadingBoards ||
+    isLoadingDashboards ||
     isLoadingOrg
   ) {
     return (
@@ -411,6 +426,28 @@ const Workspace = () => {
             <Button variant="outline" asChild>
               <Link href={`/${orgId}/workspace/${workspaceId}/boards/create`}>
                 <Plus /> Create Board
+              </Link>
+            </Button>
+          </CollapsibleSection>
+
+          <Separator />
+
+          {/* Dashboards Section */}
+          <CollapsibleSection
+            title={
+              <>
+                <LayoutDashboard className="size-5" /> Dashboards
+              </>
+            }
+            description="Widget-based dashboards for surfacing agent data at a glance."
+            storageKey="section:dashboards:open"
+          >
+            <DashboardsList orgId={orgId} workspaceId={workspaceId} />
+            <Button variant="outline" asChild>
+              <Link
+                href={`/${orgId}/workspace/${workspaceId}/dashboards/create`}
+              >
+                <Plus /> Create Dashboard
               </Link>
             </Button>
           </CollapsibleSection>

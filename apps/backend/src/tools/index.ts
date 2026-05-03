@@ -8,6 +8,7 @@ import {
 import { getCurrentTime, convertTimezone } from "./time.ts";
 import { fetchUrl } from "./fetch.ts";
 import { createKanbanTools } from "./kanban.ts";
+import { createDashboardTools } from "./dashboard.ts";
 import { createTriggerTools } from "./trigger.ts";
 import { createAgentDiscoveryTools } from "./agent-discovery.ts";
 import { createSkillManagementTools } from "./skill-management.ts";
@@ -101,6 +102,14 @@ registerToolSet("kanban", {
   description: "Manage kanban boards in this workspace",
   tools: ({ workspaceId, agentId, orgId, frontendUrl }) =>
     createKanbanTools(workspaceId, agentId, orgId, frontendUrl),
+});
+
+registerToolSet("dashboards", {
+  name: "Dashboards",
+  category: "Productivity",
+  description:
+    "List dashboards and widgets, and update widget data in this workspace",
+  tools: ({ workspaceId }) => createDashboardTools(workspaceId),
 });
 
 registerToolSet("triggers", {

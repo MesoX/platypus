@@ -1,4 +1,10 @@
-import { pgTable, index, unique, customType } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  index,
+  unique,
+  uniqueIndex,
+  customType,
+} from "drizzle-orm/pg-core";
 
 // Import and re-export auth schema
 export * from "./auth-schema.ts";
@@ -601,4 +607,55 @@ export const kanbanCardComment = pgTable(
     updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
   }),
   (t) => [index("idx_kanban_card_comment_card_id").on(t.cardId)],
+);
+
+// Dashboard
+
+export const dashboard = pgTable(
+  "dashboard",
+  (t) => ({
+    id: t.text("id").primaryKey(),
+    workspaceId: t
+      .text("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    name: t.text("name").notNull(),
+    description: t.text("description"),
+    desktopLayout: t
+      .jsonb("desktop_layout")
+      .$type<{ i: string; x: number; y: number; w: number; h: number }[]>()
+      .notNull()
+      .default([]),
+    mobileLayout: t
+      .jsonb("mobile_layout")
+      .$type<{ i: string; x: number; y: number; w: number; h: number }[]>()
+      .notNull()
+      .default([]),
+    createdAt: t.timestamp("created_at").notNull().defaultNow(),
+    updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
+  }),
+  (t) => [
+    index("idx_dashboard_workspace_id").on(t.workspaceId),
+    uniqueIndex("uq_dashboard_workspace_name").on(t.workspaceId, t.name),
+  ],
+);
+
+export const widget = pgTable(
+  "widget",
+  (t) => ({
+    id: t.text("id").primaryKey(),
+    dashboardId: t
+      .text("dashboard_id")
+      .notNull()
+      .references(() => dashboard.id, { onDelete: "cascade" }),
+    type: t.text("type").$type<"metric" | "text" | "image">().notNull(),
+    title: t.text("title").notNull(),
+    data: t.jsonb("data"),
+    createdAt: t.timestamp("created_at").notNull().defaultNow(),
+    updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
+  }),
+  (t) => [
+    index("idx_widget_dashboard_id").on(t.dashboardId),
+    uniqueIndex("uq_widget_dashboard_title").on(t.dashboardId, t.title),
+  ],
 );
