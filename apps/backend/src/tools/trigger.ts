@@ -176,12 +176,9 @@ export function createTriggerTools(
         ),
       description: z
         .string()
+        .min(1)
         .max(500)
-        .nullable()
-        .optional()
-        .describe(
-          "Optional description of what this trigger does (null to clear)",
-        ),
+        .describe("Description of what this trigger does"),
       enabled: z
         .boolean()
         .optional()
@@ -403,7 +400,7 @@ export function createTriggerTools(
             agentId,
             type,
             name,
-            description: fields.description || null,
+            description: fields.description,
             instruction,
             enabled,
             maxRunsToKeep,
@@ -450,7 +447,7 @@ export function createTriggerTools(
             agentId,
             type,
             name,
-            description: fields.description || null,
+            description: fields.description,
             instruction,
             enabled,
             maxRunsToKeep,
