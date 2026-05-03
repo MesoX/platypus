@@ -168,13 +168,13 @@ const Workspace = () => {
 
         {/* Stats Cards - mobile */}
         <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pb-1 lg:hidden">
-          {Array.from({ length: 5 }).map((_, i) => (
+          {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-9 w-24 min-w-fit rounded-xl" />
           ))}
         </div>
         {/* Stats Cards - desktop */}
-        <div className="hidden lg:grid gap-4 grid-cols-5">
-          {Array.from({ length: 5 }).map((_, i) => (
+        <div className="hidden lg:grid gap-4 grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-[104px] w-full rounded-xl" />
           ))}
         </div>
@@ -246,6 +246,7 @@ const Workspace = () => {
   const skillCount = skillsData?.results?.length || 0;
   const triggerCount = triggersData?.results?.length || 0;
   const boardCount = boardsData?.results?.length || 0;
+  const dashboardCount = dashboardsData?.results?.length || 0;
 
   return (
     <div className="flex flex-col gap-8 px-4 md:px-8 py-8 pb-32 max-w-6xl mx-auto">
@@ -283,6 +284,11 @@ const Workspace = () => {
               { label: "Skills", value: skillCount, icon: Sparkles },
               { label: "Triggers", value: triggerCount, icon: Zap },
               { label: "Boards", value: boardCount, icon: KanbanSquare },
+              {
+                label: "Dashboards",
+                value: dashboardCount,
+                icon: LayoutDashboard,
+              },
             ].map(({ label, value, icon: Icon }) => (
               <Card
                 key={label}
@@ -296,12 +302,10 @@ const Workspace = () => {
               </Card>
             ))}
           </div>
-          <div className="hidden lg:grid gap-4 grid-cols-5">
+          <div className="hidden lg:grid gap-4 grid-cols-6">
             <Card className="gap-2">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
-                <CardTitle className="text-sm font-medium">
-                  Total Chats
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Chats</CardTitle>
                 <MessageSquare className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -313,9 +317,7 @@ const Workspace = () => {
             </Card>
             <Card className="gap-2">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
-                <CardTitle className="text-sm font-medium">
-                  Total Agents
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Agents</CardTitle>
                 <Bot className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -327,9 +329,7 @@ const Workspace = () => {
             </Card>
             <Card className="gap-2">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
-                <CardTitle className="text-sm font-medium">
-                  Total Skills
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Skills</CardTitle>
                 <Sparkles className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -341,9 +341,7 @@ const Workspace = () => {
             </Card>
             <Card className="gap-2">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
-                <CardTitle className="text-sm font-medium">
-                  Total Triggers
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Triggers</CardTitle>
                 <Zap className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -355,15 +353,27 @@ const Workspace = () => {
             </Card>
             <Card className="gap-2">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
-                <CardTitle className="text-sm font-medium">
-                  Total Boards
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Boards</CardTitle>
                 <KanbanSquare className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{boardCount}</div>
                 <p className="text-xs text-muted-foreground">
                   Visual work management
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="gap-2">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
+                <CardTitle className="text-sm font-medium">
+                  Dashboards
+                </CardTitle>
+                <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{dashboardCount}</div>
+                <p className="text-xs text-muted-foreground">
+                  Widget-based views
                 </p>
               </CardContent>
             </Card>
