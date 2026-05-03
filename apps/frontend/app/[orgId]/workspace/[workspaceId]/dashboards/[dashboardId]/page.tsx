@@ -696,12 +696,12 @@ const DashboardPage = ({
           <Skeleton className="h-8 w-16 rounded-md" />
         </div>
         <div className="flex-1 overflow-auto p-4">
-          <div className="grid grid-cols-3 gap-4">
-            <Skeleton className="col-span-1 h-32 rounded-lg" />
-            <Skeleton className="col-span-1 h-32 rounded-lg" />
-            <Skeleton className="col-span-1 h-32 rounded-lg" />
-            <Skeleton className="col-span-2 h-48 rounded-lg" />
-            <Skeleton className="col-span-1 h-48 rounded-lg" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Skeleton className="h-32 rounded-lg" />
+            <Skeleton className="h-32 rounded-lg" />
+            <Skeleton className="h-32 rounded-lg" />
+            <Skeleton className="md:col-span-2 h-48 rounded-lg" />
+            <Skeleton className="h-48 rounded-lg" />
           </div>
         </div>
       </div>

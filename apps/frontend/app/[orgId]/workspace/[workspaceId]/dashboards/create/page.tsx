@@ -2,6 +2,7 @@
 
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
+import { mutate } from "swr";
 import { BackButton } from "@/components/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +52,11 @@ const CreateDashboardPage = ({
       }
       if (res.ok) {
         const dashboard = await res.json();
+        const dashUrl = joinUrl(
+          backendUrl,
+          `/organizations/${orgId}/workspaces/${workspaceId}/dashboards/${dashboard.id}`,
+        );
+        await mutate(dashUrl, dashboard, false);
         router.push(
           `/${orgId}/workspace/${workspaceId}/dashboards/${dashboard.id}`,
         );
