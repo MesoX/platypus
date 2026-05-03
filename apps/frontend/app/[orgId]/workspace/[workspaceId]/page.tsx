@@ -173,7 +173,7 @@ const Workspace = () => {
           ))}
         </div>
         {/* Stats Cards - desktop */}
-        <div className="hidden lg:grid gap-4 grid-cols-6">
+        <div className="hidden lg:grid gap-2 grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-[104px] w-full rounded-xl" />
           ))}
@@ -302,7 +302,7 @@ const Workspace = () => {
               </Card>
             ))}
           </div>
-          <div className="hidden lg:grid gap-4 grid-cols-6">
+          <div className="hidden lg:grid gap-2 grid-cols-6">
             <Card className="gap-2">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
                 <CardTitle className="text-sm font-medium">Chats</CardTitle>
