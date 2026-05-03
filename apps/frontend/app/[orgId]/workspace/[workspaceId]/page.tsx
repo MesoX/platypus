@@ -283,12 +283,12 @@ const Workspace = () => {
               { label: "Agents", value: agentCount, icon: Bot },
               { label: "Skills", value: skillCount, icon: Sparkles },
               { label: "Triggers", value: triggerCount, icon: Zap },
-              { label: "Boards", value: boardCount, icon: KanbanSquare },
               {
                 label: "Dashboards",
                 value: dashboardCount,
                 icon: LayoutDashboard,
               },
+              { label: "Boards", value: boardCount, icon: KanbanSquare },
             ].map(({ label, value, icon: Icon }) => (
               <Card
                 key={label}
@@ -353,18 +353,6 @@ const Workspace = () => {
             </Card>
             <Card className="gap-2">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
-                <CardTitle className="text-sm font-medium">Boards</CardTitle>
-                <KanbanSquare className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{boardCount}</div>
-                <p className="text-xs text-muted-foreground">
-                  Visual work management
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="gap-2">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
                 <CardTitle className="text-sm font-medium">
                   Dashboards
                 </CardTitle>
@@ -374,6 +362,18 @@ const Workspace = () => {
                 <div className="text-2xl font-bold">{dashboardCount}</div>
                 <p className="text-xs text-muted-foreground">
                   Widget-based views
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="gap-2">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
+                <CardTitle className="text-sm font-medium">Boards</CardTitle>
+                <KanbanSquare className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{boardCount}</div>
+                <p className="text-xs text-muted-foreground">
+                  Visual work management
                 </p>
               </CardContent>
             </Card>
@@ -422,26 +422,6 @@ const Workspace = () => {
 
           <Separator />
 
-          {/* Boards List Section */}
-          <CollapsibleSection
-            title={
-              <>
-                <KanbanSquare className="size-5" /> Boards
-              </>
-            }
-            description="Visual work management boards for organizing tasks."
-            storageKey="section:boards:open"
-          >
-            <BoardsList orgId={orgId} workspaceId={workspaceId} />
-            <Button variant="outline" asChild>
-              <Link href={`/${orgId}/workspace/${workspaceId}/boards/create`}>
-                <Plus /> Create Board
-              </Link>
-            </Button>
-          </CollapsibleSection>
-
-          <Separator />
-
           {/* Dashboards Section */}
           <CollapsibleSection
             title={
@@ -458,6 +438,26 @@ const Workspace = () => {
                 href={`/${orgId}/workspace/${workspaceId}/dashboards/create`}
               >
                 <Plus /> Create Dashboard
+              </Link>
+            </Button>
+          </CollapsibleSection>
+
+          <Separator />
+
+          {/* Boards List Section */}
+          <CollapsibleSection
+            title={
+              <>
+                <KanbanSquare className="size-5" /> Boards
+              </>
+            }
+            description="Visual work management boards for organizing tasks."
+            storageKey="section:boards:open"
+          >
+            <BoardsList orgId={orgId} workspaceId={workspaceId} />
+            <Button variant="outline" asChild>
+              <Link href={`/${orgId}/workspace/${workspaceId}/boards/create`}>
+                <Plus /> Create Board
               </Link>
             </Button>
           </CollapsibleSection>
