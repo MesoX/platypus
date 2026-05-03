@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { mutate } from "swr";
 import { nanoid } from "nanoid";
 import { Trash2, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -101,6 +102,11 @@ export function KanbanBoardForm({
           onSuccess?.();
         } else {
           const data = await response.json();
+          const stateUrl = joinUrl(
+            backendUrl,
+            `/organizations/${orgId}/workspaces/${workspaceId}/boards/${data.id}/state`,
+          );
+          await mutate(stateUrl, { board: data, columns: [] }, false);
           router.push(`/${orgId}/workspace/${workspaceId}/boards/${data.id}`);
         }
       } else {
