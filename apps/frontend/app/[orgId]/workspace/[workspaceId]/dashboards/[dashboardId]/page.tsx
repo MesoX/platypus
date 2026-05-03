@@ -178,7 +178,7 @@ function MetricWidget({
               <span
                 className={cn(
                   "font-normal",
-                  data.unit === "°"
+                  ["°", "°C", "°F"].includes(data.unit)
                     ? "ml-[0.05em] text-[60cqh] align-top"
                     : "ml-[0.3em] text-[36cqh]",
                 )}
