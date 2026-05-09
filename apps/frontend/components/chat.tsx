@@ -511,6 +511,7 @@ export const Chat = ({
                     ref={textareaRef}
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
+                    className={messages.length === 0 ? "min-h-24" : undefined}
                     placeholder={
                       isReconnectedToRunningRun
                         ? "Run in progress…"
