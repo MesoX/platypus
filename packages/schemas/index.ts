@@ -1028,7 +1028,7 @@ export const rglLayoutItemSchema = z.object({
 
 export type RglLayoutItem = z.infer<typeof rglLayoutItemSchema>;
 
-export const widgetTypeSchema = z.enum(["metric", "text", "image"]);
+export const widgetTypeSchema = z.enum(["metric", "text", "image", "weather"]);
 
 export type WidgetType = z.infer<typeof widgetTypeSchema>;
 
@@ -1053,10 +1053,40 @@ export const imageWidgetDataSchema = z.object({
 
 export type ImageWidgetData = z.infer<typeof imageWidgetDataSchema>;
 
+export const weatherConditionSchema = z.enum([
+  "clear-day",
+  "clear-night",
+  "partly-cloudy-day",
+  "partly-cloudy-night",
+  "cloudy",
+  "rain",
+  "sleet",
+  "snow",
+  "wind",
+  "fog",
+  "thunderstorm",
+]);
+
+export type WeatherCondition = z.infer<typeof weatherConditionSchema>;
+
+export const weatherWidgetDataSchema = z.object({
+  location: z.string(),
+  date: z.string(),
+  condition: weatherConditionSchema,
+  description: z.string(),
+  temperatureC: z.number(),
+  highC: z.number(),
+  lowC: z.number(),
+  unit: z.enum(["C", "F"]),
+});
+
+export type WeatherWidgetData = z.infer<typeof weatherWidgetDataSchema>;
+
 export const widgetDataSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("metric"), data: metricWidgetDataSchema }),
   z.object({ type: z.literal("text"), data: textWidgetDataSchema }),
   z.object({ type: z.literal("image"), data: imageWidgetDataSchema }),
+  z.object({ type: z.literal("weather"), data: weatherWidgetDataSchema }),
 ]);
 
 export const widgetSchema = z.object({
@@ -1069,6 +1099,7 @@ export const widgetSchema = z.object({
       metricWidgetDataSchema,
       textWidgetDataSchema,
       imageWidgetDataSchema,
+      weatherWidgetDataSchema,
     ])
     .nullable(),
   createdAt: z.date(),
@@ -1097,6 +1128,11 @@ export const widgetUpdateDataSchema = z.discriminatedUnion("type", [
     type: z.literal("image"),
     title: z.string().min(1).max(200).optional(),
     data: imageWidgetDataSchema,
+  }),
+  z.object({
+    type: z.literal("weather"),
+    title: z.string().min(1).max(200).optional(),
+    data: weatherWidgetDataSchema,
   }),
 ]);
 
