@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import {
   type Trigger,
+  type Agent,
   type CronTriggerConfig,
   type EventTriggerConfig,
 } from "@platypus/schemas";
@@ -40,6 +41,7 @@ import { useBackendUrl } from "@/app/client-context";
 import { useAuth } from "@/components/auth-provider";
 import { describeSchedule } from "@/lib/cron-utils";
 import { toast } from "sonner";
+import { AgentAvatar } from "@/components/agent-avatar";
 
 export const TriggerList = ({
   orgId,
@@ -70,6 +72,20 @@ export const TriggerList = ({
         )
       : null,
     fetcher,
+  );
+
+  const { data: agentsData } = useSWR<{ results: Agent[] }>(
+    backendUrl && user
+      ? joinUrl(
+          backendUrl,
+          `/organizations/${orgId}/workspaces/${workspaceId}/agents`,
+        )
+      : null,
+    fetcher,
+  );
+
+  const agentsById = Object.fromEntries(
+    (agentsData?.results || []).map((a) => [a.id, a]),
   );
 
   const triggers = [...(triggersData?.results || [])].sort((a, b) =>
@@ -182,6 +198,15 @@ export const TriggerList = ({
                     <ItemDescription className="text-xs">
                       {trigger.description}
                     </ItemDescription>
+                  )}
+                  {agentsById[trigger.agentId] && (
+                    <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground">
+                      <AgentAvatar
+                        agent={agentsById[trigger.agentId]}
+                        className="size-4"
+                      />
+                      <span>{agentsById[trigger.agentId].name}</span>
+                    </div>
                   )}
                   <div className="flex flex-col gap-1 mt-1.5 text-xs text-muted-foreground">
                     {trigger.type === "cron" ? (
