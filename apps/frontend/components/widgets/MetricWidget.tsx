@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { Widget } from "@platypus/schemas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,29 @@ export function MetricWidget({
   const [label, setLabel] = useState(data?.label ?? "");
   const [unit, setUnit] = useState(data?.unit ?? "");
   const [change, setChange] = useState(data?.change ?? "");
+
+  const fitContainerRef = useRef<HTMLDivElement>(null);
+  const fitTextRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (editing) return;
+    const containerEl = fitContainerRef.current;
+    const textEl = fitTextRef.current;
+    if (!containerEl || !textEl) return;
+
+    const fit = () => {
+      textEl.style.fontSize = "";
+      if (textEl.scrollWidth > containerEl.clientWidth) {
+        const fs = parseFloat(getComputedStyle(textEl).fontSize);
+        textEl.style.fontSize = `${fs * (containerEl.clientWidth / textEl.scrollWidth)}px`;
+      }
+    };
+
+    const ro = new ResizeObserver(fit);
+    ro.observe(containerEl);
+    fit();
+    return () => ro.disconnect();
+  }, [data?.value, data?.unit, editing]);
 
   useEffect(() => {
     setTitle(widget.title);
@@ -114,20 +137,25 @@ export function MetricWidget({
     >
       {data ? (
         <>
-          <div className="font-bold text-[60cqh] leading-none">
-            {data.value}
-            {data.unit && (
-              <span
-                className={cn(
-                  "font-normal",
-                  ["°", "°C", "°F"].includes(data.unit)
-                    ? "ml-[0.05em] text-[60cqh] align-top"
-                    : "ml-[0.3em] text-[36cqh]",
-                )}
-              >
-                {data.unit}
-              </span>
-            )}
+          <div ref={fitContainerRef} className="w-full">
+            <div
+              ref={fitTextRef}
+              className="font-bold text-[60cqh] leading-none whitespace-nowrap inline-block"
+            >
+              {data.value}
+              {data.unit && (
+                <span
+                  className={cn(
+                    "font-normal",
+                    ["°", "°C", "°F"].includes(data.unit)
+                      ? "ml-[0.05em] text-[1em] align-top"
+                      : "ml-[0.3em] text-[0.6em]",
+                  )}
+                >
+                  {data.unit}
+                </span>
+              )}
+            </div>
           </div>
           <div className="text-sm text-muted-foreground mt-1">{data.label}</div>
           {data.change && (
