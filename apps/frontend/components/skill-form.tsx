@@ -117,9 +117,11 @@ const SkillForm = ({
       });
     }
 
+    const nextValue = id === "name" ? value.toLowerCase() : value;
+
     setFormData((prevData) => ({
       ...prevData,
-      [id]: value,
+      [id]: nextValue,
     }));
   };
 
