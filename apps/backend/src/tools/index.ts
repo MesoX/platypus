@@ -1,4 +1,5 @@
 import { type Tool } from "ai";
+import { eq } from "drizzle-orm";
 import {
   convertTemperature,
   convertDistance,
@@ -15,6 +16,11 @@ import { createSkillManagementTools } from "./skill-management.ts";
 import { createAgentManagementTools } from "./agent-management.ts";
 import { createNotificationTools } from "./notification.ts";
 import { createMemoryTools } from "./memory.ts";
+import { db } from "../index.ts";
+import { sandbox as sandboxTable } from "../db/schema.ts";
+import { getSandboxBackend } from "../sandbox/index.ts";
+import { createSandboxTools } from "../sandbox/tools.ts";
+import { logger } from "../logger.ts";
 
 export type ToolSetContext = {
   workspaceId: string;
@@ -31,7 +37,9 @@ type ToolSet = {
   description?: string;
   tools:
     | { [toolId: string]: Tool<any, any> }
-    | ((context: ToolSetContext) => Record<string, Tool>);
+    | ((
+        context: ToolSetContext,
+      ) => Record<string, Tool> | Promise<Record<string, Tool>>);
 };
 
 const TOOL_SETS_REGISTRY: {
@@ -159,4 +167,62 @@ registerToolSet("memory", {
   category: "Memory",
   description: "Search and retrieve memories from past conversations",
   tools: ({ workspaceId, userId }) => createMemoryTools(workspaceId, userId),
+});
+
+// The sandbox tool set resolves at chat-turn time: load the Workspace's
+// sandbox row, look up the registered adapter, validate config/credentials,
+// then build the five AI SDK Tools. Missing-row, unregistered-backend, and
+// validation failures all degrade gracefully to "no tools this turn" (with a
+// warning log). See ADR-0001 / ADR-0002.
+export const SANDBOX_TOOLSET_ID = "sandbox";
+
+registerToolSet(SANDBOX_TOOLSET_ID, {
+  name: "Sandbox",
+  category: "Sandbox",
+  description:
+    "Shell and filesystem access inside the workspace's configured sandbox",
+  tools: async ({ workspaceId, orgId, userId }) => {
+    const rows = await db
+      .select()
+      .from(sandboxTable)
+      .where(eq(sandboxTable.workspaceId, workspaceId))
+      .limit(1);
+    if (rows.length === 0) return {};
+
+    const row = rows[0];
+    const registration = getSandboxBackend(row.backend);
+    if (!registration) {
+      logger.warn(
+        { backend: row.backend, sandboxId: row.id },
+        "Sandbox backend not registered; skipping sandbox tools for this turn",
+      );
+      return {};
+    }
+
+    const configResult = registration.configSchema.safeParse(row.config ?? {});
+    if (!configResult.success) {
+      logger.warn(
+        { sandboxId: row.id, issues: configResult.error.issues },
+        "Sandbox config failed adapter validation; skipping sandbox tools",
+      );
+      return {};
+    }
+
+    const credentialsResult = registration.credentialsSchema.safeParse(
+      row.credentials ?? {},
+    );
+    if (!credentialsResult.success) {
+      logger.warn(
+        { sandboxId: row.id, issues: credentialsResult.error.issues },
+        "Sandbox credentials failed adapter validation; skipping sandbox tools",
+      );
+      return {};
+    }
+
+    const backend = registration.create(
+      configResult.data,
+      credentialsResult.data,
+    );
+    return createSandboxTools(backend, { orgId, workspaceId, userId });
+  },
 });

@@ -660,7 +660,7 @@ const loadTools = async (
       const toolSet = getToolSet(toolSetId);
       const resolvedTools =
         typeof toolSet.tools === "function"
-          ? toolSet.tools({
+          ? await toolSet.tools({
               workspaceId,
               agentId: agent.id,
               orgId,
