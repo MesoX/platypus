@@ -23,6 +23,7 @@ Platypus is an open-source, full-stack application designed to help you build AI
 - **🧩 Sub-Agents:** Agents can delegate specialized tasks to other agents, enabling hierarchical multi-agent workflows with isolated contexts and result streaming.
 - **📱 Responsive Design:** A fully responsive interface that works seamlessly across desktop, tablet, and mobile devices.
 - **🔌 MCP Support:** First-class support for the **Model Context Protocol** (MCP), allowing agents to securely connect to local and remote data sources.
+- **🏖️ Sandbox _(experimental)_:** Give agents shell and filesystem access inside an isolated, per-workspace execution environment. Ships with a Docker reference backend (single-node / self-hosted only — see `compose.sandbox.yaml`); the adapter interface is pluggable so other backends can be contributed.
 - **🧠 Memory:** Platypus automatically extracts facts and preferences from your conversations in the background and injects them into future chats, so agents remember things about you over time.
 - **📋 Kanban Boards:** Organize work visually with drag-and-drop Kanban boards. Agents can create, move, and update cards autonomously via built-in Kanban tools.
 - **📊 Dashboards _(experimental)_:** Build widget-based dashboards to surface agent data at a glance. Supports metric, text/markdown, image, weather, line chart, bar chart, and pie chart widgets with a drag-and-drop layout editor. Agents can update widget data autonomously via built-in dashboard tools.
