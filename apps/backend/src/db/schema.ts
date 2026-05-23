@@ -252,6 +252,34 @@ export const mcpOauthState = pgTable(
   (t) => [index("idx_mcp_oauth_state_mcp_id").on(t.mcpId)],
 );
 
+export const sandbox = pgTable(
+  "sandbox",
+  (t) => ({
+    id: t.text("id").primaryKey(),
+    workspaceId: t
+      .text("workspace_id")
+      .notNull()
+      .references(() => workspace.id, {
+        onDelete: "cascade",
+      }),
+    name: t.text("name").notNull(),
+    backend: t.text("backend").notNull(),
+    config: t
+      .jsonb("config")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    credentials: t
+      .jsonb("credentials")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: t.timestamp("created_at").notNull().defaultNow(),
+    updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
+  }),
+  (t) => [uniqueIndex("unique_sandbox_workspace_id").on(t.workspaceId)],
+);
+
 // Organization membership - links users to organizations with roles
 export const organizationMember = pgTable(
   "organization_member",

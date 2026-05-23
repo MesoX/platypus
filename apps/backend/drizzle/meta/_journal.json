@@ -225,6 +225,13 @@
       "when": 1779397881632,
       "tag": "0031_mature_prism",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1779510679895,
+      "tag": "0032_skinny_black_cat",
+      "breakpoints": true
     }
   ]
 }
