@@ -420,6 +420,15 @@ const McpForm = ({
         // If the popup was blocked, fall back to same-window redirect
         if (!popup) {
           window.location.replace(data.authorizationUrl);
+        } else {
+          // Reset Authorize button when popup closes without success
+          // (e.g. upstream provider rejects with 400 — no postMessage fires).
+          const interval = setInterval(() => {
+            if (popup.closed) {
+              clearInterval(interval);
+              setIsAuthorizing(false);
+            }
+          }, 500);
         }
       } else {
         toast.error(data.error || "Failed to start OAuth authorization");
