@@ -48,6 +48,15 @@ Both sides see the same origin → MCP SDK validation passes.
 
    This makes the server advertise that URL in its protected-resource and authorization metadata.
 
+   **Patch required for the MCP Python library.** Upstream `mcp` (the official `modelcontextprotocol` Python SDK that FastMCP-based servers depend on) only allows literal `localhost` or `127.0.0.1` as the host for non-HTTPS issuer URLs. `*.localhost` is rejected with `Issuer URL must be HTTPS`. Patch `mcp/server/auth/routes.py` to also accept hosts ending in `.localhost`. The diff is one line:
+
+   ```python
+   # in mcp/server/auth/routes.py, around line 38
+   and url.host != "localhost" and not (url.host or "").endswith(".localhost")
+   ```
+
+   The workspace-mcp deployment mounts a patched copy of `routes.py` over the venv path; see `patches/routes.py` and the `volumes:` entry in `compose.stateless.yaml`.
+
 3. **Add the backend `extra_hosts` entry** by overlaying `compose.remote-mcp.yaml`:
 
    ```bash
