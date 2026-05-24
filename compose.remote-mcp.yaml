@@ -1,0 +1,4 @@
+services:
+  backend:
+    extra_hosts:
+      - "workspace-mcp.localhost:host-gateway"
