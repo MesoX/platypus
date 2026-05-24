@@ -1,6 +1,6 @@
 ---
 name: meeting-pipeline
-description: Dispatcher. Reads status.json for the in-flight meeting and delegates one step to the matching sub-agent. One step per invocation.
+description: Dispatcher. Reads status.json, delegates one step to the matching sub-agent. One step per invocation.
 model_id: qwen36
 max_steps: 8
 temperature: 0.0

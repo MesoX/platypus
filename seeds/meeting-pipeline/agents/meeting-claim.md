@@ -1,6 +1,6 @@
 ---
 name: meeting-claim
-description: Claim one new meeting from Drive inbox. Picks oldest unclaimed folder, creates sandbox state dir, downloads audio via proxy. One-shot.
+description: Claim one new meeting from Drive inbox. Picks oldest folder, creates state dir, downloads audio via proxy.
 model_id: qwen36
 max_steps: 12
 temperature: 0.0

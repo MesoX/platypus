@@ -1,6 +1,6 @@
 ---
 name: meeting-archive
-description: Upload transcript + notes + final status snapshot into the meeting's Drive folder. Delete local audio. Mark step=archived. One-shot.
+description: Upload transcript + notes + status snapshot to meeting Drive folder. Delete local audio. Mark step=archived.
 model_id: qwen36
 max_steps: 10
 temperature: 0.0

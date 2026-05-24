@@ -1,6 +1,6 @@
 ---
 name: meeting-transcribe
-description: Transcribe one already-downloaded meeting audio via local WhisperX. Reads status.json, runs curl, validates JSON, advances state. One-shot.
+description: Transcribe one downloaded meeting audio via local WhisperX. Validates JSON, advances state. One-shot.
 model_id: qwen36
 max_steps: 8
 temperature: 0.0
