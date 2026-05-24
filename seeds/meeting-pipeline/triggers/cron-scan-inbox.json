@@ -1,0 +1,15 @@
+{
+  "name": "meeting-pipeline cron scan",
+  "description": "Every 20 minutes, wake the meeting-pipeline orchestrator to advance any in-flight meeting one step, or claim a new file from the Drive inbox if none are in flight.",
+  "type": "cron",
+  "instruction": "mode=scan_inbox",
+  "enabled": true,
+  "maxRunsToKeep": 100,
+  "search": false,
+  "agentRef": "meeting-pipeline",
+  "config": {
+    "cronExpression": "*/20 * * * *",
+    "timezone": "{{timezone}}",
+    "isOneOff": false
+  }
+}
