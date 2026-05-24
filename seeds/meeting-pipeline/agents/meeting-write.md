@@ -8,7 +8,7 @@ tool_sets: []
 skills:
   - librarian-protocol
 sub_agents:
-  - { { librarian_agent_id } }
+  - "{{librarian_agent_id}}"
 ---
 
 # Meeting write executor

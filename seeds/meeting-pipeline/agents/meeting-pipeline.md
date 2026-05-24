@@ -7,8 +7,8 @@ temperature: 0.1
 input_placeholder: "process meetings"
 tool_sets:
   - sandbox
-  - mcp:{{drive_mcp_id}}
-  - mcp:{{calendar_mcp_id}}
+  - "{{drive_mcp_id}}"
+  - "{{calendar_mcp_id}}"
 skills:
   - inbox-claim
   - drive-proxy
@@ -17,7 +17,7 @@ skills:
   - librarian-protocol
   - state-machine
 sub_agents:
-  - { { librarian_agent_id } }
+  - "{{librarian_agent_id}}"
   - meeting-extract
   - meeting-write
 ---
