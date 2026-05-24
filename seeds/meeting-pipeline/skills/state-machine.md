@@ -1,26 +1,26 @@
 ---
 name: state-machine
-description: The per-meeting state directory layout, the status.json schema, and the rules for resuming a pipeline that was interrupted mid-run. Also defines the cleanup step that moves the meeting folder from inbox/ to archive/ and uploads transcript + notes back to Drive.
+description: The per-meeting state directory layout on the sandbox volume, the status.json schema, the rules for resuming a pipeline that was interrupted mid-run, and the archive step that uploads transcript + notes back into the meeting's Drive folder. The Drive MCP is read-mostly (no rename/move/delete), so archival is upload-only.
 ---
 
 # Per-meeting state on the sandbox volume
 
-State lives at `/workspace/meetings/<meetingId>/` where `meetingId` is the Drive folder id. The directory persists across sandbox restarts (workspace volume — ADR-0001). If the directory exists, the orchestrator picks up from `status.json`; if it is gone, the meeting is forgotten.
+State lives at `/workspace/meetings/<meetingId>/` where `meetingId` is the Drive folder id. The directory persists across sandbox restarts (workspace volume, ADR-0001). The directory's existence is also the claim marker — see `inbox-claim`.
 
 ## Directory layout
 
 ```
 /workspace/meetings/<meetingId>/
   status.json              ← current step + meta (always present)
-  audio.<ext>               ← downloaded audio (removed at cleanup)
+  audio.<ext>               ← downloaded audio; removed at archive step
   raw_transcript.json       ← WhisperX response
   calendar.json             ← match output
   extraction.json           ← drawer list + KG edges (output of meeting-extract)
+  notes.md                  ← optional structured notes (output of meeting-extract)
   written.json              ← drawer ids returned by Librarian
-  notes.md                  ← human-readable meeting notes (produced during extract)
 ```
 
-The orchestrator never writes raw transcripts or extractions itself — those are written by the skill that produced them.
+The orchestrator never writes raw transcripts, extractions, or notes itself — those are written by the skill or sub-agent that produced them.
 
 ## `status.json` schema
 
@@ -39,7 +39,7 @@ The orchestrator never writes raw transcripts or extractions itself — those ar
 }
 ```
 
-`errors` is append-only: every retryable failure appends `{ at, step, message }`.
+`errors` is append-only: every retryable failure appends `{ at, step, message }` where `message` is the verbatim tool error string.
 
 ## Step enum
 
@@ -55,37 +55,67 @@ claimed
                 → done
 ```
 
-Failure states: when step X throws, set `step: "<x>_failed"` and append to `errors`. Next trigger run decides whether to retry (errors.length < 3) or surface to user.
+Failure states: when step X throws, set `step: "<x>_failed"` and append to `errors`. Next trigger run decides whether to retry (`errors.length < 3`) or surface as GIVE-UP.
 
 ## Resume rules
 
 On every orchestrator invocation, before doing anything:
 
-1. `fsList /workspace/meetings` (recursive false).
-2. For each subdir, `fsRead status.json`.
-3. Build an ordered list (oldest `claimed_at` first), excluding `done` and `*_failed` with `errors.length >= 3`.
+1. `fsList /workspace/meetings` with `recursive: false`.
+2. For each subdir, `fsRead` its `status.json`.
+3. Build an ordered list (oldest `claimed_at` first), excluding `done` and excluding `*_failed` entries where `errors.length >= 3`.
 4. Process at most **one** meeting per run.
-5. If the list is empty AND the invocation is `mode: scan_inbox`, follow `inbox-claim` to start a new one.
 
 ## Atomic updates
 
-`fsWrite mode: overwrite` replaces `status.json` in one call. Never partial writes — concurrent runs could read a half-written file. When appending to `errors`: `fsRead` → append in memory → `fsWrite` whole.
+Use `fsWrite mode: "overwrite"` to swap `status.json` in one call. Never partial writes. When appending to `errors`: `fsRead` the current file → mutate in memory → `fsWrite` the whole new object.
 
-## Archive step (the cleanup-equivalent for folder-per-meeting)
+## Archive step (the final step before `done`)
 
-After Librarian acknowledges the write (step `written`), the archive step does the following — all via the Drive MCP, not by manipulating sandbox files:
+The Drive MCP does not expose rename, move, or delete. So archival is **upload-only**:
 
-1. **Strip the `_processing_` prefix** from the Drive folder name (back to the original visible name).
-2. **Move the folder** out of `{{inbox_folder}}` into the sibling `archive/` folder. Find or create `archive/` once per run via `list_files` (same parent as inbox). The Drive MCP `update_file` accepts `addParents` / `removeParents` to move.
-3. **Upload `transcript.json`** to the archived meeting folder. Source: `/workspace/meetings/<meetingId>/raw_transcript.json` on the sandbox volume. Read via `fsRead`, then `create_file` to Drive with `parents: [<archivedFolderId>]`.
-4. **Upload `notes.md`** if it exists (meeting-extract produces it for customer meetings).
-5. **Upload a final `status.json`** snapshot to the archived folder — useful for forensics.
-6. **Delete the local audio**: `rm /workspace/meetings/<meetingId>/audio.*` via `shellExec`. The other sandbox artefacts stay on the volume for 7 days as a debug cache.
+1. Read `/workspace/meetings/<meetingId>/raw_transcript.json` via `fsRead`. Upload it to the meeting's Drive folder via `create_file`:
 
-Then set `step: "archived"` then `step: "done"` and exit.
+   ```
+   create_file
+     parentId: <drive_folder_id>
+     name: "transcript.json"
+     mimeType: "application/json"
+     content: <body from fsRead>
+   ```
+
+2. If `/workspace/meetings/<meetingId>/notes.md` exists (sub-agent emitted it), upload that too:
+
+   ```
+   create_file
+     parentId: <drive_folder_id>
+     name: "notes.md"
+     mimeType: "text/markdown"
+     content: <body from fsRead>
+   ```
+
+3. Upload a final `pipeline.status.json` snapshot to the meeting folder (rename the local `status.json` on upload so it doesn't collide with any user file):
+
+   ```
+   create_file
+     parentId: <drive_folder_id>
+     name: "pipeline.status.json"
+     mimeType: "application/json"
+     content: <body from fsRead /workspace/meetings/<meetingId>/status.json>
+   ```
+
+4. Delete the local audio file to free sandbox volume space:
+
+   ```
+   shellExec command="rm -f /workspace/meetings/<meetingId>/audio.*"
+   ```
+
+5. Update `status.json`: `step: "archived"`. The next invocation sets `step: "done"`.
+
+The Drive folder is not moved or renamed. The user manually drags it from `inbox/` to `archive/` in the Drive UI when they want to declutter. The pipeline accepts that limitation.
 
 ## What this skill is NOT for
 
+- Drive folder rename / move / delete — not exposed by this Drive MCP.
 - Cross-meeting orchestration.
-- Long-term cleanup of `/workspace/meetings/` (handled by an out-of-scope sweeper).
-- Drive folder creation outside `{{inbox_folder}}` and its sibling `archive/`. No other Drive locations are touched.
+- Long-term cleanup of `/workspace/meetings/` (handled by an out-of-scope sweeper later).

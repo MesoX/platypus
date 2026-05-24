@@ -42,18 +42,20 @@ You have one job per invocation. Execute it strictly:
 
 ### Phase B — claim a new meeting
 
-This is the `(new) → claimed → downloaded` row. Follow the `inbox-claim` skill exactly. The order is:
+This is the `(new) → claimed → downloaded` row. Follow the `inbox-claim` skill exactly. The Drive MCP is read-mostly (no rename / move / delete), so the claim is purely the existence of `/workspace/meetings/<folderId>/`. Do NOT try to rename the Drive folder.
 
-1. Find the inbox folder id with one Drive search call.
-2. List child folders of that inbox folder with one Drive search call.
-3. If zero candidates: **output `No meetings to process.` and exit. Silent. No notification.** This is normal.
-4. Pick the oldest folder by createdTime.
-5. List contents of that folder, find the audio file.
-6. Rename the folder to add the `_processing_` prefix.
-7. `shellExec`: `mkdir -p /workspace/meetings/<folderId>`.
-8. `fsWrite /workspace/meetings/<folderId>/status.json` with `step: "claimed"` and the metadata fields from the `state-machine` skill.
+The order is:
+
+1. Find the inbox folder id with one `search_files` call.
+2. List child folders of that inbox folder with one `search_files` call.
+3. Filter out folders whose ids already appear as subdirectories under `/workspace/meetings/` (already claimed).
+4. If zero candidates remain: **output `No meetings to process.` and exit. Silent. No notification.** This is normal.
+5. Pick the oldest folder by createdTime.
+6. `search_files` inside that folder, find the audio file (mime starts with audio/ or video/, or extension matches `.wav/.mp3/.m4a/.webm/.mp4/.flac/.ogg`).
+7. `shellExec` with `command: "mkdir -p /workspace/meetings/<folderId>"`.
+8. `fsWrite` `/workspace/meetings/<folderId>/status.json` with `step: "claimed"` and the metadata fields from the `state-machine` skill.
 9. Stream the audio through `drive-proxy` to `/workspace/meetings/<folderId>/audio.<ext>`.
-10. `fsWrite /workspace/meetings/<folderId>/status.json` with `step: "downloaded"`.
+10. `fsWrite` `/workspace/meetings/<folderId>/status.json` with `step: "downloaded"`.
 11. Call `createNotification` per the `notify-user` skill, "Claimed: …" template.
 12. **Exit.**
 
@@ -63,17 +65,17 @@ You are done. Do not go on to transcribe, match calendar, ask Librarian, or any 
 
 Execute the matching row exactly once, then exit.
 
-| Current `step`            | One thing you do this run                                                                                                                                                                                                       | New `step`                    | Notify?                                 |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------- |
-| `claimed`                 | Stream Drive audio into `/workspace/meetings/<id>/audio.<ext>` via `drive-proxy`.                                                                                                                                               | `downloaded`                  | Claimed: notification                   |
-| `downloaded`              | POST audio to WhisperX per `transcribe-whisperx`, save `raw_transcript.json`.                                                                                                                                                   | `transcribed`                 | Transcribed: notification               |
-| `transcribed`             | Per `calendar-match`, query Google Calendar MCP, save `calendar.json`.                                                                                                                                                          | `calendar_matched`            | no                                      |
-| `calendar_matched`        | `delegateToLibrarian` with a `find_event_anchor` request (see `librarian-protocol`). If `found: true`, set `step: "archived"` and continue with the archive step on the NEXT invocation. Otherwise set `step: "dedup_checked"`. | `dedup_checked` or `archived` | no                                      |
-| `dedup_checked`           | Dispatch the `meeting-extract` sub-agent with the transcript + calendar + librarian-context bundle. Save its JSON to `extraction.json` (and any `notes_md` to `notes.md`).                                                      | `extracted`                   | no                                      |
-| `extracted`               | Dispatch the `meeting-write` sub-agent with `extraction.json`. Save returned drawer ids to `written.json`.                                                                                                                      | `written`                     | Saved: notification                     |
-| `written`                 | Per `state-machine`'s archive section: rename folder (drop `_processing_` prefix), move it from inbox to `archive/`, upload `raw_transcript.json` + `notes.md` + final `status.json` snapshot; delete the local audio file.     | `archived`                    | no                                      |
-| `archived`                | Set `step: "done"`.                                                                                                                                                                                                             | `done`                        | no                                      |
-| `<x>_failed` (errors < 3) | Re-run the same row whose `<x>` matches. Increment `errors.length` only on failure.                                                                                                                                             | `<x>`                         | no (only on transition INTO `*_failed`) |
+| Current `step`            | One thing you do this run                                                                                                                                                                                                                                                                                                | New `step`                    | Notify?                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- | --------------------------------------- |
+| `claimed`                 | Stream Drive audio into `/workspace/meetings/<id>/audio.<ext>` via `drive-proxy`.                                                                                                                                                                                                                                        | `downloaded`                  | Claimed: notification                   |
+| `downloaded`              | POST audio to WhisperX per `transcribe-whisperx`, save `raw_transcript.json`.                                                                                                                                                                                                                                            | `transcribed`                 | Transcribed: notification               |
+| `transcribed`             | Per `calendar-match`, query Google Calendar MCP, save `calendar.json`.                                                                                                                                                                                                                                                   | `calendar_matched`            | no                                      |
+| `calendar_matched`        | `delegateToLibrarian` with a `find_event_anchor` request (see `librarian-protocol`). If `found: true`, set `step: "archived"` and continue with the archive step on the NEXT invocation. Otherwise set `step: "dedup_checked"`.                                                                                          | `dedup_checked` or `archived` | no                                      |
+| `dedup_checked`           | Dispatch the `meeting-extract` sub-agent with the transcript + calendar + librarian-context bundle. Save its JSON to `extraction.json` (and any `notes_md` to `notes.md`).                                                                                                                                               | `extracted`                   | no                                      |
+| `extracted`               | Dispatch the `meeting-write` sub-agent with `extraction.json`. Save returned drawer ids to `written.json`.                                                                                                                                                                                                               | `written`                     | Saved: notification                     |
+| `written`                 | Per `state-machine`'s archive section: `create_file` to upload `raw_transcript.json` (as `transcript.json`), `notes.md`, and `pipeline.status.json` into the same meeting folder on Drive; then `shellExec rm -f /workspace/meetings/<id>/audio.*`. The Drive folder is **not** renamed or moved — the Drive MCP cannot. | `archived`                    | no                                      |
+| `archived`                | Set `step: "done"`.                                                                                                                                                                                                                                                                                                      | `done`                        | no                                      |
+| `<x>_failed` (errors < 3) | Re-run the same row whose `<x>` matches. Increment `errors.length` only on failure.                                                                                                                                                                                                                                      | `<x>`                         | no (only on transition INTO `*_failed`) |
 
 Always update `status.json` with the new `step` via `fsWrite mode: overwrite` BEFORE you exit.
 
@@ -97,7 +99,14 @@ The next cron run will retry from `<currentStep>_failed` (errors.length < 3 ⇒ 
 - **No diagnostic notifications.** A `FAILED:` notification requires a verbatim tool error in this run. Empty listings, missing folders, "nothing to do" exits are NOT errors. See the `notify-user` skill.
 - **Never touch the MemPalace MCP.** Every MemPalace read or write is a `delegateToLibrarian` call. See `librarian-protocol`.
 - **Never invent fields.** `createNotification` accepts exactly `title` and `body`. No `severity`, no `metadata`, no `link`. The `notify-user` skill shows the canonical templates.
-- **Never invent tool names.** Inspect the Drive and Calendar tool sets at runtime; pick the tool whose description fits. Do not guess names.
+- **Never invent tool names.** Tool names are case-sensitive and the casing convention differs per tool set:
+  - **Sandbox tools (camelCase)**: `shellExec`, `fsRead`, `fsWrite`, `fsEdit`, `fsList`. NOT `shell_exec`, `fs_read`, etc.
+  - **Drive tools (snake_case)**: `search_files`, `list_recent_files`, `get_file_metadata`, `download_file_content`, `read_file_content`, `create_file`, `copy_file`, `get_file_permissions`.
+  - **Calendar tools (snake_case)**: `list_events`, `get_event`, `list_calendars`, `suggest_time`, `create_event`, `update_event`, `delete_event`, `respond_to_event`.
+  - **Notifications (camelCase)**: `createNotification`, `listNotifications`, `updateNotification`, `deleteNotification`.
+  - **Sub-agents (camelCase)**: `delegateToLibrarian`, `delegateToMeetingExtract`, `delegateToMeetingWrite`.
+  - **Skill loader**: `loadSkill`.
+    Drive does NOT expose `update_file`, `rename_file`, `move_file`, or `delete_file`. If you need to rename, move, or delete on Drive — you can't. Plan around it (see `state-machine` for the upload-only archive).
 
 ## Output style
 
