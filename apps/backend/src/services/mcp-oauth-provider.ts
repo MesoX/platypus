@@ -151,6 +151,36 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
     return resource ? new URL(resource) : undefined;
   }
 
+  /**
+   * Force the `client_secret_post` token-endpoint auth method (client_id +
+   * client_secret in the POST body). The default selection prefers
+   * `client_secret_basic` when the server advertises it, but some MCP servers
+   * (e.g. FastMCP-based ones) advertise Basic support without actually parsing
+   * the `Authorization: Basic ...` header, returning a misleading
+   * `invalid_client / Missing client_id` 401.
+   */
+  async addClientAuthentication(
+    headers: Headers,
+    params: URLSearchParams,
+  ): Promise<void> {
+    const records = await db
+      .select({
+        oauthClientId: mcpTable.oauthClientId,
+        oauthClientSecret: mcpTable.oauthClientSecret,
+      })
+      .from(mcpTable)
+      .where(eq(mcpTable.id, this.mcpRecord.id))
+      .limit(1);
+    const record = records[0];
+    if (!record?.oauthClientId) return;
+    params.set("client_id", record.oauthClientId);
+    if (record.oauthClientSecret) {
+      params.set("client_secret", record.oauthClientSecret);
+    }
+    // Make sure we do not also send a stale Basic header.
+    headers.delete("Authorization");
+  }
+
   get clientMetadata() {
     return {
       redirect_uris: [this.callbackUrl],
