@@ -39,11 +39,12 @@ Other: `loadSkill`.
 
 There is NO `shell`, `shell_exec`, `bash`, `fs_list`, `fs_read`, `update_file`, `rename_file`, `move_file`, `delete_file`, `list_notifications`, or any other variant. If you try one of those, the call fails silently and you have no way to recover. Always use the exact strings above.
 
-## First step every invocation
+## First two calls every invocation
 
-Call `fsList` with `path: "meetings"` (workspace-relative — NOT `/workspace/meetings`). If the directory does not exist yet, the tool returns an error containing "ENOENT" or similar — treat that as "no in-flight meetings" and continue. Do NOT call `shellExec` to check; `fsList` is enough.
+1. `shellExec` with `command: "mkdir -p meetings"` — idempotent, guarantees the next call works.
+2. `fsList` with `path: "meetings"`.
 
-For each entry returned, call `fsRead` with `path: "meetings/<entryName>/status.json"`.
+For each entry returned by `fsList`, call `fsRead` with `path: "meetings/<entryName>/status.json"`.
 
 Build the in-flight list (sorted ascending by `claimed_at`), excluding entries where `step == "done"` and entries where `step ends with _failed AND errors.length >= 3`.
 
