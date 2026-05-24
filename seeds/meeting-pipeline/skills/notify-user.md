@@ -83,6 +83,21 @@ Fire **once per transition into `*_failed`**, not on every retry. If `errors.len
 - Body must be parseable by a human glancing at a phone notification — pack the most useful fact first.
 - If the notification tool call itself fails, log the failure and continue — do not let it block the pipeline step.
 
+## Hard rule: failures need real evidence
+
+You may only send `severity: "error"` notifications when you have **the verbatim error string returned by a failed tool call** in the current run. Do not diagnose. Do not infer. Do not extrapolate from an empty result, a missing folder, or a successful "no work to do" exit.
+
+If a tool succeeded and returned an empty list, that is **not** an error — it is normal "nothing to process" state. Silent-exit, do not notify.
+
+If you are tempted to write text like "API disabled", "permission denied", "service down", or any other diagnosis: stop. Either you have the literal HTTP/error text from a tool, or you have nothing. Without a verbatim error string, do not send the notification.
+
+When you do send `severity: "error"`, include the verbatim tool error in `metadata.last_error_message` — that is the load-bearing field. The `body` quotes that same string. No paraphrase, no improvement.
+
+## What this skill is NOT for
+
+- Chat messages back to the invoking user when the orchestrator was started from chat. Those go through the agent's normal chat response, not via notifications.
+- Status spam at every step transition. Four events only.
+
 ## What this skill is NOT for
 
 - Chat messages back to the invoking user when the orchestrator was started from chat. Those go through the agent's normal chat response, not via notifications.

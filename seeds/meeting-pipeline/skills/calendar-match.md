@@ -19,7 +19,7 @@ Parse out year, month, day, hour, minute (and second if present). Treat the pars
 
 ## Query the calendar
 
-Call the Google Calendar MCP `list_events` tool with:
+Use whichever Google Calendar MCP tool lists events in a time range (likely `list_events`, `search_events`, or similar — inspect available Calendar tools and pick the one whose description fits "list events between two times"). Call it with:
 
 - `timeMin`: recording_timestamp − 15 minutes
 - `timeMax`: recording_timestamp + 5 minutes

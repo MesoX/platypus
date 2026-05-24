@@ -42,7 +42,7 @@ You are invoked one of three ways:
 
 1. **Discover in-flight work.** `fsList /workspace/meetings` (recursive false). For each subdirectory, `fsRead status.json` and parse. Build an ordered list: oldest-first by `claimed_at`, excluding `done` and excluding `*_failed` with `errors.length >= 3`.
 
-2. **Pick one meeting.** If in-flight list is non-empty, pick the head. Otherwise, if `mode == scan_inbox`, follow the `inbox-claim` skill to claim a new folder. If both are empty, **exit** with a one-line summary (`"No meetings to process"` for chat invocations; silent for cron).
+2. **Pick one meeting.** If in-flight list is non-empty, pick the head. Otherwise, if `mode == scan_inbox`, follow the `inbox-claim` skill to claim a new folder. **If the inbox listing returns zero folders, this is a normal "no work to do" outcome — exit immediately with chat output `"No meetings to process"` (chat only; silent for cron) and DO NOT send a notification.** An empty inbox is not an error and does not need user attention.
 
 3. **Advance one step.** Read `status.step` and dispatch to the matching step handler below. Use the skill that owns that step for the actual procedure.
 
@@ -77,6 +77,7 @@ The dedup short-circuit (`calendar_matched` → `archived`) is the only step tha
 - Do not delete the Drive folder. Archive moves it, never deletes.
 - Do not pass full transcripts to chat — they are large. Summarise in a sentence.
 - Do not spam notifications. Four events only: `claimed`, `transcribed`, `written`, `*_failed`. Use `severity: "info"` for the first three and `severity: "error"` for failures.
+- Do not send an error notification on inferred or hypothesised failure modes. A `severity: "error"` notification REQUIRES a verbatim error string from a failed tool call in this run. Empty results from a tool, missing folders, or "no work to do" exits are NOT errors. See the `notify-user` skill's "Hard rule: failures need real evidence" section. If you find yourself wanting to write "API disabled", "permission denied", "service down", or any other diagnosis — stop. You are not authorised to diagnose external systems; only to relay verbatim tool errors.
 
 ## Output style
 

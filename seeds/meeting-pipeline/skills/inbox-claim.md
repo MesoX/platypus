@@ -23,7 +23,7 @@ Meeting Recordings/
 
 ## Locate the inbox folder id
 
-The inbox folder's path is `{{inbox_folder}}`. Find its id once per run via the Drive MCP `list_files` tool:
+The inbox folder's path is `{{inbox_folder}}`. Find its id once per run using whichever Drive MCP tool lists files by query (likely `search_files` or `list_recent_files` — inspect the available Drive tools and pick the one whose description fits "find files matching a query"). Pass:
 
 ```
 q: name = '{{inbox_folder_name}}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false
@@ -34,12 +34,13 @@ Cache that id for the rest of the run.
 
 ## List candidate meeting folders
 
+Same Drive MCP tool, with:
+
 ```
-list_files
-  q: '<inboxFolderId>' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false and not name contains '_processing_'
-  orderBy: createdTime asc
-  fields: id, name, createdTime
-  pageSize: 10
+q: '<inboxFolderId>' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false and not name contains '_processing_'
+orderBy: createdTime asc
+fields: id, name, createdTime
+pageSize: 10
 ```
 
 Skip:
@@ -47,7 +48,7 @@ Skip:
 - Folders whose visible name starts with `_processing_` (claimed already).
 - Folders that contain zero audio/video files (check below; empty placeholder folders).
 
-If no folder passes, **exit the run cleanly** — there is no work to do.
+If no folder passes — **including when the listing returns zero results in the first place** — this is the normal "nothing to process" state. Exit the run cleanly. Do not retry the listing. Do not send an error notification. Do not diagnose the cause. The inbox is simply empty right now.
 
 ## Compute the meeting id
 
@@ -55,23 +56,23 @@ If no folder passes, **exit the run cleanly** — there is no work to do.
 
 ## Atomically claim by renaming
 
-Rename the chosen folder with a `_processing_<ISO8601-no-colons>_` prefix on its visible name. Drive's `update_file` works on folders too.
+Rename the chosen folder with a `_processing_<ISO8601-no-colons>_` prefix on its visible name. Use the Drive MCP rename / update tool (probably named something like `update_file`, `rename_file`, or `move_file` — inspect available Drive tools and pick the one that updates a file or folder's metadata).
 
 ```
-update_file
-  fileId: <folderId>
-  body: { name: "_processing_2026-05-23T1400_<original-folder-name>" }
+fileId: <folderId>
+body: { name: "_processing_2026-05-23T1400_<original-folder-name>" }
 ```
 
 If `update_file` returns 409/412 or the read-back name still starts with `_processing_` and that prefix is NOT yours, another run won. Move to the next candidate.
 
 ## Find the audio file inside
 
+Same Drive MCP search tool, with:
+
 ```
-list_files
-  q: '<folderId>' in parents and trashed = false
-  fields: id, name, mimeType, size, createdTime
-  pageSize: 50
+q: '<folderId>' in parents and trashed = false
+fields: id, name, mimeType, size, createdTime
+pageSize: 50
 ```
 
 From the result, pick the one audio/video file:
