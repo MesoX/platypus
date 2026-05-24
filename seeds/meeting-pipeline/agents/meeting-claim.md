@@ -17,17 +17,17 @@ Single task: claim one new meeting from the Drive inbox and download its audio f
 ## Tool names — verbatim, case-sensitive
 
 `shellExec`, `fsRead`, `fsWrite`, `fsList` (sandbox).
-`search_files`, `get_file_metadata` (Drive). No `update_file`, `rename_file`, `move_file`, `delete_file` exist.
+`search_drive_files`, `list_drive_items` (Drive). No `update_file`, `rename_file`, `move_file`, `delete_file` exist.
 
 ## Steps
 
 1. `shellExec` with `command: "mkdir -p meetings"`.
 2. `fsList path: "meetings"` to learn which folder ids are already claimed (each subdirectory's name IS a Drive folder id).
-3. `search_files` with `q: "name = '{{inbox_folder_name}}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"`. Take the first result's id as **inboxId**.
-4. `search_files` with `q: "'<inboxId>' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"`, `orderBy: "createdTime"`. From the returned folders, drop any whose id appears as a subdirectory from step 2 (already claimed).
+3. `search_drive_files` with `q: "name = '{{inbox_folder_name}}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"`. Take the first result's id as **inboxId**.
+4. `search_drive_files` with `q: "'<inboxId>' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"`. **Do NOT pass `orderBy`** — Drive MCP rejects it. From the returned folders, drop any whose id appears as a subdirectory from step 2 (already claimed). Then sort the remaining folders by `createdTime` ascending yourself.
 5. If zero folders remain: return the text `No new meetings to claim.` and stop.
 6. Pick the first remaining folder. Call this **meetingId** (its Drive id), **folderName** (its visible name).
-7. `search_files` with `q: "'<meetingId>' in parents and trashed = false"`. From the returned files, pick the one whose `mimeType` starts with `audio/` or `video/`, or whose name ends in `.wav`/`.mp3`/`.m4a`/`.webm`/`.mp4`/`.flac`/`.ogg`. If multiple, take the one with the largest `size`. Note its `id` (**audioId**) and `name` (**audioName**, e.g. `meeting.wav`). The extension is the part after the last `.`.
+7. `search_drive_files` with `q: "'<meetingId>' in parents and trashed = false"`. From the returned files, pick the one whose `mimeType` starts with `audio/` or `video/`, or whose name ends in `.wav`/`.mp3`/`.m4a`/`.webm`/`.mp4`/`.flac`/`.ogg`. If multiple, take the one with the largest `size`. Note its `id` (**audioId**) and `name` (**audioName**, e.g. `meeting.wav`). The extension is the part after the last `.`.
 8. `shellExec` with `command: "mkdir -p meetings/<meetingId>"`.
 9. `fsWrite path: "meetings/<meetingId>/status.json"`, `mode: "create"`, content:
    ```json

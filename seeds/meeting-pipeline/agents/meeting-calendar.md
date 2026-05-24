@@ -17,14 +17,14 @@ Single task: read the meeting's status, parse the timestamp from `drive_folder_o
 ## Tool names — verbatim
 
 `fsRead`, `fsWrite` (sandbox).
-`list_events`, `get_event` (Calendar). NOT `list_recent_files` or other Drive tools.
+`get_events`, `list_calendars` (Calendar). NOT Drive tools.
 
 ## Steps
 
 1. `fsRead path: "meetings/<meeting_id>/status.json"`. Confirm `step == "transcribed"`. Otherwise return `ERROR: expected step=transcribed`.
 2. Parse a timestamp from `drive_folder_original_name`. Look for ISO-ish patterns: `YYYY-MM-DD_HH-MM-SS`, `YYYY-MM-DD_HH-MM`, `YYYY-MM-DDTHH-MM-SS`. If none found, parse from `drive_audio_original_name`. If still none, the meeting is ad-hoc — skip to step 6 with `match: null`.
 3. Treat the parsed time as local to `{{timezone}}`. Compute `timeMin = parsed - 15 min`, `timeMax = parsed + 5 min`.
-4. `list_events` with `timeMin`, `timeMax`, `singleEvents: true`, `orderBy: "startTime"`.
+4. `get_events` with `time_min`, `time_max`, `single_events: true`. Do NOT pass `orderBy`.
 5. From the returned events, drop any where `start.date` is present (all-day) or `responseStatus == "declined"`. Sort remaining by priority: (a) `organizer.self == true`, (b) `responseStatus == "accepted"`, (c) `responseStatus == "tentative"`. Within a bucket, pick the event whose `start.dateTime` is closest to the parsed time. If no event survives, `match: null`.
 6. Build the calendar.json content:
    ```json

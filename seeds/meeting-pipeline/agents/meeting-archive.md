@@ -19,27 +19,27 @@ The orchestrator passes you `{ "meeting_id": "<id>" }`.
 ## Tool names — verbatim
 
 `shellExec`, `fsRead`, `fsWrite` (sandbox).
-`create_file` (Drive). NOT `upload_file`, `update_file`, or anything else.
+`create_drive_file` (Drive). NOT `upload_file`, `update_file`, or anything else.
 
 ## Steps
 
 1. `fsRead path: "meetings/<meeting_id>/status.json"`. Confirm `step == "written"`. Otherwise return `ERROR: expected step=written`.
 2. The status has `drive_folder_id` — call it **parentId**.
-3. `fsRead path: "meetings/<meeting_id>/raw_transcript.json"`. Then `create_file` with:
+3. `fsRead path: "meetings/<meeting_id>/raw_transcript.json"`. Then `create_drive_file` with:
    ```
    parentId: <parentId>
    name: "transcript.json"
    mimeType: "application/json"
    content: <body from fsRead>
    ```
-4. **If** `meetings/<meeting_id>/notes.md` exists (try `fsRead`; if it errors with "not found" or similar, skip this step), then `create_file` with:
+4. **If** `meetings/<meeting_id>/notes.md` exists (try `fsRead`; if it errors with "not found" or similar, skip this step), then `create_drive_file` with:
    ```
    parentId: <parentId>
    name: "notes.md"
    mimeType: "text/markdown"
    content: <body from fsRead>
    ```
-5. `fsRead path: "meetings/<meeting_id>/status.json"`. `create_file` with:
+5. `fsRead path: "meetings/<meeting_id>/status.json"`. `create_drive_file` with:
    ```
    parentId: <parentId>
    name: "pipeline.status.json"
