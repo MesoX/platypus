@@ -159,23 +159,17 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
    * the `Authorization: Basic ...` header, returning a misleading
    * `invalid_client / Missing client_id` 401.
    */
-  addClientAuthentication = async (
+  addClientAuthentication = (
     headers: Headers,
     params: URLSearchParams,
-  ): Promise<void> => {
-    const records = await db
-      .select({
-        oauthClientId: mcpTable.oauthClientId,
-        oauthClientSecret: mcpTable.oauthClientSecret,
-      })
-      .from(mcpTable)
-      .where(eq(mcpTable.id, this.mcpRecord.id))
-      .limit(1);
-    const record = records[0];
-    if (!record?.oauthClientId) return;
-    params.set("client_id", record.oauthClientId);
-    if (record.oauthClientSecret) {
-      params.set("client_secret", record.oauthClientSecret);
+  ): void => {
+    // Must be synchronous: @ai-sdk/mcp invokes this callback without awaiting.
+    // Read credentials from the snapshot the provider was constructed with.
+    const clientId = this.mcpRecord.oauthClientId;
+    if (!clientId) return;
+    params.set("client_id", clientId);
+    if (this.mcpRecord.oauthClientSecret) {
+      params.set("client_secret", this.mcpRecord.oauthClientSecret);
     }
     // Make sure we do not also send a stale Basic header.
     headers.delete("Authorization");
