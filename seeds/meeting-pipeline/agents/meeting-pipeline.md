@@ -1,6 +1,6 @@
 ---
 name: meeting-pipeline
-description: Orchestrator that drives meeting recordings from Google Drive through transcription, calendar matching, knowledge extraction, and MemPalace writes. Runs one state-machine step per invocation; cron and manual chat triggers wake it.
+description: Per-meeting state-machine orchestrator. Drives Drive → WhisperX → calendar → extract → write. One step per invocation.
 model_id: qwen36
 max_steps: 24
 temperature: 0.1

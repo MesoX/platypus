@@ -1,6 +1,6 @@
 ---
 name: meeting-write
-description: Takes the extraction.json produced by meeting-extract and applies it to MemPalace via the Librarian sub-agent. No decisions, no rewrites — pure execution. Returns the drawer IDs Librarian assigned, so the orchestrator can record them in written.json.
+description: Applies an approved extraction to MemPalace via Librarian. No decisions, pure execution. Returns the written drawer ids.
 model_id: qwen36
 max_steps: 6
 temperature: 0.0

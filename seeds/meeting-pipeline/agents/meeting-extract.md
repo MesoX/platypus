@@ -1,6 +1,6 @@
 ---
 name: meeting-extract
-description: Reads a corrected transcript plus calendar metadata, calls Librarian for palace context, and decomposes the meeting into a structured drawer list, KG edges, and resolved-action-item updates. Produces JSON the meeting-write agent will apply.
+description: Turns transcript + calendar into drawers, KG edges, and resolved action items. Asks Librarian for palace context. English-only.
 model_id: qwen36
 max_steps: 12
 temperature: 0.2
