@@ -30,6 +30,7 @@ export const buildMcpTransportConfig = (mcp: McpRecord) => {
     url: string;
     headers?: Record<string, string>;
     authProvider?: DatabaseOAuthClientProvider;
+    fetch?: typeof fetch;
   } = {
     type: "http",
     url: mcp.url!,
@@ -40,6 +41,7 @@ export const buildMcpTransportConfig = (mcp: McpRecord) => {
   if (mcp.authType === "OAuth" && mcp.oauthAccessToken) {
     const callbackUrl = buildOAuthCallbackUrl();
     config.authProvider = new DatabaseOAuthClientProvider(mcp, callbackUrl);
+    config.fetch = oauthFetchFn;
     if (Object.keys(customHeaders).length > 0) {
       config.headers = customHeaders;
     }
@@ -56,26 +58,59 @@ export const buildMcpTransportConfig = (mcp: McpRecord) => {
 };
 
 /**
- * Wraps the global fetch to work around a bug in @ai-sdk/mcp where
- * `parseErrorResponse` fails the `instanceof Response` check in Node.js,
- * producing an unhelpful "[object Response]" error message. This wrapper
- * returns a fresh Response constructed from the original, ensuring the
- * `instanceof Response` check succeeds in the library's error handler.
+ * Optional comma-separated list of `from=to` URL prefix substitutions applied
+ * to fetches issued by the MCP OAuth flow. Lets the backend reach a server
+ * that advertises a browser-only URL (e.g. `http://localhost:8765`) via a
+ * different network path (e.g. `http://workspace-mcp:8000`) without changing
+ * what the server advertises to the browser.
+ *
+ * Example:
+ *   MCP_OAUTH_HOST_REWRITES="http://localhost:8765=http://workspace-mcp:8000"
  */
-export const oauthFetchFn: typeof fetch = async (input, init) => {
-  const response = await fetch(input, init);
-  if (!response.ok) {
-    // Work around @ai-sdk/mcp bug where `parseErrorResponse` fails the
-    // `instanceof Response` check in Node.js (different Response realms).
-    // Reconstruct using the global Response constructor.
-    const body = await response.text();
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
+const parseHostRewrites = (): Array<[string, string]> => {
+  const raw = process.env.MCP_OAUTH_HOST_REWRITES;
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [from, to] = entry.split("=").map((s) => s.trim());
+      if (!from || !to) return undefined;
+      return [from, to] as [string, string];
+    })
+    .filter((pair): pair is [string, string] => pair !== undefined);
+};
+
+const HOST_REWRITES = parseHostRewrites();
+
+const rewriteUrl = (url: string): string => {
+  for (const [from, to] of HOST_REWRITES) {
+    if (url.startsWith(from)) return to + url.slice(from.length);
   }
-  return response;
+  return url;
+};
+
+/**
+ * Custom fetch for OAuth-authenticated MCP transports. Rewrites host-mapped
+ * URLs (e.g. localhost:8765 → workspace-mcp:8000) so the backend can reach
+ * OAuth discovery and token endpoints that the MCP server advertises as
+ * browser-facing URLs. Also handles Request objects, not just strings/URLs.
+ *
+ * Does NOT reconstruct Response objects — consuming the body stream before
+ * @ai-sdk/mcp reads it causes tool-execution to hang silently.
+ */
+export const oauthFetchFn: typeof fetch = (input, init) => {
+  let rewrittenInput: typeof input;
+  if (typeof input === "string") {
+    rewrittenInput = rewriteUrl(input);
+  } else if (input instanceof URL) {
+    rewrittenInput = new URL(rewriteUrl(input.href));
+  } else {
+    const rewritten = rewriteUrl(input.url);
+    rewrittenInput = rewritten !== input.url ? new Request(rewritten, input) : input;
+  }
+  return fetch(rewrittenInput, init);
 };
 
 /**
@@ -95,6 +130,42 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
   get redirectUrl(): string | URL {
     return this.callbackUrl;
   }
+
+  /**
+   * Trust the resource URL advertised by the MCP server even when its origin
+   * differs from the URL we use to reach it. This lets the backend talk to an
+   * MCP server through a different network path (docker hostname, host gateway,
+   * SSH tunnel) than the browser-facing URL the server advertises during OAuth
+   * discovery. Without this override, `@ai-sdk/mcp` rejects the mismatch as
+   * `Protected resource ... does not match expected ... (or origin)`.
+   */
+  async validateResourceURL(
+    _serverUrl: URL,
+    resource?: string,
+  ): Promise<URL | undefined> {
+    return resource ? new URL(resource) : undefined;
+  }
+
+  /**
+   * Force the `client_secret_post` token-endpoint auth method (client_id +
+   * client_secret in the POST body). The default selection prefers
+   * `client_secret_basic` when the server advertises it, but some MCP servers
+   * (e.g. FastMCP-based ones) advertise Basic support without actually parsing
+   * the `Authorization: Basic ...` header, returning a misleading
+   * `invalid_client / Missing client_id` 401.
+   */
+  addClientAuthentication = (
+    headers: Headers,
+    params: URLSearchParams,
+  ): void => {
+    const clientId = this.mcpRecord.oauthClientId;
+    if (!clientId) return;
+    params.set("client_id", clientId);
+    if (this.mcpRecord.oauthClientSecret) {
+      params.set("client_secret", this.mcpRecord.oauthClientSecret);
+    }
+    headers.delete("Authorization");
+  };
 
   get clientMetadata() {
     return {
