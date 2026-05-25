@@ -8,6 +8,26 @@ Run `git log --oneline origin/main..HEAD` to see which commits are custom.
 
 ---
 
+## 0. compose.yaml — port remaps
+
+**Applied on server only** (not committed to this branch — server's `/srv/platypus` has a local commit for this).
+
+The upstream `compose.yaml` maps backend→`4000:4000` and frontend→`3000:3000`. The deployed stack remaps them:
+
+```yaml
+# backend
+ports:
+  - "4010:4000"
+
+# frontend
+ports:
+  - "3010:3000"
+```
+
+**Why:** Port 4010 and 3010 are used as the host-side ports to avoid conflicts with other services and to match the SSH tunnel config. If you ever run `docker compose up` fresh from upstream compose.yaml, apply these remaps before starting.
+
+---
+
 ## 1. Frontend — SSH-tunnel / dynamic backend URL
 
 **Commit:** `e26d95b`  
