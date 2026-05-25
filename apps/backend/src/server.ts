@@ -24,6 +24,7 @@ import { dashboard } from "./routes/dashboard.ts";
 import { notification } from "./routes/notification.ts";
 import { webhook } from "./routes/webhook.ts";
 import { mcpOauthCallback } from "./routes/mcp-oauth-callback.ts";
+import { internal } from "./internal/proxy.ts";
 import { organizationMember } from "./db/schema.ts";
 import { logger } from "./logger.ts";
 import type { UserScope, OrgScope, WorkspaceScope } from "./scope.ts";
@@ -160,5 +161,6 @@ app.route("/organizations/:orgId/members", member);
 app.route("/users/me/invitations", userInvitation);
 app.route("/users/me/contexts", context);
 app.route("/oauth/mcp/callback", mcpOauthCallback);
+app.route("/internal", internal);
 
 export default app;
