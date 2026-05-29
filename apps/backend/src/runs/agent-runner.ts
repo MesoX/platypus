@@ -351,21 +351,6 @@ export class AgentRunner {
       messageMetadata: () =>
         turn.resolved.agentId ? { agentId: turn.resolved.agentId } : undefined,
       onError: (error) => formatStreamError(error),
-      onFinish: async ({ messages: finalMessages }) => {
-        lastMessages = finalMessages;
-        let status: RunStatus = "succeeded";
-        let err: Error | undefined;
-        if (handle.signal.aborted) {
-          const reason = handle.signal.reason;
-          if (reason instanceof TimeoutError) {
-            status = "failed";
-            err = reason;
-          } else {
-            status = "cancelled";
-          }
-        }
-        await finalize(status, err);
-      },
     });
 
     const [forResponse, forSnapshot] = withToolTimestamps(
@@ -377,6 +362,9 @@ export class AgentRunner {
     // assistant message to the DB on each onProgress bump, so a user who
     // reconnects mid-run sees the partial answer (not just their own
     // input message).
+    //
+    // finalize is called here (not in toUIMessageStream's onFinish) so that
+    // lastMessages contains toolMetadata timestamps injected by withToolTimestamps.
     void (async () => {
       try {
         for await (const message of readUIMessageStream<PlatypusUIMessage>({
@@ -394,6 +382,19 @@ export class AgentRunner {
           { err, runId: input.runId },
           "Server-side UI stream consumer error",
         );
+      } finally {
+        let status: RunStatus = "succeeded";
+        let err: Error | undefined;
+        if (handle.signal.aborted) {
+          const reason = handle.signal.reason;
+          if (reason instanceof TimeoutError) {
+            status = "failed";
+            err = reason;
+          } else {
+            status = "cancelled";
+          }
+        }
+        await finalize(status, err);
       }
     })();
 
