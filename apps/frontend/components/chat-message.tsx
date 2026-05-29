@@ -127,8 +127,9 @@ export const ChatMessage = memo(function ChatMessage({
         <BotIcon className="size-3.5 text-muted-foreground" />
       </div>
     ));
-  const messageCreatedAt = (message.metadata as Record<string, unknown>)
-    ?.createdAt as string | undefined;
+  const rawCreatedAt = (message.metadata as Record<string, unknown>)?.createdAt;
+  const messageCreatedAt =
+    typeof rawCreatedAt === "string" ? rawCreatedAt : undefined;
 
   const fileParts = message.parts?.filter(
     (part): part is FileUIPart =>
@@ -165,17 +166,19 @@ export const ChatMessage = memo(function ChatMessage({
       )}
       {message.parts?.map((part, i) => {
         if (part.type === "step-start" && message.role === "assistant") {
-          // Render step separator: BotIcon + timestamp from following tool's
-          // server-side startedAt. Find the next non-step-start part — if it's
-          // a tool, surface its startedAt; otherwise the BotIcon is bare.
+          // Render step separator only when the next meaningful part is a
+          // tool call. For plain text-only responses the Message component
+          // below provides the avatar, so we'd double-render otherwise.
           const nextPart = message.parts
             .slice(i + 1)
             .find((p) => p.type !== "step-start");
+          if (!nextPart || !isToolPart(nextPart.type)) return null;
+
+          const rawStartedAt = (
+            nextPart as { toolMetadata?: { startedAt?: unknown } }
+          ).toolMetadata?.startedAt;
           const serverStartedAt =
-            nextPart && isToolPart(nextPart.type)
-              ? (nextPart as { toolMetadata?: { startedAt?: string } })
-                  .toolMetadata?.startedAt
-              : undefined;
+            typeof rawStartedAt === "string" ? rawStartedAt : undefined;
 
           return (
             <div
@@ -192,6 +195,10 @@ export const ChatMessage = memo(function ChatMessage({
           );
         } else if (part.type === "text") {
           const partText = (part as TextUIPart).text;
+
+          // Skip empty text parts on assistant messages — the SDK emits them
+          // between steps; rendering would leave a bare avatar bubble.
+          if (message.role === "assistant" && !partText.trim()) return null;
 
           if (isEditing) {
             const isFirstTextPart =
