@@ -450,6 +450,7 @@ export const Chat = ({
       {
         text: message.text || "Sent with attachments",
         files,
+        metadata: { createdAt: new Date().toISOString() },
       },
       { body },
     );
