@@ -49,6 +49,16 @@ import { Textarea } from "./ui/textarea";
 import { LoadSkillTool } from "./load-skill-tool";
 import { SubAgentTool } from "./sub-agent-tool";
 
+const formatTime = (date: Date) =>
+  date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+const isToolPart = (type: string) =>
+  type.startsWith("tool-") || type === "dynamic-tool";
+
 interface ChatMessageProps {
   /** The message object to render */
   message: PlatypusUIMessage;
@@ -120,16 +130,6 @@ export const ChatMessage = memo(function ChatMessage({
   const messageCreatedAt = (message.metadata as Record<string, unknown>)
     ?.createdAt as string | undefined;
 
-  const formatTime = (date: Date) =>
-    date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-
-  const isToolPart = (type: string) =>
-    type.startsWith("tool-") || type === "dynamic-tool";
-
   const fileParts = message.parts?.filter(
     (part): part is FileUIPart =>
       part.type === "file" && !part.mediaType?.startsWith("image/"),
@@ -164,38 +164,34 @@ export const ChatMessage = memo(function ChatMessage({
         </Sources>
       )}
       {message.parts?.map((part, i) => {
-        if (part.type === "text") {
-          const partText = (part as TextUIPart).text;
-          const nextMeaningfulPart = message.parts
+        if (part.type === "step-start" && message.role === "assistant") {
+          // Render step separator: BotIcon + timestamp from following tool's
+          // server-side startedAt. Find the next non-step-start part — if it's
+          // a tool, surface its startedAt; otherwise the BotIcon is bare.
+          const nextPart = message.parts
             .slice(i + 1)
             .find((p) => p.type !== "step-start");
-          const isStepSeparator =
-            message.role === "assistant" &&
-            !partText.trim() &&
-            !!nextMeaningfulPart &&
-            isToolPart(nextMeaningfulPart.type);
+          const serverStartedAt =
+            nextPart && isToolPart(nextPart.type)
+              ? (nextPart as { toolMetadata?: { startedAt?: string } })
+                  .toolMetadata?.startedAt
+              : undefined;
 
-          if (isStepSeparator) {
-            const serverStartedAt = (
-              nextMeaningfulPart as {
-                toolMetadata?: { startedAt?: string };
-              }
-            ).toolMetadata?.startedAt;
-
-            return (
-              <div
-                key={`${message.id}-${i}`}
-                className="flex items-center gap-2 py-1"
-              >
-                {assistantAvatar}
-                {serverStartedAt && (
-                  <span className="text-xs text-muted-foreground">
-                    {formatTime(new Date(serverStartedAt))}
-                  </span>
-                )}
-              </div>
-            );
-          }
+          return (
+            <div
+              key={`${message.id}-${i}`}
+              className="flex items-center gap-2 py-1"
+            >
+              {assistantAvatar}
+              {serverStartedAt && (
+                <span className="text-xs text-muted-foreground">
+                  {formatTime(new Date(serverStartedAt))}
+                </span>
+              )}
+            </div>
+          );
+        } else if (part.type === "text") {
+          const partText = (part as TextUIPart).text;
 
           if (isEditing) {
             const isFirstTextPart =

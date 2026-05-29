@@ -334,3 +334,88 @@ describe("AgentRunner timeout types", () => {
     expect(e.kind).toBe("run");
   });
 });
+
+describe("withToolTimestamps", () => {
+  const collect = async <T>(stream: ReadableStream<T>): Promise<T[]> => {
+    const out: T[] = [];
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out.push(value);
+    }
+    return out;
+  };
+
+  const sourceOf = <T>(chunks: T[]): ReadableStream<T> =>
+    new ReadableStream<T>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+
+  it("injects startedAt on tool-input-available chunks", async () => {
+    const { withToolTimestamps } = await import("./agent-runner.ts");
+    const result = await collect(
+      withToolTimestamps(
+        sourceOf([
+          {
+            type: "tool-input-available",
+            toolCallId: "t1",
+            toolName: "foo",
+            input: { x: 1 },
+          },
+        ] as any),
+        () => "2026-05-30T12:00:00.000Z",
+      ),
+    );
+
+    expect(result).toHaveLength(1);
+    expect((result[0] as any).toolMetadata).toEqual({
+      startedAt: "2026-05-30T12:00:00.000Z",
+    });
+  });
+
+  it("preserves existing toolMetadata fields", async () => {
+    const { withToolTimestamps } = await import("./agent-runner.ts");
+    const result = await collect(
+      withToolTimestamps(
+        sourceOf([
+          {
+            type: "tool-input-available",
+            toolCallId: "t1",
+            toolName: "foo",
+            input: {},
+            toolMetadata: { custom: "value" },
+          },
+        ] as any),
+        () => "2026-05-30T12:00:00.000Z",
+      ),
+    );
+
+    expect((result[0] as any).toolMetadata).toEqual({
+      custom: "value",
+      startedAt: "2026-05-30T12:00:00.000Z",
+    });
+  });
+
+  it("passes non-tool-input-available chunks through unchanged", async () => {
+    const { withToolTimestamps } = await import("./agent-runner.ts");
+    const chunks = [
+      { type: "text-delta", id: "a", delta: "hello" },
+      {
+        type: "tool-output-available",
+        toolCallId: "t1",
+        output: { ok: true },
+      },
+      { type: "finish", finishReason: "stop" },
+    ] as any;
+
+    const result = await collect(
+      withToolTimestamps(sourceOf(chunks), () => "irrelevant"),
+    );
+
+    expect(result).toEqual(chunks);
+  });
+});
