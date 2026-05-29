@@ -53,3 +53,7 @@ chore: update dependencies
 - **Issue tracker** — GitHub issues on `willdady/platypus` via `gh`. See `docs/agents/issue-tracker.md`.
 - **Triage labels** — `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 - **Domain docs** — `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Repository Analysis
+
+- **PROJECT.md** — Full repository analysis including architecture, tech stack, domain model, features, API routes, database schema, ADRs, implementation plans, and known constraints. See [`PROJECT.md`](PROJECT.md).
