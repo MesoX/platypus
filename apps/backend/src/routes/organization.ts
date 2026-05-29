@@ -11,6 +11,7 @@ import {
   organizationUpdateSchema,
 } from "@platypus/schemas";
 import { eq, and, inArray } from "drizzle-orm";
+import { readRunTimeoutCeilings } from "../services/agent-run-settings.ts";
 import { requireAuth } from "../middleware/authentication.ts";
 import {
   requireOrgAccess,
@@ -93,6 +94,48 @@ organization.put(
   async (c) => {
     const orgId = c.req.param("orgId");
     const data = c.req.valid("json");
+
+    // Reject overrides above the deployer-supplied environment ceiling. Org
+    // admins can lower the timeout but never raise it past what the host
+    // operator allows.
+    if (data.agentRunSettings) {
+      const chatCeiling = readRunTimeoutCeilings("chat");
+      const triggerCeiling = readRunTimeoutCeilings("trigger");
+      const errors: Record<string, string> = {};
+      const s = data.agentRunSettings;
+      if (
+        s.chatPerRunTimeoutMs !== undefined &&
+        s.chatPerRunTimeoutMs > chatCeiling.perRunTimeoutMs
+      ) {
+        errors["agentRunSettings.chatPerRunTimeoutMs"] =
+          `Exceeds ceiling of ${chatCeiling.perRunTimeoutMs} ms (RUN_PER_RUN_TIMEOUT_MS)`;
+      }
+      if (
+        s.chatPerStepTimeoutMs !== undefined &&
+        s.chatPerStepTimeoutMs > chatCeiling.perStepTimeoutMs
+      ) {
+        errors["agentRunSettings.chatPerStepTimeoutMs"] =
+          `Exceeds ceiling of ${chatCeiling.perStepTimeoutMs} ms (RUN_PER_STEP_TIMEOUT_MS)`;
+      }
+      if (
+        s.triggerPerRunTimeoutMs !== undefined &&
+        s.triggerPerRunTimeoutMs > triggerCeiling.perRunTimeoutMs
+      ) {
+        errors["agentRunSettings.triggerPerRunTimeoutMs"] =
+          `Exceeds ceiling of ${triggerCeiling.perRunTimeoutMs} ms (TRIGGER_PER_RUN_TIMEOUT_MS)`;
+      }
+      if (
+        s.triggerPerStepTimeoutMs !== undefined &&
+        s.triggerPerStepTimeoutMs > triggerCeiling.perStepTimeoutMs
+      ) {
+        errors["agentRunSettings.triggerPerStepTimeoutMs"] =
+          `Exceeds ceiling of ${triggerCeiling.perStepTimeoutMs} ms (TRIGGER_PER_STEP_TIMEOUT_MS)`;
+      }
+      if (Object.keys(errors).length > 0) {
+        return c.json({ errors }, 400);
+      }
+    }
+
     const record = await db
       .update(organizationTable)
       .set({
@@ -102,6 +145,20 @@ organization.put(
       .where(eq(organizationTable.id, orgId))
       .returning();
     return c.json(record, 200);
+  },
+);
+
+/** Get the environment-supplied timeout ceilings — used by the org settings
+ *  UI to display the upper bounds for the per-org overrides. */
+organization.get(
+  "/:orgId/agent-run-settings/ceilings",
+  requireAuth,
+  requireOrgAccess(),
+  async (c) => {
+    return c.json({
+      chat: readRunTimeoutCeilings("chat"),
+      trigger: readRunTimeoutCeilings("trigger"),
+    });
   },
 );
 
