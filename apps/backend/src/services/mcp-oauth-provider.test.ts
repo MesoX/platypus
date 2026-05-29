@@ -46,10 +46,12 @@ describe("mcp-oauth-provider", () => {
         authType: "None",
       } as any;
 
+      const { oauthFetchFn } = await import("./mcp-oauth-provider.ts");
       const config = buildMcpTransportConfig(mcp);
       expect(config).toEqual({
         type: "http",
         url: "http://mcp.example.com",
+        fetch: oauthFetchFn,
       });
     });
 
@@ -63,11 +65,13 @@ describe("mcp-oauth-provider", () => {
         bearerToken: "my-secret-token",
       } as any;
 
+      const { oauthFetchFn } = await import("./mcp-oauth-provider.ts");
       const config = buildMcpTransportConfig(mcp);
       expect(config).toEqual({
         type: "http",
         url: "http://mcp.example.com",
         headers: { Authorization: "Bearer my-secret-token" },
+        fetch: oauthFetchFn,
       });
     });
 
@@ -97,11 +101,13 @@ describe("mcp-oauth-provider", () => {
         headers: { "X-Custom": "value", "X-Another": "test" },
       } as any;
 
+      const { oauthFetchFn } = await import("./mcp-oauth-provider.ts");
       const config = buildMcpTransportConfig(mcp);
       expect(config).toEqual({
         type: "http",
         url: "http://mcp.example.com",
         headers: { "X-Custom": "value", "X-Another": "test" },
+        fetch: oauthFetchFn,
       });
     });
 
@@ -119,6 +125,7 @@ describe("mcp-oauth-provider", () => {
         },
       } as any;
 
+      const { oauthFetchFn } = await import("./mcp-oauth-provider.ts");
       const config = buildMcpTransportConfig(mcp);
       expect(config).toEqual({
         type: "http",
@@ -127,6 +134,7 @@ describe("mcp-oauth-provider", () => {
           "X-Custom": "value",
           Authorization: "Bearer my-token",
         },
+        fetch: oauthFetchFn,
       });
     });
 
@@ -140,10 +148,12 @@ describe("mcp-oauth-provider", () => {
         headers: undefined,
       } as any;
 
+      const { oauthFetchFn } = await import("./mcp-oauth-provider.ts");
       const config = buildMcpTransportConfig(mcp);
       expect(config).toEqual({
         type: "http",
         url: "http://mcp.example.com",
+        fetch: oauthFetchFn,
       });
       expect(config.headers).toBeUndefined();
     });
@@ -158,10 +168,12 @@ describe("mcp-oauth-provider", () => {
         headers: {},
       } as any;
 
+      const { oauthFetchFn } = await import("./mcp-oauth-provider.ts");
       const config = buildMcpTransportConfig(mcp);
       expect(config).toEqual({
         type: "http",
         url: "http://mcp.example.com",
+        fetch: oauthFetchFn,
       });
       expect(config.headers).toBeUndefined();
     });
