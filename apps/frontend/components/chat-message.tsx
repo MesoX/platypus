@@ -56,8 +56,11 @@ const formatTime = (date: Date) =>
     second: "2-digit",
   });
 
-const isToolPart = (type: string) =>
-  type.startsWith("tool-") || type === "dynamic-tool";
+const getToolStartedAt = (part: unknown): string | undefined => {
+  const raw = (part as { toolMetadata?: { startedAt?: unknown } })?.toolMetadata
+    ?.startedAt;
+  return typeof raw === "string" ? raw : undefined;
+};
 
 interface ChatMessageProps {
   /** The message object to render */
@@ -165,34 +168,10 @@ export const ChatMessage = memo(function ChatMessage({
         </Sources>
       )}
       {message.parts?.map((part, i) => {
-        if (part.type === "step-start" && message.role === "assistant") {
-          // Render step separator only when the next meaningful part is a
-          // tool call. For plain text-only responses the Message component
-          // below provides the avatar, so we'd double-render otherwise.
-          const nextPart = message.parts
-            .slice(i + 1)
-            .find((p) => p.type !== "step-start");
-          if (!nextPart || !isToolPart(nextPart.type)) return null;
-
-          const rawStartedAt = (
-            nextPart as { toolMetadata?: { startedAt?: unknown } }
-          ).toolMetadata?.startedAt;
-          const serverStartedAt =
-            typeof rawStartedAt === "string" ? rawStartedAt : undefined;
-
-          return (
-            <div
-              key={`${message.id}-${i}`}
-              className="flex items-center gap-2 py-1"
-            >
-              {assistantAvatar}
-              {serverStartedAt && (
-                <span className="text-xs text-muted-foreground">
-                  {formatTime(new Date(serverStartedAt))}
-                </span>
-              )}
-            </div>
-          );
+        if (part.type === "step-start") {
+          // The SDK emits step-start at every round boundary. We don't render
+          // it — tool-call timestamps appear inside the tool header below.
+          return null;
         } else if (part.type === "text") {
           const partText = (part as TextUIPart).text;
 
@@ -257,6 +236,7 @@ export const ChatMessage = memo(function ChatMessage({
               <DynamicToolHeader
                 state={toolPart.state}
                 title={toolPart.toolName}
+                startedAt={getToolStartedAt(toolPart)}
               />
               <ToolContent>
                 <ToolInput input={toolPart.input} />
@@ -296,6 +276,7 @@ export const ChatMessage = memo(function ChatMessage({
                 state={toolPart.state}
                 type={toolPart.type}
                 label={toolLabel}
+                startedAt={getToolStartedAt(toolPart)}
               />
               <ToolContent>
                 <ToolInput input={toolPart.input} />
