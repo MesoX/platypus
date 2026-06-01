@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mockDb, resetMockDb } from "../test-utils.ts";
 import {
   resolveRunTimeouts,
-  clampRunTimeouts,
   readRunTimeoutCeilings,
 } from "./agent-run-settings.ts";
 
@@ -56,45 +55,6 @@ describe("agent-run-settings", () => {
       const chat = readRunTimeoutCeilings("chat");
       expect(chat.perRunTimeoutMs).toBe(10 * 60 * 1000);
       expect(chat.perStepTimeoutMs).toBe(2 * 60 * 1000);
-    });
-  });
-
-  describe("clampRunTimeouts", () => {
-    beforeEach(() => {
-      process.env.RUN_PER_RUN_TIMEOUT_MS = "600000";
-      process.env.RUN_PER_STEP_TIMEOUT_MS = "120000";
-    });
-
-    it("returns ceilings when no override", () => {
-      expect(clampRunTimeouts("chat", null)).toEqual({
-        perRunTimeoutMs: 600000,
-        perStepTimeoutMs: 120000,
-      });
-    });
-
-    it("applies override below the ceiling", () => {
-      expect(
-        clampRunTimeouts("chat", {
-          perRunTimeoutMs: 300000,
-          perStepTimeoutMs: 60000,
-        }),
-      ).toEqual({ perRunTimeoutMs: 300000, perStepTimeoutMs: 60000 });
-    });
-
-    it("clamps override above the ceiling", () => {
-      expect(
-        clampRunTimeouts("chat", {
-          perRunTimeoutMs: 999_999_999,
-          perStepTimeoutMs: 999_999_999,
-        }),
-      ).toEqual({ perRunTimeoutMs: 600000, perStepTimeoutMs: 120000 });
-    });
-
-    it("partial override falls back to ceiling for the missing field", () => {
-      expect(clampRunTimeouts("chat", { perRunTimeoutMs: 60000 })).toEqual({
-        perRunTimeoutMs: 60000,
-        perStepTimeoutMs: 120000,
-      });
     });
   });
 

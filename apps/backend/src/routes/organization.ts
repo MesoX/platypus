@@ -101,38 +101,45 @@ organization.put(
     if (data.agentRunSettings) {
       const chatCeiling = readRunTimeoutCeilings("chat");
       const triggerCeiling = readRunTimeoutCeilings("trigger");
-      const errors: Record<string, string> = {};
       const s = data.agentRunSettings;
-      if (
-        s.chatPerRunTimeoutMs !== undefined &&
-        s.chatPerRunTimeoutMs > chatCeiling.perRunTimeoutMs
-      ) {
-        errors["agentRunSettings.chatPerRunTimeoutMs"] =
-          `Exceeds ceiling of ${chatCeiling.perRunTimeoutMs} ms (RUN_PER_RUN_TIMEOUT_MS)`;
-      }
-      if (
-        s.chatPerStepTimeoutMs !== undefined &&
-        s.chatPerStepTimeoutMs > chatCeiling.perStepTimeoutMs
-      ) {
-        errors["agentRunSettings.chatPerStepTimeoutMs"] =
-          `Exceeds ceiling of ${chatCeiling.perStepTimeoutMs} ms (RUN_PER_STEP_TIMEOUT_MS)`;
-      }
-      if (
-        s.triggerPerRunTimeoutMs !== undefined &&
-        s.triggerPerRunTimeoutMs > triggerCeiling.perRunTimeoutMs
-      ) {
-        errors["agentRunSettings.triggerPerRunTimeoutMs"] =
-          `Exceeds ceiling of ${triggerCeiling.perRunTimeoutMs} ms (TRIGGER_PER_RUN_TIMEOUT_MS)`;
-      }
-      if (
-        s.triggerPerStepTimeoutMs !== undefined &&
-        s.triggerPerStepTimeoutMs > triggerCeiling.perStepTimeoutMs
-      ) {
-        errors["agentRunSettings.triggerPerStepTimeoutMs"] =
-          `Exceeds ceiling of ${triggerCeiling.perStepTimeoutMs} ms (TRIGGER_PER_STEP_TIMEOUT_MS)`;
-      }
-      if (Object.keys(errors).length > 0) {
-        return c.json({ errors }, 400);
+      const checks: {
+        value: number | undefined;
+        ceiling: number;
+        envVar: string;
+      }[] = [
+        {
+          value: s.chatPerRunTimeoutMs,
+          ceiling: chatCeiling.perRunTimeoutMs,
+          envVar: "RUN_PER_RUN_TIMEOUT_MS",
+        },
+        {
+          value: s.chatPerStepTimeoutMs,
+          ceiling: chatCeiling.perStepTimeoutMs,
+          envVar: "RUN_PER_STEP_TIMEOUT_MS",
+        },
+        {
+          value: s.triggerPerRunTimeoutMs,
+          ceiling: triggerCeiling.perRunTimeoutMs,
+          envVar: "TRIGGER_PER_RUN_TIMEOUT_MS",
+        },
+        {
+          value: s.triggerPerStepTimeoutMs,
+          ceiling: triggerCeiling.perStepTimeoutMs,
+          envVar: "TRIGGER_PER_STEP_TIMEOUT_MS",
+        },
+      ];
+      const exceeded = checks
+        .filter((ch) => ch.value !== undefined && ch.value > ch.ceiling)
+        .map(
+          (ch) => `${ch.envVar} (max ${Math.round(ch.ceiling / 60000)} min)`,
+        );
+      if (exceeded.length > 0) {
+        return c.json(
+          {
+            error: `Timeout override exceeds the deployer-allowed ceiling: ${exceeded.join(", ")}`,
+          },
+          400,
+        );
       }
     }
 

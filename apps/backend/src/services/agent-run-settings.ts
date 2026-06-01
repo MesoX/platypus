@@ -1,12 +1,21 @@
 import { eq } from "drizzle-orm";
 import { db } from "../index.ts";
 import { organization } from "../db/schema.ts";
+import {
+  DEFAULT_PER_RUN_TIMEOUT_MS,
+  DEFAULT_PER_STEP_TIMEOUT_MS,
+} from "../runs/run-registry.ts";
 
-const HOUR_MS = 60 * 60 * 1000;
 const MIN_MS = 60 * 1000;
 
-const DEFAULT_CHAT_PER_RUN_MS = 10 * MIN_MS;
-const DEFAULT_CHAT_PER_STEP_MS = 2 * MIN_MS;
+// Chat run defaults mirror the run-registry defaults so a chat run with no env
+// override and no org override behaves exactly as before this feature existed.
+// Sourced from run-registry to avoid the two constants drifting apart.
+const DEFAULT_CHAT_PER_RUN_MS = DEFAULT_PER_RUN_TIMEOUT_MS;
+const DEFAULT_CHAT_PER_STEP_MS = DEFAULT_PER_STEP_TIMEOUT_MS;
+// Headless trigger runs aren't user-facing, so they get a larger budget than
+// chat: crons may do substantial work (multi-step research, long MCP searches).
+// These bound runaway runs without tripping on legitimate workloads.
 const DEFAULT_TRIGGER_PER_RUN_MS = 60 * MIN_MS;
 const DEFAULT_TRIGGER_PER_STEP_MS = 10 * MIN_MS;
 
@@ -63,6 +72,11 @@ const pickCeilings = (kind: RunKind): ResolvedTimeouts => {
       };
 };
 
+const pickPositive = (v: unknown): number | undefined => {
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return undefined;
+  return Math.floor(v);
+};
+
 const pickOrgOverride = (
   kind: RunKind,
   settings: { [k: string]: unknown } | null | undefined,
@@ -78,11 +92,6 @@ const pickOrgOverride = (
     perRunTimeoutMs: pickPositive(settings.triggerPerRunTimeoutMs),
     perStepTimeoutMs: pickPositive(settings.triggerPerStepTimeoutMs),
   };
-};
-
-const pickPositive = (v: unknown): number | undefined => {
-  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return undefined;
-  return Math.floor(v);
 };
 
 /**
@@ -120,32 +129,6 @@ export const resolveRunTimeouts = async (
   };
 };
 
-/**
- * Synchronous variant of `resolveRunTimeouts` for code paths that already
- * have the org settings in hand (e.g. routes that load the org for
- * authorization). Saves a database round-trip.
- */
-export const clampRunTimeouts = (
-  kind: RunKind,
-  override: Partial<ResolvedTimeouts> | null | undefined,
-): ResolvedTimeouts => {
-  const ceilings = pickCeilings(kind);
-  if (!override) return ceilings;
-  return {
-    perRunTimeoutMs: Math.min(
-      override.perRunTimeoutMs ?? ceilings.perRunTimeoutMs,
-      ceilings.perRunTimeoutMs,
-    ),
-    perStepTimeoutMs: Math.min(
-      override.perStepTimeoutMs ?? ceilings.perStepTimeoutMs,
-      ceilings.perStepTimeoutMs,
-    ),
-  };
-};
-
 /** Read the current environment ceilings — used by the org-update route to
  * reject incoming overrides above the ceiling rather than silently clamping. */
 export const readRunTimeoutCeilings = (kind: RunKind) => pickCeilings(kind);
-
-/** Used in tests to bypass DB lookup. */
-export const __TEST_HOOKS__ = { pickOrgOverride, pickCeilings };

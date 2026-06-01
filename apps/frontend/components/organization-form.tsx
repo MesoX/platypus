@@ -158,9 +158,46 @@ const OrganizationForm = ({ classNames, orgId }: OrganizationFormProps) => {
     }));
   };
 
+  /**
+   * Validate the timeout inputs against the deployer-supplied ceilings the
+   * server returned, so the user gets inline feedback before submitting (the
+   * server enforces the same ceilings authoritatively on save).
+   */
+  const validateAgainstCeilings = (): Record<string, string> => {
+    if (!ceilings) return {};
+    const checks: { field: keyof RunSettingsFormState; ceiling: number }[] = [
+      { field: "chatPerRunMin", ceiling: ceilings.chat.perRunTimeoutMs },
+      { field: "chatPerStepMin", ceiling: ceilings.chat.perStepTimeoutMs },
+      { field: "triggerPerRunMin", ceiling: ceilings.trigger.perRunTimeoutMs },
+      {
+        field: "triggerPerStepMin",
+        ceiling: ceilings.trigger.perStepTimeoutMs,
+      },
+    ];
+    const errors: Record<string, string> = {};
+    for (const { field, ceiling } of checks) {
+      const ms = minutesToMs(runSettings[field]);
+      if (ms !== undefined && ms > ceiling) {
+        errors[`agentRunSettings.${field}`] =
+          `Must be at most ${Math.round(ceiling / 60000)} minutes (deployer ceiling)`;
+      }
+    }
+    return errors;
+  };
+
   const handleSubmit = async () => {
-    setIsSubmitting(true);
     setValidationErrors({});
+
+    if (orgId) {
+      const ceilingErrors = validateAgainstCeilings();
+      if (Object.keys(ceilingErrors).length > 0) {
+        setValidationErrors(ceilingErrors);
+        toast.error("Timeout exceeds the deployer-allowed ceiling");
+        return;
+      }
+    }
+
+    setIsSubmitting(true);
     try {
       const url = orgId
         ? joinUrl(backendUrl, `/organizations/${orgId}`)
@@ -199,7 +236,11 @@ const OrganizationForm = ({ classNames, orgId }: OrganizationFormProps) => {
         // Parse standardschema.dev validation errors
         const errorData = await response.json();
         setValidationErrors(parseValidationErrors(errorData));
-        toast.error("Failed to save organization");
+        toast.error(
+          typeof errorData?.error === "string"
+            ? errorData.error
+            : "Failed to save organization",
+        );
       }
     } catch (error) {
       console.error("Error saving organization:", error);
