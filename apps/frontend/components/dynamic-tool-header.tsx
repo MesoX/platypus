@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn, formatToolDuration } from "@/lib/utils";
+import { useToolCompletedAt } from "@/hooks/use-tool-completed-at";
 import type { DynamicToolUIPart } from "ai";
 import {
   CheckCircleIcon,
@@ -61,7 +62,8 @@ export const DynamicToolHeader = ({
   completedAt,
   ...props
 }: DynamicToolHeaderProps) => {
-  const duration = formatToolDuration(startedAt, completedAt);
+  const resolvedCompletedAt = useToolCompletedAt(state, completedAt);
+  const duration = formatToolDuration(startedAt, resolvedCompletedAt);
   return (
     <CollapsibleTrigger
       className={cn(

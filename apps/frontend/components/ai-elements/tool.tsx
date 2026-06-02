@@ -7,6 +7,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn, formatToolDuration } from "@/lib/utils";
+import { useToolCompletedAt } from "@/hooks/use-tool-completed-at";
 import type { ToolUIPart } from "ai";
 import {
   ArrowRightLeftIcon,
@@ -219,7 +220,8 @@ export const ToolHeader = ({
   ...props
 }: ToolHeaderProps) => {
   const Icon = getToolIcon(type);
-  const duration = formatToolDuration(startedAt, completedAt);
+  const resolvedCompletedAt = useToolCompletedAt(state, completedAt);
+  const duration = formatToolDuration(startedAt, resolvedCompletedAt);
   return (
     <CollapsibleTrigger
       className={cn(

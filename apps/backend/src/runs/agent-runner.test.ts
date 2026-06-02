@@ -450,4 +450,52 @@ describe("withToolTimestamps", () => {
 
     expect(completions.get("t1")).toBe(FIXED_NOW);
   });
+
+  // Mirrors AgentRunner.stream's pipeline: transform -> tee -> readUIMessageStream
+  // drains the snapshot branch. Verifies completions populate AND the built
+  // message's tool part carries the same toolCallId, so applyToolCompletions
+  // (matches on toolCallId) can stamp completedAt.
+  it("integration: completions + built tool part share toolCallId after tee+read", async () => {
+    const { readUIMessageStream } =
+      await vi.importActual<typeof import("ai")>("ai");
+
+    const chunks: UIMessageChunk[] = [
+      { type: "start", messageId: "m1" } as UIMessageChunk,
+      { type: "start-step" } as UIMessageChunk,
+      {
+        type: "tool-input-available",
+        toolCallId: "call_xyz",
+        toolName: "foo",
+        input: { a: 1 },
+      } as UIMessageChunk,
+      {
+        type: "tool-output-available",
+        toolCallId: "call_xyz",
+        output: { ok: true },
+      } as UIMessageChunk,
+      { type: "finish-step" } as UIMessageChunk,
+      { type: "finish" } as UIMessageChunk,
+    ];
+
+    const { stream, completions } = withToolTimestamps(
+      sourceOf(chunks),
+      () => FIXED_NOW,
+    );
+    const [forResponse, forSnapshot] = stream.tee();
+
+    let lastMessage: { parts?: Array<Record<string, unknown>> } | undefined;
+    for await (const message of readUIMessageStream({ stream: forSnapshot })) {
+      lastMessage = message as typeof lastMessage;
+    }
+    await collect(forResponse as ReadableStream<UIMessageChunk>);
+
+    expect(completions.get("call_xyz")).toBe(FIXED_NOW);
+
+    const toolPart = lastMessage?.parts?.find(
+      (p) => (p as { toolCallId?: string }).toolCallId === "call_xyz",
+    ) as { toolMetadata?: Record<string, unknown>; toolCallId?: string };
+    expect(toolPart).toBeDefined();
+    expect(toolPart.toolCallId).toBe("call_xyz");
+    expect(toolPart.toolMetadata).toMatchObject({ startedAt: FIXED_NOW });
+  });
 });
