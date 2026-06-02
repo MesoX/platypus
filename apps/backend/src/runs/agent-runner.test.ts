@@ -372,9 +372,11 @@ describe("withToolTimestamps", () => {
     }) as UIMessageChunk;
 
   it("injects startedAt on tool-input-available chunks", async () => {
-    const result = await collect(
-      withToolTimestamps(sourceOf([toolInputAvailable()]), () => FIXED_NOW),
+    const { stream } = withToolTimestamps(
+      sourceOf([toolInputAvailable()]),
+      () => FIXED_NOW,
     );
+    const result = await collect(stream);
 
     expect(result).toHaveLength(1);
     expect(
@@ -383,12 +385,11 @@ describe("withToolTimestamps", () => {
   });
 
   it("preserves existing toolMetadata fields", async () => {
-    const result = await collect(
-      withToolTimestamps(
-        sourceOf([toolInputAvailable({ toolMetadata: { custom: "value" } })]),
-        () => FIXED_NOW,
-      ),
+    const { stream } = withToolTimestamps(
+      sourceOf([toolInputAvailable({ toolMetadata: { custom: "value" } })]),
+      () => FIXED_NOW,
     );
+    const result = await collect(stream);
 
     expect(
       (result[0] as { toolMetadata?: Record<string, unknown> }).toolMetadata,
@@ -398,7 +399,7 @@ describe("withToolTimestamps", () => {
     });
   });
 
-  it("passes non-tool-input-available chunks through unchanged", async () => {
+  it("passes other chunks through unchanged", async () => {
     const chunks: UIMessageChunk[] = [
       { type: "text-delta", id: "a", delta: "hello" } as UIMessageChunk,
       {
@@ -409,10 +410,44 @@ describe("withToolTimestamps", () => {
       { type: "finish", finishReason: "stop" } as UIMessageChunk,
     ];
 
-    const result = await collect(
-      withToolTimestamps(sourceOf(chunks), () => "irrelevant"),
-    );
+    const { stream } = withToolTimestamps(sourceOf(chunks), () => FIXED_NOW);
+    const result = await collect(stream);
 
     expect(result).toEqual(chunks);
+  });
+
+  it("records completedAt for tool-output-available chunks", async () => {
+    const { stream, completions } = withToolTimestamps(
+      sourceOf([
+        toolInputAvailable(),
+        {
+          type: "tool-output-available",
+          toolCallId: "t1",
+          output: { ok: true },
+        } as UIMessageChunk,
+      ]),
+      () => FIXED_NOW,
+    );
+    // Completions are populated as the stream drains, so consume it first.
+    await collect(stream);
+
+    expect(completions.get("t1")).toBe(FIXED_NOW);
+  });
+
+  it("records completedAt for tool-output-error chunks", async () => {
+    const { stream, completions } = withToolTimestamps(
+      sourceOf([
+        toolInputAvailable(),
+        {
+          type: "tool-output-error",
+          toolCallId: "t1",
+          errorText: "boom",
+        } as UIMessageChunk,
+      ]),
+      () => FIXED_NOW,
+    );
+    await collect(stream);
+
+    expect(completions.get("t1")).toBe(FIXED_NOW);
   });
 });

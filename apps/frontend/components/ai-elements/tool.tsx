@@ -6,7 +6,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
+import { cn, formatToolDuration } from "@/lib/utils";
 import type { ToolUIPart } from "ai";
 import {
   ArrowRightLeftIcon,
@@ -174,17 +174,9 @@ export type ToolHeaderProps = {
   state: ToolUIPart["state"];
   /** ISO timestamp of when this tool call began, if known. */
   startedAt?: string;
+  /** ISO timestamp of when this tool call completed, if known. */
+  completedAt?: string;
   className?: string;
-};
-
-const formatToolTime = (iso: string): string | undefined => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return undefined;
-  return d.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
 };
 
 const getStatusBadge = (status: ToolUIPart["state"]) => {
@@ -223,10 +215,11 @@ export const ToolHeader = ({
   type,
   state,
   startedAt,
+  completedAt,
   ...props
 }: ToolHeaderProps) => {
   const Icon = getToolIcon(type);
-  const time = startedAt ? formatToolTime(startedAt) : undefined;
+  const duration = formatToolDuration(startedAt, completedAt);
   return (
     <CollapsibleTrigger
       className={cn(
@@ -247,8 +240,10 @@ export const ToolHeader = ({
           )}
         </span>
         {getStatusBadge(state)}
-        {time && (
-          <span className="text-xs text-muted-foreground shrink-0">{time}</span>
+        {duration && (
+          <span className="text-xs text-muted-foreground shrink-0">
+            {duration}
+          </span>
         )}
       </div>
       <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />

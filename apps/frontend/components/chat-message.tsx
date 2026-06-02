@@ -49,16 +49,15 @@ import { Textarea } from "./ui/textarea";
 import { LoadSkillTool } from "./load-skill-tool";
 import { SubAgentTool } from "./sub-agent-tool";
 
-const formatTime = (date: Date) =>
-  date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-
 const getToolStartedAt = (part: unknown): string | undefined => {
   const raw = (part as { toolMetadata?: { startedAt?: unknown } })?.toolMetadata
     ?.startedAt;
+  return typeof raw === "string" ? raw : undefined;
+};
+
+const getToolCompletedAt = (part: unknown): string | undefined => {
+  const raw = (part as { toolMetadata?: { completedAt?: unknown } })
+    ?.toolMetadata?.completedAt;
   return typeof raw === "string" ? raw : undefined;
 };
 
@@ -130,9 +129,6 @@ export const ChatMessage = memo(function ChatMessage({
         <BotIcon className="size-3.5 text-muted-foreground" />
       </div>
     ));
-  const rawCreatedAt = (message.metadata as Record<string, unknown>)?.createdAt;
-  const messageCreatedAt =
-    typeof rawCreatedAt === "string" ? rawCreatedAt : undefined;
 
   const fileParts = message.parts?.filter(
     (part): part is FileUIPart =>
@@ -237,6 +233,7 @@ export const ChatMessage = memo(function ChatMessage({
                 state={toolPart.state}
                 title={toolPart.toolName}
                 startedAt={getToolStartedAt(toolPart)}
+                completedAt={getToolCompletedAt(toolPart)}
               />
               <ToolContent>
                 <ToolInput input={toolPart.input} />
@@ -277,6 +274,7 @@ export const ChatMessage = memo(function ChatMessage({
                 type={toolPart.type}
                 label={toolLabel}
                 startedAt={getToolStartedAt(toolPart)}
+                completedAt={getToolCompletedAt(toolPart)}
               />
               <ToolContent>
                 <ToolInput input={toolPart.input} />
@@ -337,11 +335,6 @@ export const ChatMessage = memo(function ChatMessage({
           <MessageActions
             className={message.role === "user" ? "justify-end" : "pl-8"}
           >
-            {message.role === "assistant" && messageCreatedAt && (
-              <span className="text-xs text-muted-foreground mr-1">
-                {formatTime(new Date(messageCreatedAt))}
-              </span>
-            )}
             {message.role === "user" && (
               <MessageAction
                 className="cursor-pointer text-muted-foreground"
@@ -381,11 +374,6 @@ export const ChatMessage = memo(function ChatMessage({
               >
                 <RefreshCwIcon className="size-4" />
               </MessageAction>
-            )}
-            {message.role === "user" && messageCreatedAt && (
-              <span className="text-xs text-muted-foreground ml-1">
-                {formatTime(new Date(messageCreatedAt))}
-              </span>
             )}
           </MessageActions>
         ))}

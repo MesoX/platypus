@@ -5,7 +5,7 @@ export const useMessageEditing = <T extends UIMessage = UIMessage>(
   messages: T[],
   setMessages: (messages: T[]) => void,
   sendMessage: (
-    message: { text: string; metadata?: Record<string, unknown> },
+    message: { text: string },
     options?: { body?: Record<string, unknown> },
   ) => void,
   getRequestBody: () => Record<string, unknown>,
@@ -42,13 +42,7 @@ export const useMessageEditing = <T extends UIMessage = UIMessage>(
 
     // Submit the edited message to backend (will append it)
     const body = getRequestBody();
-    sendMessage(
-      {
-        text: editContent,
-        metadata: { createdAt: new Date().toISOString() },
-      },
-      { body },
-    );
+    sendMessage({ text: editContent }, { body });
 
     // Reset edit state
     setEditingMessageId(null);
