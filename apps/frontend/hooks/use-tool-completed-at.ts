@@ -10,48 +10,58 @@ const toMs = (iso?: string): number | undefined => {
 };
 
 /**
- * Resolves a tool call's run duration string for the tool header.
+ * Resolves a tool call's run-duration string for the tool header.
  *
- * Sources, in priority order:
- * 1. Exact server span — `startedAt`+`completedAt` persisted by the backend
- *    (present after a chat reload of a completed run).
- * 2. Live / pre-persist span — the server timestamps aren't carried on the
- *    streamed message, so we observe the tool client-side: capture the clock
- *    when it's first seen running and again when it first turns terminal. The
- *    duration then appears the instant the status flips to Completed/Error.
- *    A client end time is only used when we also saw the tool running this
- *    session, so reloading a chat (tool already terminal at mount) never
- *    fabricates a bogus span — it just waits for the server value.
+ * - While the tool is running it shows a live elapsed timer, ticking once a
+ *   second from when the tool was first observed (the server start time isn't
+ *   carried on the streamed message, so we measure on the client).
+ * - When it turns terminal it freezes: the exact server-measured span if both
+ *   `startedAt`/`completedAt` are persisted (after a chat reload), otherwise
+ *   the client-observed span.
  *
- * Returns undefined while a tool is still running, and on historical messages
- * that predate duration tracking, so the header renders nothing.
+ * A client clock is only used when the tool was actually seen running this
+ * session, so reloading a chat (tool already terminal at mount) never shows a
+ * bogus value — it relies on the server timestamps or shows nothing.
+ *
+ * Returns undefined when there's nothing meaningful to show (e.g. a historical
+ * message that predates duration tracking).
  */
 export function useToolDuration(
   state: string,
   startedAt?: string,
   completedAt?: string,
 ): string | undefined {
-  const terminal = isTerminalState(state);
+  const running = !isTerminalState(state);
   const [clientStart, setClientStart] = useState<number>();
   const [clientEnd, setClientEnd] = useState<number>();
+  const [, tick] = useState(0);
 
+  // While running: capture the start once and tick every second so the
+  // elapsed time updates on screen.
   useEffect(() => {
-    if (!terminal && clientStart === undefined) setClientStart(Date.now());
-  }, [terminal, clientStart]);
+    if (!running) return;
+    if (clientStart === undefined) setClientStart(Date.now());
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [running, clientStart]);
 
+  // On the first terminal render (only if we saw it running): freeze the end.
   useEffect(() => {
-    if (terminal && clientEnd === undefined) setClientEnd(Date.now());
-  }, [terminal, clientEnd]);
+    if (!running && clientStart !== undefined && clientEnd === undefined) {
+      setClientEnd(Date.now());
+    }
+  }, [running, clientStart, clientEnd]);
 
-  // 1) Authoritative, exact server-measured span.
+  // Live elapsed timer while running.
+  if (running) {
+    if (clientStart === undefined) return undefined;
+    return formatDurationMs(Date.now() - clientStart);
+  }
+
+  // Terminal: exact server span if available, else the client-observed span.
   const serverDuration = formatToolDuration(startedAt, completedAt);
   if (serverDuration) return serverDuration;
 
-  if (!terminal) return undefined;
-
-  // 2) Best-effort span: prefer server timestamps, fall back to client-observed
-  //    ones. Only trust a client end when we also captured a client start
-  //    (i.e. we witnessed the run live), so a reload can't yield a huge value.
   const startMs = toMs(startedAt) ?? clientStart;
   const endMs =
     toMs(completedAt) ?? (clientStart !== undefined ? clientEnd : undefined);
