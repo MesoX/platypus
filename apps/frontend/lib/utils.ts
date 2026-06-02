@@ -34,9 +34,13 @@ export function formatToolDuration(
   const start = new Date(startedAt).getTime();
   const end = new Date(completedAt).getTime();
   if (Number.isNaN(start) || Number.isNaN(end) || end < start) return undefined;
+  return formatDurationMs(end - start);
+}
 
-  const ms = end - start;
-  if (ms < 1000) return `${ms}ms`;
+/** Formats an elapsed millisecond span: `950ms`, `1.2s`, `1m 3s`. */
+export function formatDurationMs(ms: number): string | undefined {
+  if (!Number.isFinite(ms) || ms < 0) return undefined;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   const minutes = Math.floor(seconds / 60);
