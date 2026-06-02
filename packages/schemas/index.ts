@@ -194,9 +194,15 @@ export type ChatList = z.infer<typeof chatListSchema>;
 
 // Agent
 
-export const agentSchema = z.object({
+// An Agent is scoped to either a Workspace or an Organization (mutually
+// exclusive), mirroring the dual-scope shape of `provider`/`mcp`/`skill`.
+// Org-scoped Agents are Shared resources managed by Org Admins (ADR-0007);
+// the XOR is enforced on `agentSchema` below, while the create routes inject
+// the scope and Promote re-scopes a Workspace Agent to the Organization.
+const agentBaseSchema = z.object({
   id: z.string(),
-  workspaceId: z.string(),
+  organizationId: z.string().optional(),
+  workspaceId: z.string().optional(),
   providerId: z.string(),
   name: z.string().min(3).max(30),
   description: z.string().min(1).max(128),
@@ -218,9 +224,22 @@ export const agentSchema = z.object({
   updatedAt: z.date(),
 });
 
+export const agentSchema = agentBaseSchema.refine(
+  (data) => {
+    const hasOrg = Boolean(data.organizationId);
+    const hasWorkspace = Boolean(data.workspaceId);
+    return (hasOrg || hasWorkspace) && !(hasOrg && hasWorkspace);
+  },
+  {
+    message:
+      "Agent must have either organizationId or workspaceId, but not both",
+    path: ["organizationId"],
+  },
+);
+
 export type Agent = z.infer<typeof agentSchema>;
 
-export const agentCreateSchema = agentSchema.pick({
+export const agentCreateSchema = agentBaseSchema.pick({
   workspaceId: true,
   providerId: true,
   name: true,
@@ -240,7 +259,7 @@ export const agentCreateSchema = agentSchema.pick({
   inputPlaceholder: true,
 });
 
-export const agentUpdateSchema = agentSchema.pick({
+export const agentUpdateSchema = agentBaseSchema.pick({
   providerId: true,
   name: true,
   description: true,
@@ -263,9 +282,14 @@ export const agentUpdateSchema = agentSchema.pick({
 
 const skillNameRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export const skillSchema = z.object({
+// A Skill is scoped to either a Workspace or an Organization (mutually
+// exclusive), mirroring the dual-scope shape of `provider`/`mcp`. Org-scoped
+// Skills are Shared resources managed by Org Admins (ADR-0007). The XOR is
+// enforced on `skillSchema` below; the create routes inject the scope.
+const skillBaseSchema = z.object({
   id: z.string(),
-  workspaceId: z.string(),
+  organizationId: z.string().optional(),
+  workspaceId: z.string().optional(),
   name: z
     .string()
     .min(5)
@@ -277,10 +301,24 @@ export const skillSchema = z.object({
   updatedAt: z.date(),
 });
 
+export const skillSchema = skillBaseSchema.refine(
+  (data) => {
+    const hasOrg = Boolean(data.organizationId);
+    const hasWorkspace = Boolean(data.workspaceId);
+    return (hasOrg || hasWorkspace) && !(hasOrg && hasWorkspace);
+  },
+  {
+    message:
+      "Skill must have either organizationId or workspaceId, but not both",
+    path: ["organizationId"],
+  },
+);
+
 export type Skill = z.infer<typeof skillSchema>;
 
-export const skillCreateSchema = skillSchema
+export const skillCreateSchema = skillBaseSchema
   .pick({
+    organizationId: true,
     workspaceId: true,
     name: true,
     description: true,
@@ -290,7 +328,7 @@ export const skillCreateSchema = skillSchema
     agentIds: z.array(z.string()).optional(),
   });
 
-export const skillUpdateSchema = skillSchema
+export const skillUpdateSchema = skillBaseSchema
   .pick({
     name: true,
     description: true,
@@ -431,7 +469,12 @@ export const mcpTestSchema = mcpBaseSchema
 // Attachment — the explicit link that surfaces an org-scoped Shared resource
 // inside a specific Workspace (ADR-0007 / #154). Polymorphic over resource type.
 
-export const attachmentResourceTypeSchema = z.enum(["mcp", "provider"]);
+export const attachmentResourceTypeSchema = z.enum([
+  "mcp",
+  "provider",
+  "skill",
+  "agent",
+]);
 export type AttachmentResourceType = z.infer<
   typeof attachmentResourceTypeSchema
 >;

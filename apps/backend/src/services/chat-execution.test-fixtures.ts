@@ -17,16 +17,17 @@ export type ChatTurnQueriesFixtures = {
   providers?: Provider[];
   skills?: Array<{
     id: string;
-    workspaceId: string;
+    workspaceId?: string | null;
+    organizationId?: string | null;
     name: string;
     description: string;
   }>;
   mcps?: McpRow[];
   // Attachments of org-scoped Shared resources to workspaces (ADR-0007). An
-  // org-scoped Provider/MCP resolves at Chat-turn time only where attached.
+  // org-scoped Provider/MCP/Skill resolves at Chat-turn time only where attached.
   attachments?: Array<{
     workspaceId: string;
-    resourceType: "mcp" | "provider";
+    resourceType: "mcp" | "provider" | "skill" | "agent";
     resourceId: string;
   }>;
   userContexts?: Array<{
@@ -46,7 +47,7 @@ export const createInMemoryChatTurnQueries = (
   fx: ChatTurnQueriesFixtures = {},
 ): ChatTurnQueries => {
   const isAttached = (
-    resourceType: "mcp" | "provider",
+    resourceType: "mcp" | "provider" | "skill" | "agent",
     resourceId: string,
     workspaceId: string,
   ) =>
@@ -62,11 +63,20 @@ export const createInMemoryChatTurnQueries = (
       return fx.workspaces?.find((w) => w.id === id) ?? null;
     },
 
-    async getAgent(id, workspaceId) {
-      return (
-        fx.agents?.find((a) => a.id === id && a.workspaceId === workspaceId) ??
-        null
-      );
+    async getAgent(id, orgId, workspaceId) {
+      const a = fx.agents?.find((a) => a.id === id) ?? null;
+      if (!a) return null;
+      // Workspace-scoped Agent in this workspace.
+      if (a.workspaceId === workspaceId) return a;
+      // Org-scoped (Shared) Agent resolves only where attached (ADR-0007).
+      if (
+        a.organizationId === orgId &&
+        !a.workspaceId &&
+        isAttached("agent", id, workspaceId)
+      ) {
+        return a;
+      }
+      return null;
     },
 
     async getProvider(id, orgId, workspaceId) {
@@ -87,10 +97,20 @@ export const createInMemoryChatTurnQueries = (
       return p;
     },
 
-    async getSkillsByIds(ids, workspaceId) {
+    async getSkillsByIds(ids, orgId, workspaceId) {
       if (ids.length === 0) return [];
       return (fx.skills ?? [])
-        .filter((s) => s.workspaceId === workspaceId && ids.includes(s.id))
+        .filter((s) => {
+          if (!ids.includes(s.id)) return false;
+          // Workspace-scoped Skill in this workspace.
+          if (s.workspaceId === workspaceId) return true;
+          // Org-scoped (Shared) Skill resolves only where attached (ADR-0007).
+          return (
+            s.organizationId === orgId &&
+            !s.workspaceId &&
+            isAttached("skill", s.id, workspaceId)
+          );
+        })
         .map((s) => ({ name: s.name, description: s.description }));
     },
 

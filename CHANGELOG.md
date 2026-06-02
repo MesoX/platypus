@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.90.0](https://github.com/willdady/platypus/compare/v1.89.1...v1.90.0) (2026-06-02)
+
+
+### Features
+
+* org-scoped agents + promote, shared-resource editing & central attachments ([#177](https://github.com/willdady/platypus/issues/177)) ([a8af7eb](https://github.com/willdady/platypus/commit/a8af7ebd8a9ab65a43f711c87bed8382b33ed5b9))
+
+## [1.89.1](https://github.com/willdady/platypus/compare/v1.89.0...v1.89.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **backend:** verify workspace belongs to path orgId in requireWorkspaceAccess ([#175](https://github.com/willdady/platypus/issues/175)) ([71b8cae](https://github.com/willdady/platypus/commit/71b8cae69c7ba98ad4566e73c097bd2b808f0a2d))
+* **frontend:** unbreak ESLint 10 lint + clear mechanical lint errors ([#173](https://github.com/willdady/platypus/issues/173)) ([9c3132b](https://github.com/willdady/platypus/commit/9c3132b0153461ee28a1facc21960fb677892d2d))
+
+## [1.89.0](https://github.com/willdady/platypus/compare/v1.88.0...v1.89.0) (2026-05-31)
+
+
+### Features
+
+* org-scoped Skills + Promote action for shared resources ([#155](https://github.com/willdady/platypus/issues/155)) ([#170](https://github.com/willdady/platypus/issues/170)) ([c865543](https://github.com/willdady/platypus/commit/c865543f2eb2d4b625af93a2c2eae8342fa26145))
+
 ## [1.88.0](https://github.com/willdady/platypus/compare/v1.87.0...v1.88.0) (2026-05-31)
 
 

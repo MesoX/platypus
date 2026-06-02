@@ -13,7 +13,6 @@ import {
   Bot,
   MessageSquare,
   Plus,
-  BotMessageSquare,
   FolderOpen,
   Settings,
   Sparkles,
@@ -391,13 +390,8 @@ const Workspace = () => {
                 </p>
               </div>
             </div>
-            {/* Reusing the existing AgentsList component which handles empty states */}
+            {/* AgentsList renders the Create / Attach buttons and empty states */}
             <AgentsList orgId={orgId} workspaceId={workspaceId} />
-            <Button variant="outline" asChild>
-              <Link href={`/${orgId}/workspace/${workspaceId}/agents/create`}>
-                <Plus /> Create Agent
-              </Link>
-            </Button>
           </div>
 
           <Separator />
@@ -413,11 +407,6 @@ const Workspace = () => {
             storageKey="section:skills:open"
           >
             <SkillsList orgId={orgId} workspaceId={workspaceId} />
-            <Button variant="outline" asChild>
-              <Link href={`/${orgId}/workspace/${workspaceId}/skills/create`}>
-                <Plus /> Create Skill
-              </Link>
-            </Button>
           </CollapsibleSection>
 
           <Separator />
