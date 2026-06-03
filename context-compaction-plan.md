@@ -562,6 +562,28 @@ enhancement. Each step independently testable.
   by one-retry-then-skip. **Do NOT fix now.** Gated on the `cas.conflict` metric;
   if it shows repeated waste, move the version read to just-before-write or take a
   short advisory lock for the summarize window.
+- **Trigger estimator scope — possible bug, flagged from live test 2026-06-03.**
+  Tier 1's projection in `compaction.ts` only estimates `messages` (char/4 over
+  the stored UIMessages). System prompt, tool schemas, skill prompts, and
+  sub-agent context — all sent to the model on every turn — are invisible to the
+  trigger. Observed gap on Qwen3.6 / vLLM with a tool-bearing agent: provider
+  reported 8888 `inputTokens` while the local estimate was ~986 (≈ 3× under).
+  Trigger never fired against the 8192 fallback; only fired after forcing
+  `model_meta.contextWindow = 4096` to drop the threshold below the
+  under-counted estimate. Two paths to consider, not mutually exclusive:
+  1. Extend the estimator (or the projection at the call site) to include the
+     system + tool-schema + skill payload that `chat-execution` actually puts on
+     the wire — same `CountUnit[]` shape, just more inputs.
+  2. Wire the ADR-prescribed "use provider `usage.inputTokens` from the prior
+     turn as the corrective baseline for turns ≥2" (ADR §"Char/4 estimate, not
+     a real tokenizer"). Chunks 1-2 left this half-implemented — the design
+     calls for it; the code uses char/4 every turn.
+
+  Re-verify: a unit test with an agent carrying realistic tool schemas + a
+  short message history should show the projection ≥ the provider's reported
+  `inputTokens` (within margin), and the trigger should fire **before** the
+  provider's count crosses the budget. Currently the asymmetry lets real input
+  blow past the trigger silently.
 
 ---
 
