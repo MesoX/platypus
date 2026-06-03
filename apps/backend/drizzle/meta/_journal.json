@@ -309,6 +309,13 @@
       "when": 1780390202285,
       "tag": "0043_wonderful_spectrum",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1780482354578,
+      "tag": "0044_context_compaction",
+      "breakpoints": true
     }
   ]
 }
