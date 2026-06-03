@@ -28,11 +28,23 @@ import type {
   Provider,
   Skill,
 } from "@platypus/schemas";
-import type { Tool } from "ai";
+import { generateText, type Tool } from "ai";
 import { logger } from "../logger.ts";
 import { buildMcpTransportConfig } from "./mcp-oauth-provider.ts";
 import { inlineFileUrls } from "../storage/utils.ts";
 import type { PlatypusUIMessage } from "../types.ts";
+import { chat as chatTable } from "../db/schema.ts";
+import { contextWindowResolver } from "../runs/context-window.ts";
+import { imageProviderFor } from "../runs/token-estimate.ts";
+import {
+  applyTier1Compaction,
+  affectedBelowWatermark,
+  computeBudget,
+  drizzleCompactionStore,
+  invalidateCompaction,
+  resolveCompactionConfig,
+  type CompactionState,
+} from "../runs/compaction.ts";
 
 // --- Errors ---
 
@@ -413,6 +425,129 @@ export const drizzleChatTurnQueries: ChatTurnQueries = {
   },
 };
 
+// --- Tier 1 context compaction (ADR-0009) ---
+
+const EMPTY_COMPACTION_STATE: CompactionState = {
+  version: 0,
+  summaryWatermark: null,
+  contextSummary: null,
+  compactionDirty: false,
+};
+
+/**
+ * Loads the canonical (raw) persisted history for a chat. Used only to detect
+ * edit/delete/regenerate divergence below the watermark (C4); raw messages are
+ * never mutated (P1).
+ */
+async function loadPersistedMessages(
+  chatId: string,
+): Promise<PlatypusUIMessage[]> {
+  const rows = await db
+    .select({ messages: chatTable.messages })
+    .from(chatTable)
+    .where(eq(chatTable.id, chatId))
+    .limit(1);
+  return (rows[0]?.messages as PlatypusUIMessage[] | null) ?? [];
+}
+
+type ApplyTier1Args = {
+  chatId: string;
+  provider: Provider;
+  resolvedModelId: string;
+  agent: AgentRow | null;
+  opened: ReturnType<typeof openProvider>;
+  messages: PlatypusUIMessage[];
+};
+
+/**
+ * Resolves the window, reconstructs/advances the compacted view, and persists
+ * any new summary — all best-effort. Any throw degrades to the uncompacted
+ * messages (recovery §E remains the safety net). Returns the message array to
+ * send to the model.
+ */
+async function applyTier1IfNeeded(
+  args: ApplyTier1Args,
+): Promise<PlatypusUIMessage[]> {
+  const { chatId, provider, resolvedModelId, agent, opened, messages } = args;
+  try {
+    const resolvedWindow = await contextWindowResolver.resolve(
+      provider,
+      resolvedModelId,
+    );
+    const config = resolveCompactionConfig(agent);
+    // Global kill switch (§G) gates proactive compaction; recovery is unaffected.
+    if (process.env.COMPACTION_ENABLED === "false") {
+      config.compactionEnabled = false;
+    }
+
+    const store = drizzleCompactionStore;
+    let state = (await store.readState(chatId)) ?? EMPTY_COMPACTION_STATE;
+
+    // C4 invalidation: if the submitted history changed at/below the watermark
+    // (edit/delete/regenerate), reset the stale summary before compacting. The
+    // single submit endpoint is the only "edit handler" in this architecture.
+    if (state.summaryWatermark || state.contextSummary) {
+      const persisted = await loadPersistedMessages(chatId);
+      const affected = affectedBelowWatermark(
+        persisted,
+        messages,
+        state.summaryWatermark,
+      );
+      if (affected.length > 0) {
+        const orderedIds = messages
+          .map((m) => m.id)
+          .filter((id): id is string => Boolean(id));
+        await invalidateCompaction(store, chatId, affected, orderedIds);
+        state = (await store.readState(chatId)) ?? state;
+      }
+    }
+
+    const budget = computeBudget(
+      resolvedWindow.contextWindow,
+      resolvedWindow.maxOutputTokens,
+      config,
+    );
+
+    // Summarizer uses the provider's task model, falling back to the main model
+    // when unset (drift T7). generateText is one-shot, no tools.
+    const summarize = async (text: string): Promise<string> => {
+      const taskModelId = provider.taskModelId || resolvedModelId;
+      const { text: summary, usage } = await generateText({
+        model: opened.languageModel(taskModelId),
+        system:
+          "You compress conversation history for context reuse. Produce a dense summary capturing decisions made, facts established, files/tools touched, open questions, and the user's intent. Drop pleasantries and redundancy. Output only the summary.",
+        prompt: text,
+      });
+      logger.info(
+        { chatId, taskModelId, usage },
+        "context compaction summarize",
+      );
+      return summary;
+    };
+
+    const result = await applyTier1Compaction({
+      chatId,
+      messages,
+      state,
+      budget,
+      config,
+      imageProvider: imageProviderFor(provider.providerType),
+      summarize,
+      store,
+      onEvent: (event) =>
+        logger.info({ chatId, ...event }, "context-compacted"),
+    });
+
+    return result.messages;
+  } catch (error) {
+    logger.error(
+      { error, chatId },
+      "Tier 1 compaction failed; sending uncompacted history",
+    );
+    return messages;
+  }
+}
+
 // --- Public Module: prepare a Chat turn ---
 
 /**
@@ -541,12 +676,24 @@ export const prepareChatTurn = async (
 
   const systemPrompt = generation.systemPrompt!;
 
+  // --- Tier 1 context compaction (ADR-0009) ---
+  // Best-effort: a failure here must never break the turn — recovery (§E) is the
+  // net. Runs AFTER inlineFileUrls so the estimate sees the real payload (T2).
+  const compactedMessages = await applyTier1IfNeeded({
+    chatId: request.id,
+    provider,
+    resolvedModelId,
+    agent,
+    opened,
+    messages: inlinedMessages,
+  });
+
   return {
     stream: {
       model,
       tools: wrappedTools,
       system: systemPrompt,
-      messages: inlinedMessages,
+      messages: compactedMessages,
       maxSteps: resolvedMaxSteps,
       temperature: generation.temperature,
       topP: generation.topP,
