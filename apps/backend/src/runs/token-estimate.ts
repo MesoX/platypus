@@ -23,15 +23,7 @@
  * exists; every later turn uses the real provider count.
  */
 
-import type {
-  ModelMessage,
-  TextPart,
-  ImagePart,
-  FilePart,
-  ToolCallPart,
-  ToolResultPart,
-  DataContent,
-} from "ai";
+import type { ModelMessage, ToolResultPart, DataContent } from "ai";
 import type { PlatypusUIMessage } from "../types.ts";
 
 /** Number of characters approximated as one token (text only). */
@@ -331,7 +323,7 @@ function uiMessageToCountUnit(
     // data-*) is UI-only and excluded on both sides (drift T1).
   }
 
-  return { role: message.role as CountRole, text, nonText };
+  return { role: message.role, text, nonText };
 }
 
 /** Tier 1 adapter: UIMessages → neutral count units. */
@@ -370,7 +362,7 @@ function modelMessageToCountUnit(
   message: ModelMessage,
   provider: ImageProvider,
 ): CountUnit {
-  const role = message.role as CountRole;
+  const role = message.role;
   let text = "";
   const nonText: NonTextPart[] = [];
 
@@ -382,21 +374,21 @@ function modelMessageToCountUnit(
   for (const part of content) {
     switch (part.type) {
       case "text":
-        text += (part as TextPart).text;
+        text += part.text;
         break;
       case "tool-call":
-        text += stableStringify((part as ToolCallPart).input);
+        text += stableStringify(part.input);
         break;
       case "tool-result":
-        text += toolResultOutputText((part as ToolResultPart).output);
+        text += toolResultOutputText(part.output);
         break;
       case "image": {
-        const img = part as ImagePart;
+        const img = part;
         nonText.push(imagePart(provider, bytesFromDataContent(img.image)));
         break;
       }
       case "file": {
-        const file = part as FilePart;
+        const file = part;
         if (isImageMediaType(file.mediaType)) {
           nonText.push(imagePart(provider, bytesFromDataContent(file.data)));
         } else {

@@ -287,7 +287,7 @@ export class AgentRunner {
 
     let turn: ChatTurn | undefined;
     let lastMessages: PlatypusUIMessage[] = input.messages;
-    let lastStats: RunStats = {};
+    const lastStats: RunStats = {};
     let terminated = false;
 
     const finalize = async (
