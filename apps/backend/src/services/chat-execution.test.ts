@@ -48,11 +48,20 @@ vi.mock("@ai-sdk/anthropic", () => ({
   createAnthropic: mockCreateAnthropic.creator,
 }));
 
+const { mockCreateMCPClient } = vi.hoisted(() => ({
+  mockCreateMCPClient: vi.fn(),
+}));
+vi.mock("@ai-sdk/mcp", () => ({
+  experimental_createMCPClient: mockCreateMCPClient,
+  auth: vi.fn(),
+}));
+
 import {
   prepareChatTurn,
   NotFoundError,
   ValidationError,
   createToolHeartbeat,
+  shouldInjectNativeSearch,
 } from "./chat-execution.ts";
 import { createInMemoryChatTurnQueries } from "./chat-execution.test-fixtures.ts";
 
@@ -164,6 +173,125 @@ describe("chat-execution", () => {
       // dispose is idempotent and does nothing without MCP clients
       await expect(turn.dispose()).resolves.toBeUndefined();
       await expect(turn.dispose()).resolves.toBeUndefined();
+    });
+
+    it("resolves an org-scoped (Shared) Skill referenced by the Agent only where attached", async () => {
+      const agentWithSkill = { ...baseAgent, skillIds: ["org-skill-1"] };
+      const orgSkill = {
+        id: "org-skill-1",
+        organizationId: "org-1",
+        workspaceId: null,
+        name: "shared-skill",
+        description: "An organization-shared skill",
+      };
+
+      // Attached → the Skill surfaces in the system prompt.
+      const attached = createInMemoryChatTurnQueries({
+        workspaces: [baseWorkspace],
+        agents: [agentWithSkill as any],
+        providers: [baseProvider as any],
+        skills: [orgSkill],
+        attachments: [
+          {
+            workspaceId: "ws-1",
+            resourceType: "skill",
+            resourceId: "org-skill-1",
+          },
+        ],
+      });
+
+      const attachedTurn = await prepareChatTurn(
+        {
+          ...baseInput,
+          request: { id: "chat-os", agentId: agentWithSkill.id },
+        },
+        attached,
+      );
+      expect(attachedTurn.stream.system).toContain("shared-skill");
+      expect(attachedTurn.stream.tools).toHaveProperty("loadSkill");
+
+      // Not attached → the Skill is invisible to this workspace.
+      const detached = createInMemoryChatTurnQueries({
+        workspaces: [baseWorkspace],
+        agents: [agentWithSkill as any],
+        providers: [baseProvider as any],
+        skills: [orgSkill],
+      });
+
+      const detachedTurn = await prepareChatTurn(
+        {
+          ...baseInput,
+          request: { id: "chat-os2", agentId: agentWithSkill.id },
+        },
+        detached,
+      );
+      expect(detachedTurn.stream.system).not.toContain("shared-skill");
+      expect(detachedTurn.stream.tools).not.toHaveProperty("loadSkill");
+    });
+
+    it("runs a Shared (org-scoped) Agent invoked from a borrowing Workspace where attached", async () => {
+      const borrowingWorkspace = { ...baseWorkspace, id: "ws-2" };
+      const orgProvider = {
+        ...baseProvider,
+        id: "p-org",
+        organizationId: "org-1",
+        workspaceId: null,
+      };
+      const sharedAgent = {
+        ...baseAgent,
+        id: "shared-agent",
+        organizationId: "org-1",
+        workspaceId: null,
+        providerId: "p-org",
+      };
+
+      // Attached to the borrowing Workspace → the Shared Agent (and its
+      // org-scoped Provider) resolve against that Workspace (ADR-0007).
+      const attached = createInMemoryChatTurnQueries({
+        workspaces: [borrowingWorkspace],
+        agents: [sharedAgent as any],
+        providers: [orgProvider as any],
+        attachments: [
+          {
+            workspaceId: "ws-2",
+            resourceType: "agent",
+            resourceId: "shared-agent",
+          },
+          {
+            workspaceId: "ws-2",
+            resourceType: "provider",
+            resourceId: "p-org",
+          },
+        ],
+      });
+
+      const turn = await prepareChatTurn(
+        {
+          ...baseInput,
+          workspaceId: "ws-2",
+          request: { id: "chat-shared", agentId: "shared-agent" },
+        },
+        attached,
+      );
+      expect(turn.resolved.agentId).toBe("shared-agent");
+      expect(turn.resolved.providerId).toBe("p-org");
+
+      // Not attached → the Shared Agent is invisible to this Workspace.
+      const detached = createInMemoryChatTurnQueries({
+        workspaces: [borrowingWorkspace],
+        agents: [sharedAgent as any],
+        providers: [orgProvider as any],
+      });
+      await expect(
+        prepareChatTurn(
+          {
+            ...baseInput,
+            workspaceId: "ws-2",
+            request: { id: "chat-shared2", agentId: "shared-agent" },
+          },
+          detached,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
     });
 
     it("Direct Provider+Model selection populates resolved.systemPrompt and merges request overrides", async () => {
@@ -290,6 +418,118 @@ describe("chat-execution", () => {
     });
   });
 
+  describe("MCP tool-set resolution", () => {
+    const baseMcp = {
+      id: "mcp-1",
+      organizationId: null as string | null,
+      workspaceId: null as string | null,
+      name: "Test MCP",
+      url: "https://mcp.example.com",
+      headers: null,
+      authType: "None",
+      bearerToken: null,
+      oauthAccessToken: null,
+      oauthRefreshToken: null,
+      oauthTokenExpiresAt: null,
+      oauthScope: null,
+      oauthRequestedScope: null,
+      oauthClientId: null,
+      oauthClientSecret: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const agentWithMcp = { ...baseAgent, toolSetIds: ["mcp-1"] };
+
+    it("resolves an org-scoped (Shared) MCP at Chat-turn time", async () => {
+      mockCreateMCPClient.mockResolvedValueOnce({
+        tools: vi.fn().mockResolvedValue({ mcpTool: { description: "x" } }),
+        close: vi.fn().mockResolvedValue(undefined),
+      });
+
+      // Org-scoped MCP: organizationId set, workspaceId null. The invoking
+      // workspace (ws-1) references it via the agent's tool sets, and an
+      // Attachment makes it visible there (ADR-0007 / #154).
+      const orgMcp = { ...baseMcp, organizationId: "org-1" };
+      const queries = createInMemoryChatTurnQueries({
+        workspaces: [baseWorkspace],
+        agents: [agentWithMcp as any],
+        providers: [baseProvider as any],
+        mcps: [orgMcp],
+        attachments: [
+          {
+            workspaceId: baseWorkspace.id,
+            resourceType: "mcp",
+            resourceId: orgMcp.id,
+          },
+        ],
+      });
+
+      const turn = await prepareChatTurn(
+        { ...baseInput, request: { id: "chat-mcp", agentId: agentWithMcp.id } },
+        queries,
+      );
+
+      expect(turn.stream.tools).toHaveProperty("mcpTool");
+      await turn.dispose();
+    });
+
+    it("skips an org-scoped MCP that is not attached to the workspace", async () => {
+      // No MCP client is mocked: an unattached org-scoped MCP must never reach
+      // the connection step. (Queueing an unconsumed mockResolvedValueOnce here
+      // would leak into the next test, since vi.clearAllMocks keeps once-values.)
+
+      // Org-scoped MCP with NO attachment to the invoking workspace → it must
+      // not resolve, so its tools are absent (the tool-set id is unknown).
+      const orgMcp = { ...baseMcp, organizationId: "org-1" };
+      const queries = createInMemoryChatTurnQueries({
+        workspaces: [baseWorkspace],
+        agents: [agentWithMcp as any],
+        providers: [baseProvider as any],
+        mcps: [orgMcp],
+        // no attachments
+      });
+
+      const turn = await prepareChatTurn(
+        { ...baseInput, request: { id: "chat-mcp", agentId: agentWithMcp.id } },
+        queries,
+      );
+
+      expect(turn.stream.tools).not.toHaveProperty("mcpTool");
+      await turn.dispose();
+    });
+
+    it("fails soft when the MCP is unreachable — warns, adds no tools, does not throw", async () => {
+      mockCreateMCPClient.mockRejectedValueOnce(
+        new Error("ECONNREFUSED: connection refused"),
+      );
+
+      const orgMcp = { ...baseMcp, organizationId: "org-1" };
+      const queries = createInMemoryChatTurnQueries({
+        workspaces: [baseWorkspace],
+        agents: [agentWithMcp as any],
+        providers: [baseProvider as any],
+        mcps: [orgMcp],
+        attachments: [
+          {
+            workspaceId: baseWorkspace.id,
+            resourceType: "mcp",
+            resourceId: orgMcp.id,
+          },
+        ],
+      });
+
+      // The unreachable MCP must not kill the Chat turn.
+      const turn = await prepareChatTurn(
+        { ...baseInput, request: { id: "chat-mcp", agentId: agentWithMcp.id } },
+        queries,
+      );
+
+      expect(turn.stream.tools).not.toHaveProperty("mcpTool");
+      await turn.dispose();
+    });
+  });
+
   describe("createToolHeartbeat", () => {
     beforeEach(() => {
       vi.useFakeTimers();
@@ -373,6 +613,37 @@ describe("chat-execution", () => {
 
       vi.advanceTimersByTime(5000);
       expect(bump).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("shouldInjectNativeSearch", () => {
+    it("injects when search is requested and native search is enabled", () => {
+      expect(
+        shouldInjectNativeSearch(true, { nativeSearchEnabled: true }),
+      ).toBe(true);
+    });
+
+    it("does not inject when search is requested but native search is disabled", () => {
+      expect(
+        shouldInjectNativeSearch(true, { nativeSearchEnabled: false }),
+      ).toBe(false);
+    });
+
+    it("does not inject when search is not requested, regardless of provider", () => {
+      expect(
+        shouldInjectNativeSearch(false, { nativeSearchEnabled: true }),
+      ).toBe(false);
+      expect(
+        shouldInjectNativeSearch(undefined, { nativeSearchEnabled: true }),
+      ).toBe(false);
+    });
+
+    it("treats a legacy provider (nativeSearchEnabled undefined) as enabled", () => {
+      expect(
+        shouldInjectNativeSearch(true, {
+          nativeSearchEnabled: undefined as unknown as boolean,
+        }),
+      ).toBe(true);
     });
   });
 });

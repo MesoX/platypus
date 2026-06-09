@@ -17,9 +17,21 @@ import { requireAuth } from "../middleware/authentication.ts";
 import {
   requireOrgAccess,
   requireWorkspaceAccess,
+  requireWorkspaceConfigAccess,
 } from "../middleware/authorization.ts";
+import {
+  listScoped,
+  requireScoped,
+  requireWorkspaceMutable,
+} from "../services/scoped-resource.ts";
 import type { Variables } from "../server.ts";
 import { logger } from "../logger.ts";
+
+// MCP mutations introduce credentials and external reach, so they are
+// org-admin by default and delegatable to the workspace owner via the
+// `mcpSelfManagement` flag (ADR-0006). Reused across every mutating route.
+const requireMcpConfigAccess =
+  requireWorkspaceConfigAccess("mcpSelfManagement");
 import {
   DatabaseOAuthClientProvider,
   oauthFetchFn,
@@ -29,7 +41,7 @@ import {
 } from "../services/mcp-oauth-provider.ts";
 
 /** Fields to null-out when clearing OAuth tokens. */
-const OAUTH_TOKEN_CLEAR_FIELDS = {
+export const OAUTH_TOKEN_CLEAR_FIELDS = {
   oauthAccessToken: null,
   oauthRefreshToken: null,
   oauthTokenExpiresAt: null,
@@ -39,7 +51,7 @@ const OAUTH_TOKEN_CLEAR_FIELDS = {
 const mcp = new Hono<{ Variables: Variables }>();
 
 /** Strips sensitive OAuth fields and adds computed oauthAuthorized flag */
-const sanitizeMcpResponse = (record: McpRecord) => {
+export const sanitizeMcpResponse = (record: McpRecord) => {
   const {
     oauthAccessToken,
     oauthRefreshToken,
@@ -55,12 +67,13 @@ const sanitizeMcpResponse = (record: McpRecord) => {
   };
 };
 
-/** Create a new MCP (admin only) */
+/** Create a new MCP (org-admin, or owner when delegated — ADR-0006) */
 mcp.post(
   "/",
   requireAuth,
   requireOrgAccess(),
   requireWorkspaceAccess,
+  requireMcpConfigAccess,
   sValidator("json", mcpCreateSchema),
   async (c) => {
     const data = c.req.valid("json");
@@ -75,23 +88,29 @@ mcp.post(
   },
 );
 
-/** List all MCPs */
+/** List MCPs visible in this workspace (workspace-scoped + org-scoped) */
 mcp.get(
   "/",
   requireAuth,
   requireOrgAccess(),
   requireWorkspaceAccess,
   async (c) => {
+    const orgId = c.req.param("orgId")!;
     const workspaceId = c.req.param("workspaceId")!;
-    const results = await db
-      .select()
-      .from(mcpTable)
-      .where(eq(mcpTable.workspaceId, workspaceId));
-    return c.json({ results: results.map(sanitizeMcpResponse) });
+
+    // Workspace-scoped MCPs plus the Shared (org-scoped) MCPs attached here
+    // (ADR-0007), each tagged with its scope for the frontend.
+    const scoped = await listScoped(db, "mcp", { orgId, wsId: workspaceId });
+    const results = scoped.map(({ row, scope }) => ({
+      ...sanitizeMcpResponse(row),
+      scope,
+    }));
+
+    return c.json({ results });
   },
 );
 
-/** Get a MCP by ID */
+/** Get a MCP by ID (workspace-scoped or org-scoped) */
 mcp.get(
   "/:mcpId",
   requireAuth,
@@ -99,39 +118,41 @@ mcp.get(
   requireWorkspaceAccess,
   async (c) => {
     const mcpId = c.req.param("mcpId");
+    const orgId = c.req.param("orgId")!;
     const workspaceId = c.req.param("workspaceId")!;
-    const record = await db
-      .select()
-      .from(mcpTable)
-      .where(and(eq(mcpTable.id, mcpId), eq(mcpTable.workspaceId, workspaceId)))
-      .limit(1);
-    if (record.length === 0) {
-      return c.json({ error: "MCP not found" }, 404);
-    }
-    return c.json(sanitizeMcpResponse(record[0]));
+    const { row, scope } = await requireScoped(db, "mcp", mcpId, {
+      orgId,
+      wsId: workspaceId,
+    });
+    return c.json({ ...sanitizeMcpResponse(row), scope });
   },
 );
 
-/** Update a MCP by ID (admin only) */
+/** Update a MCP by ID (org-admin, or owner when delegated — ADR-0006) */
 mcp.put(
   "/:mcpId",
   requireAuth,
   requireOrgAccess(),
   requireWorkspaceAccess,
+  requireMcpConfigAccess,
   sValidator("json", mcpUpdateSchema),
   async (c) => {
     const mcpId = c.req.param("mcpId");
+    const orgId = c.req.param("orgId")!;
     const workspaceId = c.req.param("workspaceId")!;
     const data = c.req.valid("json");
 
-    // If URL is changing, clear stored OAuth tokens (they're server-specific)
-    const existing = await db
-      .select()
-      .from(mcpTable)
-      .where(and(eq(mcpTable.id, mcpId), eq(mcpTable.workspaceId, workspaceId)))
-      .limit(1);
+    // A Shared MCP is a single source of truth edited only on the Organization
+    // surface (ADR-0007); requireWorkspaceMutable throws NotFound (→404) when the
+    // MCP is not visible here, then Locked (→403) when it is org-scoped. On
+    // success the row is guaranteed Workspace-scoped.
+    const { row } = await requireWorkspaceMutable(db, "mcp", mcpId, {
+      orgId,
+      wsId: workspaceId,
+    });
 
-    const urlChanged = existing.length > 0 && existing[0].url !== data.url;
+    // If the URL is changing, clear stored OAuth tokens (they're server-specific)
+    const urlChanged = row.url !== data.url;
 
     const record = await db
       .update(mcpTable)
@@ -146,39 +167,45 @@ mcp.put(
       })
       .where(and(eq(mcpTable.id, mcpId), eq(mcpTable.workspaceId, workspaceId)))
       .returning();
-    if (record.length === 0) {
-      return c.json({ error: "MCP not found" }, 404);
-    }
     return c.json(sanitizeMcpResponse(record[0]), 200);
   },
 );
 
-/** Delete a MCP by ID (admin only) */
+/** Delete a MCP by ID (org-admin, or owner when delegated — ADR-0006) */
 mcp.delete(
   "/:mcpId",
   requireAuth,
   requireOrgAccess(),
   requireWorkspaceAccess,
+  requireMcpConfigAccess,
   async (c) => {
     const mcpId = c.req.param("mcpId");
+    const orgId = c.req.param("orgId")!;
     const workspaceId = c.req.param("workspaceId")!;
-    const result = await db
+
+    // A Shared MCP is deleted only from the Organization surface (ADR-0007):
+    // requireWorkspaceMutable throws NotFound (→404) when the MCP is not visible
+    // here, then Locked (→403) when it is org-scoped.
+    await requireWorkspaceMutable(db, "mcp", mcpId, {
+      orgId,
+      wsId: workspaceId,
+    });
+
+    await db
       .delete(mcpTable)
       .where(and(eq(mcpTable.id, mcpId), eq(mcpTable.workspaceId, workspaceId)))
       .returning();
-    if (result.length === 0) {
-      return c.json({ error: "MCP not found" }, 404);
-    }
     return c.json({ message: "MCP deleted" });
   },
 );
 
-/** Test MCP connection (admin only) */
+/** Test MCP connection (org-admin, or owner when delegated — ADR-0006) */
 mcp.post(
   "/test",
   requireAuth,
   requireOrgAccess(),
   requireWorkspaceAccess,
+  requireMcpConfigAccess,
   sValidator("json", mcpTestSchema),
   async (c) => {
     const data = c.req.valid("json");
@@ -281,12 +308,13 @@ mcp.post(
   },
 );
 
-/** Initiate OAuth authorization for an MCP */
+/** Initiate OAuth authorization for an MCP (org-admin, or delegated owner) */
 mcp.post(
   "/:mcpId/oauth/authorize",
   requireAuth,
   requireOrgAccess(),
   requireWorkspaceAccess,
+  requireMcpConfigAccess,
   async (c) => {
     const mcpId = c.req.param("mcpId");
     const workspaceId = c.req.param("workspaceId")!;
@@ -309,6 +337,34 @@ mcp.post(
       return c.json({ error: "MCP URL is not configured" }, 400);
     }
 
+    // `force=true` clears stored tokens before running the OAuth flow so
+    // mcpAuth always returns REDIRECT. Lets the UI offer a single-click
+    // "Reauthorize" even when Platypus still holds a valid refresh token (the
+    // SDK would otherwise silently refresh and report AUTHORIZED, which the
+    // frontend currently shows as a failure because no authorizationUrl is
+    // returned). The DCR/static `oauthClientId`/`oauthClientSecret` are
+    // preserved so the same OAuth client is reused.
+    const force = c.req.query("force") === "true";
+    if (force) {
+      await db
+        .update(mcpTable)
+        .set({
+          oauthAccessToken: null,
+          oauthRefreshToken: null,
+          oauthTokenExpiresAt: null,
+          oauthScope: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(mcpTable.id, mcpId));
+      mcpRecord[0] = {
+        ...mcpRecord[0],
+        oauthAccessToken: null,
+        oauthRefreshToken: null,
+        oauthTokenExpiresAt: null,
+        oauthScope: null,
+      };
+    }
+
     try {
       const callbackUrl = buildOAuthCallbackUrl();
       const provider = new DatabaseOAuthClientProvider(
@@ -329,8 +385,10 @@ mcp.post(
         return c.json({ authorizationUrl: authUrl.toString() });
       }
 
-      // Already authorized
-      return c.json({ message: "Already authorized" });
+      // Already authorized — refresh token still valid, SDK rotated silently.
+      // Reported as success so the frontend can treat it as a no-op rather
+      // than an error.
+      return c.json({ alreadyAuthorized: true });
     } catch (error) {
       logger.error({ error }, "OAuth authorize error");
       const errorMessage =
@@ -340,12 +398,13 @@ mcp.post(
   },
 );
 
-/** Revoke OAuth tokens for an MCP */
+/** Revoke OAuth tokens for an MCP (org-admin, or delegated owner) */
 mcp.post(
   "/:mcpId/oauth/revoke",
   requireAuth,
   requireOrgAccess(),
   requireWorkspaceAccess,
+  requireMcpConfigAccess,
   async (c) => {
     const mcpId = c.req.param("mcpId");
     const workspaceId = c.req.param("workspaceId")!;

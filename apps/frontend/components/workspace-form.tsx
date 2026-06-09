@@ -9,6 +9,7 @@ import {
   FieldDescription,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { ExpandableTextarea } from "@/components/expandable-textarea";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +27,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useResetOnChange } from "@/hooks/use-reset-on-change";
 import { useRouter } from "next/navigation";
 import { type Workspace, type Provider } from "@platypus/schemas";
 import { fetcher, parseValidationErrors, joinUrl } from "@/lib/utils";
@@ -47,7 +49,7 @@ const WorkspaceForm = ({
   orgId,
   workspaceId,
 }: WorkspaceFormProps) => {
-  const { user } = useAuth();
+  const { user, isOrgAdmin } = useAuth();
   const backendUrl = useBackendUrl();
   const router = useRouter();
   const { mutate: globalMutate } = useSWRConfig();
@@ -71,14 +73,45 @@ const WorkspaceForm = ({
   );
   const providers = providersData?.results || [];
 
-  const [formData, setFormData] = useState({
+  // Org members, used to assign an owner when creating a workspace (ADR-0008).
+  // Only admins can create workspaces and the members endpoint is admin-only.
+  const { data: membersData } = useSWR<{
+    results: { userId: string; user: { name: string; email: string } }[];
+  }>(
+    !workspaceId && user && isOrgAdmin
+      ? joinUrl(backendUrl, `/organizations/${orgId}/members`)
+      : null,
+    fetcher,
+  );
+  const members = membersData?.results || [];
+
+  // Owner options for the create form. A super-admin acting on an org they're
+  // not enrolled in (e.g. a brand-new org with no members) won't appear in
+  // /members, but the backend lets them own a workspace by defaulting to
+  // themselves (ADR-0008). Always offer the current user so the "defaults to
+  // you" default resolves to a real, selectable option.
+  const ownerOptions =
+    user && !members.some((m) => m.userId === user.id)
+      ? [
+          { userId: user.id, user: { name: user.name, email: user.email } },
+          ...members,
+        ]
+      : members;
+
+  const [formData, setFormData] = useState(() => ({
     name: "",
     context: "",
+    // Default the owner to the current user when creating. The session is
+    // usually cached, so `user` is available synchronously on first render;
+    // the useResetOnChange below covers the case where it loads later.
+    ownerId: (!workspaceId && user?.id) || ("" as string),
     taskModelProviderId: null as string | null,
     memoryExtractionProviderId: null as string | null,
     memoryEmbeddingProviderId: null as string | null,
     maxDailySummaries: 90,
-  });
+    providerSelfManagement: false,
+    mcpSelfManagement: false,
+  }));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
@@ -88,19 +121,32 @@ const WorkspaceForm = ({
   const [deleteInput, setDeleteInput] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
+  // When creating, default the owner to the current admin until they pick
+  // another member.
+  useResetOnChange(`${workspaceId ?? ""}:${user?.id ?? ""}`, () => {
+    if (!workspaceId && user) {
+      setFormData((prev) =>
+        prev.ownerId ? prev : { ...prev, ownerId: user.id },
+      );
+    }
+  });
+
+  useResetOnChange(workspace, () => {
     if (workspace) {
       setFormData({
         name: workspace.name,
         context: workspace.context || "",
+        ownerId: workspace.ownerId,
         taskModelProviderId: workspace.taskModelProviderId || null,
         memoryExtractionProviderId:
           workspace.memoryExtractionProviderId || null,
         memoryEmbeddingProviderId: workspace.memoryEmbeddingProviderId || null,
         maxDailySummaries: workspace.maxDailySummaries ?? 90,
+        providerSelfManagement: workspace.providerSelfManagement ?? false,
+        mcpSelfManagement: workspace.mcpSelfManagement ?? false,
       });
     }
-  }, [workspace]);
+  });
 
   const handleChange = (
     e:
@@ -145,11 +191,16 @@ const WorkspaceForm = ({
             memoryExtractionProviderId: formData.memoryExtractionProviderId,
             memoryEmbeddingProviderId: formData.memoryEmbeddingProviderId,
             maxDailySummaries: formData.maxDailySummaries,
+            // Admin-only; the backend strips these for non-admins (ADR-0006).
+            providerSelfManagement: formData.providerSelfManagement,
+            mcpSelfManagement: formData.mcpSelfManagement,
           }
         : {
             organizationId: orgId,
             name: formData.name,
             context: formData.context || null,
+            // ADR-0008: an admin assigns the owner; defaults to themselves.
+            ownerId: formData.ownerId || user?.id,
           };
 
       const response = await fetch(url, {
@@ -214,7 +265,7 @@ const WorkspaceForm = ({
         setIsDeleting(false);
         setIsDeleteDialogOpen(false);
       }
-    } catch (error) {
+    } catch {
       toast.error("Error deleting workspace");
       setIsDeleting(false);
       setIsDeleteDialogOpen(false);
@@ -240,6 +291,38 @@ const WorkspaceForm = ({
               <FieldError>{validationErrors.name}</FieldError>
             )}
           </Field>
+
+          {/* ADR-0008: on creation an admin assigns the workspace owner. */}
+          {!workspaceId && (
+            <Field data-invalid={!!validationErrors.ownerId}>
+              <FieldLabel htmlFor="ownerId">Owner</FieldLabel>
+              <Select
+                value={formData.ownerId || undefined}
+                onValueChange={(value) => {
+                  setFormData((prevData) => ({ ...prevData, ownerId: value }));
+                }}
+                disabled={isSubmitting}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select an owner" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ownerOptions.map((m) => (
+                    <SelectItem key={m.userId} value={m.userId}>
+                      {m.user.name || m.user.email}
+                      {m.userId === user?.id ? " (you)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                The member who will own this workspace. Defaults to you.
+              </FieldDescription>
+              {validationErrors.ownerId && (
+                <FieldError>{validationErrors.ownerId}</FieldError>
+              )}
+            </Field>
+          )}
 
           <Field data-invalid={!!validationErrors.context}>
             <ExpandableTextarea
@@ -361,7 +444,10 @@ const WorkspaceForm = ({
                 <SelectContent>
                   <SelectItem value="none">Disabled</SelectItem>
                   {providers
-                    .filter((p) => (p as any).embeddingModelId)
+                    .filter(
+                      (p) =>
+                        (p as { embeddingModelId?: string }).embeddingModelId,
+                    )
                     .map((provider) => (
                       <SelectItem key={provider.id} value={provider.id}>
                         {provider.name}
@@ -410,6 +496,66 @@ const WorkspaceForm = ({
                 <FieldError>{validationErrors.maxDailySummaries}</FieldError>
               )}
             </Field>
+          )}
+
+          {/* Delegation flags (ADR-0006) — admin-only. When off, only org
+              admins may configure the respective resource; when on, the
+              workspace owner may self-manage it. */}
+          {workspaceId && isOrgAdmin && (
+            <>
+              <Field
+                orientation="horizontal"
+                className="items-center justify-between"
+              >
+                <div>
+                  <FieldLabel htmlFor="providerSelfManagement">
+                    Owner-managed providers
+                  </FieldLabel>
+                  <FieldDescription>
+                    Let the workspace owner create and edit workspace-scoped
+                    providers. Off by default (org admins only).
+                  </FieldDescription>
+                </div>
+                <Switch
+                  id="providerSelfManagement"
+                  checked={formData.providerSelfManagement}
+                  disabled={isSubmitting}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      providerSelfManagement: checked,
+                    }))
+                  }
+                />
+              </Field>
+
+              <Field
+                orientation="horizontal"
+                className="items-center justify-between"
+              >
+                <div>
+                  <FieldLabel htmlFor="mcpSelfManagement">
+                    Owner-managed MCP servers
+                  </FieldLabel>
+                  <FieldDescription>
+                    Let the workspace owner register and authorize their own MCP
+                    servers (e.g. personal-credential integrations). Off by
+                    default (org admins only).
+                  </FieldDescription>
+                </div>
+                <Switch
+                  id="mcpSelfManagement"
+                  checked={formData.mcpSelfManagement}
+                  disabled={isSubmitting}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      mcpSelfManagement: checked,
+                    }))
+                  }
+                />
+              </Field>
+            </>
           )}
         </FieldGroup>
       </FieldSet>

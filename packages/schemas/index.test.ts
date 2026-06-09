@@ -2,11 +2,18 @@ import { describe, it, expect } from "vitest";
 import {
   organizationSchema,
   workspaceSchema,
+  workspaceCreateSchema,
   agentSchema,
   organizationCreateSchema,
+  invitationCreateSchema,
+  mcpSchema,
+  skillSchema,
+  attachmentSchema,
+  attachmentCreateSchema,
   sandboxEnvSchema,
   SANDBOX_ENV_MAX_ENTRIES,
   SANDBOX_ENV_MAX_VALUE_BYTES,
+  providerCreateSchema,
 } from "./index";
 
 describe("Organization Schema", () => {
@@ -56,6 +63,141 @@ describe("Organization Create Schema", () => {
   });
 });
 
+describe("Attachment Schema", () => {
+  it("validates a full attachment", () => {
+    const result = attachmentSchema.safeParse({
+      id: "att-1",
+      workspaceId: "ws-1",
+      resourceType: "mcp",
+      resourceId: "mcp-1",
+      createdAt: new Date(),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("validates an agent attachment", () => {
+    const result = attachmentSchema.safeParse({
+      id: "att-1",
+      workspaceId: "ws-1",
+      resourceType: "agent",
+      resourceId: "agent-1",
+      createdAt: new Date(),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown resource type", () => {
+    const result = attachmentSchema.safeParse({
+      id: "att-1",
+      workspaceId: "ws-1",
+      resourceType: "blueprint",
+      resourceId: "bp-1",
+      createdAt: new Date(),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("create schema accepts resourceType + resourceId", () => {
+    const result = attachmentCreateSchema.safeParse({
+      resourceType: "provider",
+      resourceId: "prov-1",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a skill resource type", () => {
+    const result = attachmentCreateSchema.safeParse({
+      resourceType: "skill",
+      resourceId: "skill-1",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("create schema rejects a missing resourceId", () => {
+    const result = attachmentCreateSchema.safeParse({ resourceType: "mcp" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("MCP Schema", () => {
+  const base = {
+    id: "mcp-1",
+    name: "Test MCP",
+    url: "https://mcp.example.com",
+    authType: "None" as const,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  it("accepts a workspace-scoped MCP", () => {
+    const result = mcpSchema.safeParse({ ...base, workspaceId: "ws-1" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an org-scoped MCP", () => {
+    const result = mcpSchema.safeParse({ ...base, organizationId: "org-1" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an MCP scoped to both an organization and a workspace", () => {
+    const result = mcpSchema.safeParse({
+      ...base,
+      organizationId: "org-1",
+      workspaceId: "ws-1",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an MCP scoped to neither", () => {
+    const result = mcpSchema.safeParse(base);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("Skill Schema", () => {
+  const base = {
+    id: "skill-1",
+    name: "my-skill",
+    description: "A description that is at least twenty-four chars long.",
+    body: "A skill body that is comfortably longer than the forty-eight character minimum requirement.",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  it("accepts a workspace-scoped Skill", () => {
+    const result = skillSchema.safeParse({ ...base, workspaceId: "ws-1" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an org-scoped Skill", () => {
+    const result = skillSchema.safeParse({ ...base, organizationId: "org-1" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a Skill scoped to both an organization and a workspace", () => {
+    const result = skillSchema.safeParse({
+      ...base,
+      organizationId: "org-1",
+      workspaceId: "ws-1",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a Skill scoped to neither", () => {
+    const result = skillSchema.safeParse(base);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-kebab-case name", () => {
+    const result = skillSchema.safeParse({
+      ...base,
+      workspaceId: "ws-1",
+      name: "Not Kebab",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("Workspace Schema", () => {
   it("should validate a valid workspace", () => {
     const validWorkspace = {
@@ -67,6 +209,44 @@ describe("Workspace Schema", () => {
       updatedAt: new Date(),
     };
     const result = workspaceSchema.safeParse(validWorkspace);
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("Workspace Create Schema", () => {
+  // ADR-0008: ownerId is admin-assignable but optional (defaults to caller).
+  it("accepts an optional ownerId", () => {
+    const result = workspaceCreateSchema.safeParse({
+      name: "Test Workspace",
+      organizationId: "org-1",
+      ownerId: "member-2",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("is valid without an ownerId", () => {
+    const result = workspaceCreateSchema.safeParse({
+      name: "Test Workspace",
+      organizationId: "org-1",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("Invitation Create Schema", () => {
+  // ADR-0008: invitation carries an optional Workspace name.
+  it("accepts an optional workspaceName", () => {
+    const result = invitationCreateSchema.safeParse({
+      email: "user@example.com",
+      workspaceName: "Contractor Sandbox",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("is valid with just an email", () => {
+    const result = invitationCreateSchema.safeParse({
+      email: "user@example.com",
+    });
     expect(result.success).toBe(true);
   });
 });
@@ -103,6 +283,37 @@ describe("Agent Schema", () => {
     };
     const result = agentSchema.safeParse(agentWithOptionals);
     expect(result.success).toBe(true);
+  });
+});
+
+describe("Provider Create Schema", () => {
+  const baseProvider = {
+    organizationId: "org-123",
+    name: "Test Provider",
+    providerType: "OpenAI" as const,
+    apiKey: "sk-test",
+    modelIds: ["gpt-4"],
+    taskModelId: "gpt-4",
+    memoryExtractionModelId: "gpt-4",
+  };
+
+  it("defaults nativeSearchEnabled to true when omitted", () => {
+    const result = providerCreateSchema.safeParse(baseProvider);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.nativeSearchEnabled).toBe(true);
+    }
+  });
+
+  it("preserves nativeSearchEnabled when explicitly set to false", () => {
+    const result = providerCreateSchema.safeParse({
+      ...baseProvider,
+      nativeSearchEnabled: false,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.nativeSearchEnabled).toBe(false);
+    }
   });
 });
 

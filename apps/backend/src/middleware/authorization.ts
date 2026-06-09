@@ -160,34 +160,13 @@ export const requireWorkspaceAccess = createMiddleware(async (c, next) => {
   const orgMembership = c.get("orgMembership");
 
   const workspaceId = c.req.param("workspaceId");
+  const orgId = c.req.param("orgId");
 
   if (!workspaceId) {
     return c.json({ error: "Workspace ID required" }, 400);
   }
 
-  // Super admins bypass all checks but still check ownership
-  if (isSuperAdmin(user)) {
-    const [ws] = await db
-      .select()
-      .from(workspaceTable)
-      .where(eq(workspaceTable.id, workspaceId))
-      .limit(1);
-
-    if (!ws) {
-      return c.json({ error: "Workspace not found" }, 404);
-    }
-
-    const isOwner = ws.ownerId === user.id;
-    c.set("isWorkspaceOwner", isOwner);
-    const parent = c.get("orgScope");
-    if (parent) {
-      c.set("workspaceScope", workspaceScope(parent, workspaceId, isOwner));
-    }
-    await next();
-    return;
-  }
-
-  // Fetch workspace to check ownership
+  // Fetch the workspace once for every role branch below.
   const [ws] = await db
     .select()
     .from(workspaceTable)
@@ -198,9 +177,29 @@ export const requireWorkspaceAccess = createMiddleware(async (c, next) => {
     return c.json({ error: "Workspace not found" }, 404);
   }
 
+  // Cross-org guard: the workspace must belong to the organization named in
+  // the path. Without this, an admin (or super admin) of org A who knows a
+  // workspace id in org B could operate on it via /organizations/A/workspaces/B.
+  // Reply 404 (not 403) so we don't leak the existence of other orgs' workspaces.
+  // Applies uniformly to the member, org-admin, and super-admin branches below.
+  if (orgId && ws.organizationId !== orgId) {
+    return c.json({ error: "Workspace not found" }, 404);
+  }
+
   const isOwner = ws.ownerId === user.id;
 
-  // Org admins have access to all workspaces
+  // Super admins bypass ownership checks but still record ownership.
+  if (isSuperAdmin(user)) {
+    c.set("isWorkspaceOwner", isOwner);
+    const parent = c.get("orgScope");
+    if (parent) {
+      c.set("workspaceScope", workspaceScope(parent, workspaceId, isOwner));
+    }
+    await next();
+    return;
+  }
+
+  // Org admins have access to all workspaces in their organization.
   if (orgMembership.role === "admin") {
     c.set("isWorkspaceOwner", isOwner);
     const parent = c.get("orgScope");
@@ -223,6 +222,78 @@ export const requireWorkspaceAccess = createMiddleware(async (c, next) => {
   }
   await next();
 });
+
+/**
+ * Middleware that gates configuration of credential- and reach-bearing
+ * resources (Providers, Sandboxes, MCPs) per ADR-0006.
+ *
+ * **Prerequisites:**
+ * - Must run AFTER `requireOrgAccess` and `requireWorkspaceAccess` (relies on
+ *   `orgMembership` and `isWorkspaceOwner` in context).
+ *
+ * **Access Control:**
+ * - Super admins and org admins always pass.
+ * - A non-admin Workspace Owner passes only when a `delegationFlag` is supplied
+ *   AND that boolean column is `true` on the workspace row. Without a flag, the
+ *   resource is admin-only and never delegatable (e.g. Sandboxes).
+ *
+ * @param delegationFlag - Optional workspace column that, when true, lets the
+ *                         owner self-manage this resource. Omit for admin-only.
+ *
+ * @example
+ * ```typescript
+ * // Sandbox: admin-only, never delegatable
+ * sandbox.post("/", requireAuth, requireOrgAccess(), requireWorkspaceAccess, requireWorkspaceConfigAccess(), handler);
+ *
+ * // MCP: admin by default, owner if the workspace flag is set
+ * mcp.post("/", requireAuth, requireOrgAccess(), requireWorkspaceAccess, requireWorkspaceConfigAccess("mcpSelfManagement"), handler);
+ * ```
+ */
+export const requireWorkspaceConfigAccess = (
+  delegationFlag?: "providerSelfManagement" | "mcpSelfManagement",
+) =>
+  createMiddleware(async (c, next) => {
+    const user = c.get("user");
+    const orgMembership = c.get("orgMembership");
+
+    // Super admins and org admins always manage credential-bearing config.
+    if (isSuperAdmin(user) || orgMembership?.role === "admin") {
+      await next();
+      return;
+    }
+
+    // Past requireWorkspaceAccess, a non-admin can only be the workspace owner.
+    if (!c.get("isWorkspaceOwner")) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+
+    if (!delegationFlag) {
+      return c.json(
+        { error: "Only an organization admin can configure this resource" },
+        403,
+      );
+    }
+
+    const db = c.get("db");
+    const workspaceId = c.req.param("workspaceId");
+    const [ws] = await db
+      .select({ flag: workspaceTable[delegationFlag] })
+      .from(workspaceTable)
+      .where(eq(workspaceTable.id, workspaceId!))
+      .limit(1);
+
+    if (!ws?.flag) {
+      return c.json(
+        {
+          error:
+            "Self-management of this resource is not enabled for this workspace",
+        },
+        403,
+      );
+    }
+
+    await next();
+  });
 
 /**
  * Middleware that restricts access to super admins only.

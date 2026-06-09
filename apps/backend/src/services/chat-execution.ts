@@ -10,6 +10,7 @@ import {
   sandbox as sandboxTable,
   skill as skillTable,
   workspace as workspaceTable,
+  attachment as attachmentTable,
 } from "../db/schema.ts";
 import { getToolSet } from "../tools/index.ts";
 import { createLoadSkillTool } from "../tools/skill.ts";
@@ -177,7 +178,11 @@ export type ToolActivityEvent = {
  */
 export type ChatTurnQueries = {
   getWorkspace(id: string): Promise<WorkspaceRow | null>;
-  getAgent(id: string, workspaceId: string): Promise<AgentRow | null>;
+  getAgent(
+    id: string,
+    orgId: string,
+    workspaceId: string,
+  ): Promise<AgentRow | null>;
   getProvider(
     id: string,
     orgId: string,
@@ -185,9 +190,14 @@ export type ChatTurnQueries = {
   ): Promise<Provider | null>;
   getSkillsByIds(
     ids: string[],
+    orgId: string,
     workspaceId: string,
   ): Promise<Array<Pick<Skill, "name" | "description">>>;
-  getMcp(id: string, workspaceId: string): Promise<McpRow | null>;
+  getMcp(
+    id: string,
+    orgId: string,
+    workspaceId: string,
+  ): Promise<McpRow | null>;
   getSubAgentsByIds(ids: string[]): Promise<AgentRow[]>;
   getUserContexts(
     userId: string,
@@ -204,6 +214,29 @@ export type ChatTurnQueries = {
   getSandboxEnvKeys(workspaceId: string): Promise<string[]>;
 };
 
+/**
+ * Whether an org-scoped Shared resource is attached to the given workspace
+ * (ADR-0007). Org-scoped resources resolve at Chat-turn time only where attached.
+ */
+const isAttached = async (
+  resourceType: "mcp" | "provider" | "skill" | "agent",
+  resourceId: string,
+  workspaceId: string,
+): Promise<boolean> => {
+  const rows = await db
+    .select()
+    .from(attachmentTable)
+    .where(
+      and(
+        eq(attachmentTable.workspaceId, workspaceId),
+        eq(attachmentTable.resourceType, resourceType),
+        eq(attachmentTable.resourceId, resourceId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+};
+
 export const drizzleChatTurnQueries: ChatTurnQueries = {
   async getWorkspace(id) {
     const rows = await db
@@ -214,15 +247,34 @@ export const drizzleChatTurnQueries: ChatTurnQueries = {
     return rows[0] ?? null;
   },
 
-  async getAgent(id, workspaceId) {
+  async getAgent(id, orgId, workspaceId) {
+    // Resolve an Agent at either scope: the invoking workspace, or the
+    // organization (a Shared Agent — ADR-0007).
     const rows = await db
       .select()
       .from(agentTable)
       .where(
-        and(eq(agentTable.id, id), eq(agentTable.workspaceId, workspaceId)),
+        and(
+          eq(agentTable.id, id),
+          or(
+            eq(agentTable.workspaceId, workspaceId),
+            eq(agentTable.organizationId, orgId),
+          ),
+        ),
       )
       .limit(1);
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    // A Shared Agent runs only in a Workspace it is attached to (ADR-0007); its
+    // Sandbox/MCP tools still rebind to that invoking Workspace via loadTools.
+    if (
+      row.organizationId &&
+      !row.workspaceId &&
+      !(await isAttached("agent", id, workspaceId))
+    ) {
+      return null;
+    }
+    return row;
   },
 
   async getProvider(id, orgId, workspaceId) {
@@ -239,12 +291,23 @@ export const drizzleChatTurnQueries: ChatTurnQueries = {
         ),
       )
       .limit(1);
-    return (rows[0] as Provider) ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    // An org-scoped (Shared) Provider resolves only where attached (ADR-0007).
+    if (
+      row.organizationId &&
+      !row.workspaceId &&
+      !(await isAttached("provider", id, workspaceId))
+    ) {
+      return null;
+    }
+    return row as Provider;
   },
 
-  async getSkillsByIds(ids, workspaceId) {
+  async getSkillsByIds(ids, orgId, workspaceId) {
     if (ids.length === 0) return [];
-    return db
+    // Workspace-scoped Skills referenced by the Agent.
+    const workspaceSkills = await db
       .select({ name: skillTable.name, description: skillTable.description })
       .from(skillTable)
       .where(
@@ -253,15 +316,59 @@ export const drizzleChatTurnQueries: ChatTurnQueries = {
           inArray(skillTable.id, ids),
         ),
       );
+
+    // Org-scoped (Shared) Skills resolve only where attached (ADR-0007) — gate
+    // by an inner join on the Attachment table for the invoking workspace.
+    const orgSkills = await db
+      .select({ name: skillTable.name, description: skillTable.description })
+      .from(skillTable)
+      .innerJoin(
+        attachmentTable,
+        and(
+          eq(attachmentTable.resourceId, skillTable.id),
+          eq(attachmentTable.resourceType, "skill"),
+          eq(attachmentTable.workspaceId, workspaceId),
+        ),
+      )
+      .where(
+        and(eq(skillTable.organizationId, orgId), inArray(skillTable.id, ids)),
+      );
+
+    // A workspace-scoped Skill wins a name collision with an attached org-scoped
+    // one, matching loadSkill's workspace-first resolution — so the advertised
+    // list and the tool agree on which body the model loads, with no duplicate
+    // entry in the system prompt.
+    const seen = new Set(workspaceSkills.map((s) => s.name));
+    return [...workspaceSkills, ...orgSkills.filter((s) => !seen.has(s.name))];
   },
 
-  async getMcp(id, workspaceId) {
+  async getMcp(id, orgId, workspaceId) {
+    // Resolve an MCP referenced by an Agent's tool sets at either scope: the
+    // invoking workspace, or the organization (a Shared MCP — ADR-0007).
     const rows = await db
       .select()
       .from(mcpTable)
-      .where(and(eq(mcpTable.id, id), eq(mcpTable.workspaceId, workspaceId)))
+      .where(
+        and(
+          eq(mcpTable.id, id),
+          or(
+            eq(mcpTable.workspaceId, workspaceId),
+            eq(mcpTable.organizationId, orgId),
+          ),
+        ),
+      )
       .limit(1);
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    // An org-scoped (Shared) MCP resolves only where attached (ADR-0007).
+    if (
+      row.organizationId &&
+      !row.workspaceId &&
+      !(await isAttached("mcp", id, workspaceId))
+    ) {
+      return null;
+    }
+    return row;
   },
 
   async getSubAgentsByIds(ids) {
@@ -293,14 +400,33 @@ export const drizzleChatTurnQueries: ChatTurnQueries = {
 
   async getSandboxEnvKeys(workspaceId) {
     const rows = await db
-      .select({ env: sandboxTable.env })
+      .select({
+        adminEnv: sandboxTable.adminEnv,
+        userEnv: sandboxTable.userEnv,
+      })
       .from(sandboxTable)
       .where(eq(sandboxTable.workspaceId, workspaceId))
       .limit(1);
     if (rows.length === 0) return [];
-    return Object.keys(rows[0].env ?? {});
+    // Union of both tiers; the orientation block lists keys only (ADR-0004).
+    return Object.keys({ ...rows[0].userEnv, ...rows[0].adminEnv });
   },
 };
+
+/**
+ * Whether the provider's native web_search tool should be injected for this
+ * turn. True only when the request opted into search AND the provider hasn't
+ * disabled native search. This is the authority over the chat search toggle:
+ * it covers both the raw-model and agent paths and ignores a stale client that
+ * still sends `search: true` for a provider whose native search was turned off
+ * (#167). `nativeSearchEnabled` is undefined for legacy provider rows, which is
+ * treated as enabled.
+ */
+export const shouldInjectNativeSearch = (
+  requestedSearch: boolean | undefined,
+  provider: Pick<Provider, "nativeSearchEnabled">,
+): boolean =>
+  Boolean(requestedSearch) && provider.nativeSearchEnabled !== false;
 
 // --- Public Module: prepare a Chat turn ---
 
@@ -339,7 +465,7 @@ export const prepareChatTurn = async (
 
   const context = await resolveChatContext(
     queries,
-    request as ChatSubmitData,
+    request,
     orgId,
     workspaceId,
   );
@@ -357,7 +483,7 @@ export const prepareChatTurn = async (
     sandboxEnvKeys,
   ] = await Promise.all([
     loadTools(queries, agent, workspaceId, orgId, frontendUrl, user.id),
-    loadSkills(queries, agent, workspaceId),
+    loadSkills(queries, agent, orgId, workspaceId),
     loadSubAgents(queries, agent, orgId, workspaceId, frontendUrl, onActivity),
     queries.getUserContexts(user.id, workspaceId),
     queries.getRecentMemories(user.id, workspaceId),
@@ -366,7 +492,7 @@ export const prepareChatTurn = async (
 
   const allMcpClients = [...mcpClients, ...subAgentMcpClients];
 
-  if (request.search) {
+  if (shouldInjectNativeSearch(request.search, provider)) {
     Object.assign(tools, opened.searchTools?.() ?? {});
   }
 
@@ -390,13 +516,13 @@ export const prepareChatTurn = async (
   };
 
   const generation = resolveGenerationConfig(
-    request as ChatSubmitData,
+    request,
     agent,
     promptCtx,
   );
 
   if (skills.length > 0) {
-    tools.loadSkill = createLoadSkillTool(workspaceId);
+    tools.loadSkill = createLoadSkillTool(orgId, workspaceId);
   }
 
   const heartbeat = onActivity ? createToolHeartbeat(onActivity) : null;
@@ -595,7 +721,7 @@ const wrapToolsWithBump = (
         finish();
         return result;
       },
-    } as Tool;
+    };
   }
   return wrapped;
 };
@@ -616,7 +742,7 @@ const resolveChatContext = async (
 
   if (agentId) {
     resolvedAgentId = agentId;
-    const found = await queries.getAgent(agentId, workspaceId);
+    const found = await queries.getAgent(agentId, orgId, workspaceId);
     if (!found) throw new NotFoundError(`Agent '${agentId}' not found`);
     agent = found;
     resolvedProviderId = agent.providerId;
@@ -690,14 +816,25 @@ const loadTools = async (
       Object.assign(tools, resolvedTools);
     } catch {
       // Static tool set not found — fall back to MCP lookup.
-      const mcp = await queries.getMcp(toolSetId, workspaceId);
+      const mcp = await queries.getMcp(toolSetId, orgId, workspaceId);
       if (mcp && mcp.url) {
-        const mcpClient = await createMCPClient({
-          transport: buildMcpTransportConfig(mcp),
-        });
-        const mcpTools = await mcpClient.tools();
-        Object.assign(tools, mcpTools);
-        mcpClients.push(mcpClient);
+        // An unreachable MCP must fail soft: log a warning and contribute no
+        // tools, rather than throwing and killing the whole Chat turn. A Shared
+        // (org-scoped) MCP has org-wide blast radius, so a single down server
+        // must not break every attached Workspace's chats at once (ADR-0007).
+        try {
+          const mcpClient = await createMCPClient({
+            transport: buildMcpTransportConfig(mcp),
+          });
+          const mcpTools = await mcpClient.tools();
+          Object.assign(tools, mcpTools);
+          mcpClients.push(mcpClient);
+        } catch (error) {
+          logger.warn(
+            { error, mcpId: mcp.id, scope: mcp.organizationId ? "org" : "ws" },
+            `MCP '${toolSetId}' is unreachable; skipping its tools`,
+          );
+        }
       } else if (mcp) {
         logger.warn(`MCP '${toolSetId}' has no URL configured`);
       } else {
@@ -739,10 +876,11 @@ const resolveGenerationConfig = (
 const loadSkills = async (
   queries: ChatTurnQueries,
   agent: AgentRow | undefined,
+  orgId: string,
   workspaceId: string,
 ): Promise<Array<Pick<Skill, "name" | "description">>> => {
   if (!agent?.skillIds || agent.skillIds.length === 0) return [];
-  return queries.getSkillsByIds(agent.skillIds, workspaceId);
+  return queries.getSkillsByIds(agent.skillIds, orgId, workspaceId);
 };
 
 const loadSubAgents = async (

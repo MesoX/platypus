@@ -58,6 +58,10 @@ export const provider = pgTable(
     organization: t.text("organization"),
     project: t.text("project"),
     apiMode: t.text("api_mode").notNull().default("responses"),
+    nativeSearchEnabled: t
+      .boolean("native_search_enabled")
+      .notNull()
+      .default(true),
     modelIds: t.jsonb().$type<string[]>().notNull(),
     taskModelId: t.text("task_model_id").notNull(),
     memoryExtractionModelId: t.text("memory_extraction_model_id").notNull(),
@@ -108,6 +112,18 @@ export const workspace = pgTable(
       .text("memory_embedding_provider_id")
       .references(() => provider.id, { onDelete: "set null" }),
     maxDailySummaries: t.integer("max_daily_summaries").default(90),
+
+    // Per-workspace delegation flags (ADR-0006). When true, the workspace
+    // owner may self-manage the respective credential/reach-bearing resource
+    // without org-admin. Settable only by an org admin. Default false.
+    providerSelfManagement: t
+      .boolean("provider_self_management")
+      .notNull()
+      .default(false),
+    mcpSelfManagement: t
+      .boolean("mcp_self_management")
+      .notNull()
+      .default(false),
 
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
     updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
@@ -170,12 +186,18 @@ export const agent = pgTable(
   "agent",
   (t) => ({
     id: t.text("id").primaryKey(),
-    workspaceId: t
-      .text("workspace_id")
-      .notNull()
-      .references(() => workspace.id, {
+    // An Agent is scoped to either an Organization or a Workspace (mutually
+    // exclusive), mirroring the dual-scope shape of `provider`/`mcp`/`skill`.
+    // Org-scoped Agents are Shared resources managed by Org Admins (ADR-0007);
+    // the XOR is enforced in the Zod schema and by the routes/Promote action.
+    organizationId: t
+      .text("organization_id")
+      .references(() => organization.id, {
         onDelete: "cascade",
       }),
+    workspaceId: t.text("workspace_id").references(() => workspace.id, {
+      onDelete: "cascade",
+    }),
     providerId: t
       .text("provider_id")
       .notNull()
@@ -203,7 +225,11 @@ export const agent = pgTable(
   }),
   (t) => [
     index("idx_agent_workspace_id").on(t.workspaceId),
+    index("idx_agent_organization_id").on(t.organizationId),
     index("idx_agent_provider_id").on(t.providerId),
+    // Shared Agents must have unique names within an Organization so Promote
+    // surfaces a clean conflict. Workspace Agent names stay unconstrained.
+    unique("unique_agent_name_org").on(t.organizationId, t.name),
   ],
 );
 
@@ -211,12 +237,18 @@ export const mcp = pgTable(
   "mcp",
   (t) => ({
     id: t.text("id").primaryKey(),
-    workspaceId: t
-      .text("workspace_id")
-      .notNull()
-      .references(() => workspace.id, {
+    // An MCP is scoped to either an Organization or a Workspace (mutually
+    // exclusive), mirroring the dual-scope shape of `provider`. Org-scoped MCPs
+    // are Shared resources managed by Org Admins (ADR-0007); the XOR is enforced
+    // in the Zod schema and by the create routes.
+    organizationId: t
+      .text("organization_id")
+      .references(() => organization.id, {
         onDelete: "cascade",
       }),
+    workspaceId: t.text("workspace_id").references(() => workspace.id, {
+      onDelete: "cascade",
+    }),
     name: t.text("name").notNull(),
     url: t.text("url"),
     headers: t.jsonb("headers").$type<Record<string, string>>(),
@@ -234,7 +266,12 @@ export const mcp = pgTable(
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
     updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
   }),
-  (t) => [index("idx_mcp_workspace_id").on(t.workspaceId)],
+  (t) => [
+    index("idx_mcp_workspace_id").on(t.workspaceId),
+    index("idx_mcp_organization_id").on(t.organizationId),
+    unique("unique_mcp_name_org").on(t.organizationId, t.name),
+    unique("unique_mcp_name_workspace").on(t.workspaceId, t.name),
+  ],
 );
 
 export const mcpOauthState = pgTable(
@@ -251,6 +288,113 @@ export const mcpOauthState = pgTable(
     expiresAt: t.timestamp("expires_at").notNull(),
   }),
   (t) => [index("idx_mcp_oauth_state_mcp_id").on(t.mcpId)],
+);
+
+// Attachment — the explicit reference that makes an Organization-scoped Shared
+// resource appear inside a specific Workspace (ADR-0007). Polymorphic by design:
+// `resourceType` + `resourceId` point at an org-scoped resource (today an `mcp`
+// or `provider`; extensible to Agents/Skills and Blueprints). `resourceId` has no
+// FK — the relationship is enforced in application code, and deletion of a Shared
+// resource is blocked while any Attachment exists rather than cascaded. The
+// `workspace_id` FK cascades so a deleted Workspace drops its attachments.
+export const attachment = pgTable(
+  "attachment",
+  (t) => ({
+    id: t.text("id").primaryKey(),
+    workspaceId: t
+      .text("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    resourceType: t
+      .text("resource_type")
+      .$type<"mcp" | "provider" | "skill" | "agent">()
+      .notNull(),
+    resourceId: t.text("resource_id").notNull(),
+    createdAt: t.timestamp("created_at").notNull().defaultNow(),
+  }),
+  (t) => [
+    index("idx_attachment_workspace").on(t.workspaceId, t.resourceType),
+    // Drives the deletion guard ("is this resource attached anywhere?")
+    index("idx_attachment_resource").on(t.resourceType, t.resourceId),
+    unique("unique_attachment").on(t.workspaceId, t.resourceType, t.resourceId),
+  ],
+);
+
+// Blueprint — a named, Organization-scoped macro that, applied to a Workspace,
+// creates the Attachments for a chosen set of Shared resources in one step
+// (ADR-0008). It is a snapshot, not a living binding: applying stamps
+// Attachments at that moment; later edits never disturb already-provisioned
+// Workspaces. Blueprints are always org-scoped (no dual scope) and managed only
+// by Org Admins.
+export const blueprint = pgTable(
+  "blueprint",
+  (t) => ({
+    id: t.text("id").primaryKey(),
+    organizationId: t
+      .text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: t.text("name").notNull(),
+    description: t.text("description"),
+
+    // Tier 2 pointer-settings (ADR-0008): the Workspace settings a Blueprint
+    // stamps on apply, mirroring the Workspace's own columns. All three provider
+    // references must be org-scoped (Shared) — enforced in the route. `context`
+    // is the default Workspace context text. Deleting a referenced provider sets
+    // these null (SET NULL), matching the Workspace's pointer-setting behavior;
+    // the blueprint_item deletion guard does not cover Tier 2 references.
+    taskModelProviderId: t
+      .text("task_model_provider_id")
+      .references(() => provider.id, { onDelete: "set null" }),
+    memoryExtractionProviderId: t
+      .text("memory_extraction_provider_id")
+      .references(() => provider.id, { onDelete: "set null" }),
+    memoryEmbeddingProviderId: t
+      .text("memory_embedding_provider_id")
+      .references(() => provider.id, { onDelete: "set null" }),
+    context: t.text("context"),
+
+    createdAt: t.timestamp("created_at").notNull().defaultNow(),
+    updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
+  }),
+  (t) => [
+    index("idx_blueprint_organization_id").on(t.organizationId),
+    unique("unique_blueprint_name_org").on(t.organizationId, t.name),
+  ],
+);
+
+// The Shared resources a Blueprint provisions. Mirrors `attachment`: polymorphic
+// `resourceType` + `resourceId` pointing at an org-scoped resource, no FK on
+// `resourceId` (the relationship is enforced in application code, and deletion
+// of a Shared resource is blocked while any Blueprint lists it rather than
+// cascaded). The `blueprint_id` FK cascades so deleting a Blueprint drops its
+// items.
+export const blueprintItem = pgTable(
+  "blueprint_item",
+  (t) => ({
+    id: t.text("id").primaryKey(),
+    blueprintId: t
+      .text("blueprint_id")
+      .notNull()
+      .references(() => blueprint.id, { onDelete: "cascade" }),
+    resourceType: t
+      .text("resource_type")
+      .$type<"mcp" | "provider" | "skill" | "agent">()
+      .notNull(),
+    resourceId: t.text("resource_id").notNull(),
+    createdAt: t.timestamp("created_at").notNull().defaultNow(),
+  }),
+  (t) => [
+    index("idx_blueprint_item_blueprint").on(t.blueprintId),
+    // Drives the extended deletion guard ("is this resource listed in any
+    // Blueprint?")
+    index("idx_blueprint_item_resource").on(t.resourceType, t.resourceId),
+    unique("unique_blueprint_item").on(
+      t.blueprintId,
+      t.resourceType,
+      t.resourceId,
+    ),
+  ],
 );
 
 export const sandbox = pgTable(
@@ -275,7 +419,20 @@ export const sandbox = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
-    env: t.jsonb("env").$type<Record<string, string>>().notNull().default({}),
+    // Workspace-default env split into two precedence tiers (ADR-0004 amendment,
+    // ADR-0006): adminEnv is org-admin-managed and wins; userEnv is
+    // workspace-owner-managed. Merge order at exec: adminEnv ▸ userEnv ▸
+    // model-provided input.env.
+    adminEnv: t
+      .jsonb("admin_env")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    userEnv: t
+      .jsonb("user_env")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
     updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
   }),
@@ -336,6 +493,9 @@ export const invitation = pgTable(
       .notNull()
       .references(() => user.id),
     status: t.text("status").notNull().default("pending"), // pending | accepted | declined | expired
+    // Optional name for the Workspace provisioned on accept (ADR-0008). Null
+    // defaults to "<member name>'s Workspace" at accept time.
+    workspaceName: t.text("workspace_name"),
     expiresAt: t.timestamp("expires_at").notNull(),
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
   }),
@@ -346,16 +506,52 @@ export const invitation = pgTable(
   ],
 );
 
+// The ordered set of Blueprints an invitation carries (ADR-0009). On accept,
+// each Blueprint's macro runs in `position` order against the freshly
+// provisioned Workspace. Mirrors `blueprint_item`: `position` makes order
+// first-class, and the real `blueprint_id` FK powers the deletion guard
+// (a Blueprint cannot be deleted while a live pending invitation references it).
+// Both FKs cascade — deleting an invitation or a (legitimately deletable)
+// Blueprint cleans up the junction rows.
+export const invitationBlueprint = pgTable(
+  "invitation_blueprint",
+  (t) => ({
+    id: t.text("id").primaryKey(),
+    invitationId: t
+      .text("invitation_id")
+      .notNull()
+      .references(() => invitation.id, { onDelete: "cascade" }),
+    blueprintId: t
+      .text("blueprint_id")
+      .notNull()
+      .references(() => blueprint.id, { onDelete: "cascade" }),
+    position: t.integer("position").notNull(),
+    createdAt: t.timestamp("created_at").notNull().defaultNow(),
+  }),
+  (t) => [
+    index("idx_invitation_blueprint_invitation").on(t.invitationId),
+    // Drives the deletion guard ("is this Blueprint referenced by an invite?")
+    index("idx_invitation_blueprint_blueprint").on(t.blueprintId),
+    unique("unique_invitation_blueprint").on(t.invitationId, t.blueprintId),
+  ],
+);
+
 export const skill = pgTable(
   "skill",
   (t) => ({
     id: t.text("id").primaryKey(),
-    workspaceId: t
-      .text("workspace_id")
-      .notNull()
-      .references(() => workspace.id, {
+    // A Skill is scoped to either an Organization or a Workspace (mutually
+    // exclusive), mirroring the dual-scope shape of `provider`/`mcp`. Org-scoped
+    // Skills are Shared resources managed by Org Admins (ADR-0007); the XOR is
+    // enforced in the Zod schema and by the create routes.
+    organizationId: t
+      .text("organization_id")
+      .references(() => organization.id, {
         onDelete: "cascade",
       }),
+    workspaceId: t.text("workspace_id").references(() => workspace.id, {
+      onDelete: "cascade",
+    }),
     name: t.text("name").notNull(),
     description: t.text("description").notNull(),
     body: t.text("body").notNull(),
@@ -364,7 +560,9 @@ export const skill = pgTable(
   }),
   (t) => [
     index("idx_skill_workspace_id").on(t.workspaceId),
+    index("idx_skill_organization_id").on(t.organizationId),
     unique("unique_skill_name_workspace").on(t.workspaceId, t.name),
+    unique("unique_skill_name_org").on(t.organizationId, t.name),
   ],
 );
 

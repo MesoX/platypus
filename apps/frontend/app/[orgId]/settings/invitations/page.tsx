@@ -4,7 +4,11 @@ import { useParams } from "next/navigation";
 import { InvitationForm } from "@/components/invitation-form";
 import { fetcher, joinUrl } from "@/lib/utils";
 import { useBackendUrl } from "@/app/client-context";
-import { type InvitationListItem, type Organization } from "@platypus/schemas";
+import {
+  type InvitationListItem,
+  type Organization,
+  type Blueprint,
+} from "@platypus/schemas";
 import { Button } from "@/components/ui/button";
 import { Trash2, Mail } from "lucide-react";
 import { toast } from "sonner";
@@ -44,6 +48,16 @@ const OrgInvitationsPage = () => {
       : null,
     fetcher,
   );
+  // Map blueprint id → name so the table can show what each invite provisions.
+  const { data: blueprintsData } = useSWR<{ results: Blueprint[] }>(
+    backendUrl && user
+      ? joinUrl(backendUrl, `/organizations/${orgId}/blueprints`)
+      : null,
+    fetcher,
+  );
+  const blueprintNameById = new Map(
+    (blueprintsData?.results ?? []).map((b) => [b.id, b.name]),
+  );
 
   const [invitationToDelete, setInvitationToDelete] = useState<string | null>(
     null,
@@ -69,7 +83,7 @@ const OrgInvitationsPage = () => {
       } else {
         toast.error("Failed to delete invitation");
       }
-    } catch (error) {
+    } catch {
       toast.error("Error deleting invitation");
     } finally {
       setIsDeleting(false);
@@ -149,6 +163,8 @@ const OrgInvitationsPage = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Email</TableHead>
+                    <TableHead>Workspace</TableHead>
+                    <TableHead>Blueprints</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Expires</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -158,6 +174,21 @@ const OrgInvitationsPage = () => {
                   {data?.results.map((invite) => (
                     <TableRow key={invite.id}>
                       <TableCell>{invite.email}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {invite.workspaceName || (
+                          <span className="italic">Member&apos;s name</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {invite.blueprintIds &&
+                        invite.blueprintIds.length > 0 ? (
+                          invite.blueprintIds
+                            .map((id) => blueprintNameById.get(id) ?? id)
+                            .join(", ")
+                        ) : (
+                          <span className="italic">None</span>
+                        )}
+                      </TableCell>
                       <TableCell>{getStatusBadge(invite.status)}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {format(new Date(invite.expiresAt), "MMM d, yyyy")}

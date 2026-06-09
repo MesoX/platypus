@@ -32,17 +32,22 @@ export const ModelSelectorTrigger = (props: ModelSelectorTriggerProps) => (
 
 export type ModelSelectorContentProps = ComponentProps<typeof DialogContent> & {
   title?: ReactNode;
+  filter?: ComponentProps<typeof Command>["filter"];
 };
 
 export const ModelSelectorContent = ({
   className,
   children,
   title = "Model Selector",
+  filter,
   ...props
 }: ModelSelectorContentProps) => (
   <DialogContent className={cn("p-0", className)} {...props}>
     <DialogTitle className="sr-only">{title}</DialogTitle>
-    <Command className="**:data-[slot=command-input-wrapper]:h-auto">
+    <Command
+      className="**:data-[slot=command-input-wrapper]:h-auto"
+      filter={filter}
+    >
       {children}
     </Command>
   </DialogContent>
@@ -170,6 +175,9 @@ export const ModelSelectorLogo = ({
   className,
   ...props
 }: ModelSelectorLogoProps) => (
+  // External SVG logo from models.dev; serving via the Next image optimizer
+  // would require whitelisting the host and dangerouslyAllowSVG.
+  // eslint-disable-next-line @next/next/no-img-element
   <img
     {...props}
     alt={`${provider} logo`}
