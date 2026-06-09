@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **settled spec** (passed 4 review rounds) · Branch target: `feature/context-compaction`
+Status: **chunks 1-2 implemented & reviewed** (spec passed 4 review rounds; code reviewed 2026-06-09 — see Implementation status §) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -8,6 +8,102 @@ Status: **settled spec** (passed 4 review rounds) · Branch target: `feature/con
 > before coding and again at PR time. Do not re-derive the happy path and skip
 > the failure modes; they are written down precisely so we do not drift into them
 > twice.
+
+## Implementation status & code review — chunks 1-2 (reviewed 2026-06-09)
+
+Chunks **1** (window resolution + single estimator + schema) and **2** (compaction
+module + `writeWatermark` CAS + Tier 1) are landed on `feature/context-compaction`
+(post main v1.95.0 merge). Backend tests: 1037 pass; chunk 1-2 unit tests:
+context-window 20, token-estimate 14, compaction (CAS/budget/pairing/invalidation)
+all green. Source `tsc --noEmit` clean for these files. This section is the
+**start point for chunk 3** — read it before coding.
+
+### Solid / verified
+
+- **CAS durable writer (P3 / R1 / T10)** — the hardest part is correct and
+  well-tested. Single versioned writer (`commitWatermark`→`casWrite`,
+  `compaction.ts:84-160`); all three mutations (advance / dirty-clear / C4 reset)
+  route through it; loser decides by **version** not watermark value; one-retry-
+  then-skip, no livelock. No field write bypasses it.
+- **C2 hysteresis, C3 budget, C4 invalidation, M1 map-reduce primitive, T7
+  summarizer fallback** — VERIFIED in `compaction.ts`.
+- **C4 wiring** — VERIFIED. By design there is no separate edit/delete/regenerate
+  endpoint; the client resubmits the full array, so invalidation is correctly
+  detected at submit (`chat-execution.ts` `affectedBelowWatermark`→
+  `invalidateCompaction`). The earlier "never invoked" worry does NOT apply.
+- **Schema / migration / zod / lazy-rollout** — VERIFIED. Columns additive +
+  nullable/defaulted; migration `0047_context_compaction.sql` matches schema;
+  `modelMeta` optional in all variants; `contextSummary`/`summaryWatermark` kept
+  out of chatSubmit/chatUpdate (server-managed); no eager backfill job.
+- **Tier 1 gating (plan M3)** — VERIFIED. `request.id ? applyTier1IfNeeded : skip`;
+  triggers (`{agentId,search}`, no id) and sub-agents (bypass `prepareChatTurn`)
+  skip Tier 1; best-effort try/catch never breaks a turn (P4).
+- **`compactModelMessages` Tier 2 adapter** — fully implemented + tested (NOT a
+  stub). Recovery (chunk 3) and Tier 2 (chunk 4) can call it directly.
+
+### Defects to fix (ordered by impact)
+
+1. **C1 — trigger under-counts (HIGH).** `compaction.ts:719`
+   `projected = estimate(afterWatermark) + priorSummaryTokens` — omits the prior
+   turn's provider `usage.inputTokens` AND the system prompt / tool schemas / skill
+   payload sent every turn. `Tier1Input` has no `lastInputTokens` field; the call
+   site (`chat-execution.ts:537`) passes none. This is the live-test under-count
+   (8888 real vs ~986 estimated) — trigger can silently never fire on tool-bearing
+   agents; only recovery (chunk 3) catches the overflow. Same root issue as the
+   **§Open trigger-estimator scope** note below.
+2. **Empty litellm registry + alias map in prod (HIGH, compounding).**
+   `context-window.ts:285,389` — the production singleton injects an empty registry
+   loader and empty alias map, so every non-API provider (OpenAI/Anthropic/Bedrock)
+   resolves to `DEFAULT_CONTEXT_WINDOW = 8192`. The budget math is therefore
+   wrong-defaulted for those providers today. Must vendor litellm
+   `model_prices_and_context_window.json` + build the alias map and wire them in.
+3. **M2 — first-turn ×1.15 margin absent (MED).** `compaction.ts:719` applies no
+   cold-start inflation; a char/4 under-count can keep turn-1 from triggering.
+4. **`summarizerWindow` not threaded (MED).** `chat-execution.ts:537` calls
+   `applyTier1Compaction` without `summarizerWindow`, so the M1 map-reduce path is
+   dead in the wired flow — a large cold-start/imported history can overflow the
+   summarizer call itself.
+5. **T5 evict not wired (MED).** `routes/provider.ts:126` updates a provider
+   (incl. `modelMeta`) without `contextWindowResolver.evict(providerId)`; window
+   cache serves stale values until TTL.
+6. **Window cache pins transient failures (MED).** `context-window.ts:324` caches
+   `source:"default"`/MISS results for the full TTL (1h); one API blip pins 8192.
+   Don't cache default-source results (or use a short TTL).
+7. **Latent T2 violation (LOW).** `token-estimate.ts:352` `case "content"`
+   `stableStringify`s tool-output base64 image bytes into char/4 text. No current
+   tool emits this shape; fix before any tool returns `content`-type media.
+8. **Latent T1 divergence (LOW).** `token-estimate.ts:318` the UI adapter folds the
+   full tool output, but a tool with custom `toModelOutput` (e.g. the sub-agent
+   tool) is collapsed on the model side → UI vs Model counts differ. Untested; add
+   a `toModelOutput` fixture.
+9. **Doc bug.** `token-estimate.ts` header claims "every later turn uses the real
+   provider count" — false; char/4 is used every turn (ties to C1). Fix the comment
+   when C1 is plumbed.
+10. **Observability metrics absent (across both chunks).** No `cas.conflict` (gates
+    whether R4 ever needs fixing), `context_window.fell_to_default`,
+    `litellm.key_miss`, `compaction.fired`, `summarize.latency_ms`, etc. Logs only.
+11. **Low:** litellm family heuristic lacks a key-boundary check
+    (`context-window.ts:126`); Bedrock-ARN path not lowercased (`:118`); dead
+    `default: return ""` in the output switch (`token-estimate.ts:357`).
+
+### Drift-checklist deltas (vs the table at the bottom)
+
+`C1` → **MISSING** (defect 1). `M2` → **MISSING** (defect 3). `T3` → **PARTIAL**
+(consumer wired; producer = chunk 3). `R4` → **PARTIAL** (window present & correctly
+unfixed, but the gating `cas.conflict` metric is missing). Everything else listed
+above → VERIFIED. `T5` → module hook present, **PATCH-handler call missing** (defect 5).
+
+### Chunk 3 (Recovery) — hand-off is clean
+
+`applyTier1Compaction` already honors `state.compactionDirty` as a force-trigger and
+clears it inside the same CAS write. Chunk 3 only needs the **producer** in
+`agent-runner.ts`: `isContextOverflowError` (per-provider 400/413 body matrix, drift
+T9), retry-once via `compactModelMessages` (NOT a bespoke trim, drift T3), and set
+`compactionDirty=true` through `commitWatermark`. Recommend folding the **C1 fix**
+(thread prior-turn `usage.inputTokens` + system/tool payload into the projection)
+into the same chunk or the §H usage-metadata chunk, since recovery makes provider
+`usage` available — without C1, recovery is the only thing standing between a
+tool-bearing agent and a hard overflow.
 
 ## Goal
 
@@ -531,9 +627,13 @@ Emit metrics (not just logs):
 ## Sequencing
 
 1. Window resolution + single estimator + schema (`modelMeta`, `version`,
-   `compactionDirty`, summary/watermark) — foundation.
+   `compactionDirty`, summary/watermark) — foundation. **✅ DONE** (open defects:
+   empty prod registry, T5 evict, cache-pins-default — see Review §).
 2. Compaction module + `writeWatermark` CAS + Tier 1 (cross-turn, persist).
-3. Recovery (overflow detect + retry-once + dirty flag).
+   **✅ DONE** (open defects: C1 trigger under-count, M2 margin, summarizerWindow
+   not threaded — see Review §).
+3. Recovery (overflow detect + retry-once + dirty flag). **← NEXT** (hand-off ready;
+   fold in the C1 fix — see Review §).
 4. Tier 2 (`prepareStep`, in-memory).
 5. Sub-agent wiring (Tier 2 only).
 6. Frontend usage metadata + ring (§H).
@@ -562,7 +662,10 @@ enhancement. Each step independently testable.
   by one-retry-then-skip. **Do NOT fix now.** Gated on the `cas.conflict` metric;
   if it shows repeated waste, move the version read to just-before-write or take a
   short advisory lock for the summarize window.
-- **Trigger estimator scope — possible bug, flagged from live test 2026-06-03.**
+- **Trigger estimator scope — CONFIRMED bug (drift C1), see Review § defect 1.**
+  Originally flagged from live test 2026-06-03; the 2026-06-09 code review confirmed
+  it is unfixed in chunk 2 (`compaction.ts:719`, no `lastInputTokens` plumbing).
+  Promote from "possible" to a chunk-3 must-fix.
   Tier 1's projection in `compaction.ts` only estimates `messages` (char/4 over
   the stored UIMessages). System prompt, tool schemas, skill prompts, and
   sub-agent context — all sent to the model on every turn — are invisible to the
