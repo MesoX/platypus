@@ -422,7 +422,7 @@ function pruneModelMessage(
     }
     return part;
   });
-  return { ...message, content } as ModelMessage;
+  return { ...message, content };
 }
 
 function renderModelMessages(messages: ModelMessage[]): string {

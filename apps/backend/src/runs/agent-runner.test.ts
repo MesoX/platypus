@@ -369,7 +369,7 @@ describe("withToolTimestamps", () => {
       toolName: "foo",
       input: { x: 1 },
       ...overrides,
-    }) as UIMessageChunk;
+    });
 
   it("injects startedAt on tool-input-available chunks", async () => {
     const { stream } = withToolTimestamps(
@@ -401,13 +401,13 @@ describe("withToolTimestamps", () => {
 
   it("passes other chunks through unchanged", async () => {
     const chunks: UIMessageChunk[] = [
-      { type: "text-delta", id: "a", delta: "hello" } as UIMessageChunk,
+      { type: "text-delta", id: "a", delta: "hello" },
       {
         type: "tool-output-available",
         toolCallId: "t1",
         output: { ok: true },
-      } as UIMessageChunk,
-      { type: "finish", finishReason: "stop" } as UIMessageChunk,
+      },
+      { type: "finish", finishReason: "stop" },
     ];
 
     const { stream } = withToolTimestamps(sourceOf(chunks), () => FIXED_NOW);
@@ -424,7 +424,7 @@ describe("withToolTimestamps", () => {
           type: "tool-output-available",
           toolCallId: "t1",
           output: { ok: true },
-        } as UIMessageChunk,
+        },
       ]),
       () => FIXED_NOW,
     );
@@ -442,7 +442,7 @@ describe("withToolTimestamps", () => {
           type: "tool-output-error",
           toolCallId: "t1",
           errorText: "boom",
-        } as UIMessageChunk,
+        },
       ]),
       () => FIXED_NOW,
     );
@@ -460,21 +460,21 @@ describe("withToolTimestamps", () => {
       await vi.importActual<typeof import("ai")>("ai");
 
     const chunks: UIMessageChunk[] = [
-      { type: "start", messageId: "m1" } as UIMessageChunk,
-      { type: "start-step" } as UIMessageChunk,
+      { type: "start", messageId: "m1" },
+      { type: "start-step" },
       {
         type: "tool-input-available",
         toolCallId: "call_xyz",
         toolName: "foo",
         input: { a: 1 },
-      } as UIMessageChunk,
+      },
       {
         type: "tool-output-available",
         toolCallId: "call_xyz",
         output: { ok: true },
-      } as UIMessageChunk,
-      { type: "finish-step" } as UIMessageChunk,
-      { type: "finish" } as UIMessageChunk,
+      },
+      { type: "finish-step" },
+      { type: "finish" },
     ];
 
     const { stream, completions } = withToolTimestamps(
@@ -485,9 +485,9 @@ describe("withToolTimestamps", () => {
 
     let lastMessage: { parts?: Array<Record<string, unknown>> } | undefined;
     for await (const message of readUIMessageStream({ stream: forSnapshot })) {
-      lastMessage = message as typeof lastMessage;
+      lastMessage = message;
     }
-    await collect(forResponse as ReadableStream<UIMessageChunk>);
+    await collect(forResponse);
 
     expect(completions.get("call_xyz")).toBe(FIXED_NOW);
 

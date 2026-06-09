@@ -23,11 +23,7 @@ import {
   retrieveRecentSummaries,
   type MemorySummary,
 } from "./memory-retrieval.ts";
-import type {
-  ChatSubmitData as ChatSubmitDataSchema,
-  Provider,
-  Skill,
-} from "@platypus/schemas";
+import type { Provider, Skill } from "@platypus/schemas";
 import { generateText, type Tool } from "ai";
 import { logger } from "../logger.ts";
 import { buildMcpTransportConfig } from "./mcp-oauth-provider.ts";
@@ -97,7 +93,20 @@ type GenerationConfig = {
   skills?: Array<Pick<Skill, "name" | "description">>;
 };
 
-type ChatSubmitData = {
+/**
+ * The slim request shape `prepareChatTurn` actually consumes: agent/provider
+ * selection plus generation overrides. Distinct from `@platypus/schemas`'
+ * `ChatSubmitData` (the HTTP payload, which also carries id/workspaceId/
+ * messages) — those arrive as separate `PrepareChatTurnInput` fields.
+ */
+export type ChatTurnRequest = {
+  /**
+   * Chat id. Present for interactive chat turns (the chatSubmit payload);
+   * absent for headless callers (triggers, sub-agents) whose `request` carries
+   * no chat. Tier 1 compaction keys on it — see the skip guard in
+   * `prepareChatTurn` (plan M3: headless runs are Tier 2 only).
+   */
+  id?: string;
   agentId?: string;
   providerId?: string;
   modelId?: string;
@@ -144,7 +153,7 @@ export type PrepareChatTurnInput = {
   orgId: string;
   workspaceId: string;
   user: { id: string; name: string };
-  request: ChatSubmitDataSchema;
+  request: ChatTurnRequest;
   messages: PlatypusUIMessage[];
   /**
    * Used to rewrite `storage://` URLs in messages to absolute HTTP URLs so
@@ -690,14 +699,19 @@ export const prepareChatTurn = async (
   // --- Tier 1 context compaction (ADR-0009) ---
   // Best-effort: a failure here must never break the turn — recovery (§E) is the
   // net. Runs AFTER inlineFileUrls so the estimate sees the real payload (T2).
-  const compactedMessages = await applyTier1IfNeeded({
-    chatId: request.id,
-    provider,
-    resolvedModelId,
-    agent,
-    opened,
-    messages: inlinedMessages,
-  });
+  // Tier 1 is cross-turn durable compaction keyed by chat id. Headless runs
+  // (triggers, sub-agents) carry no chat id and have no durable history to
+  // compact (plan M3 — they are Tier 2 only), so send messages uncompacted.
+  const compactedMessages = request.id
+    ? await applyTier1IfNeeded({
+        chatId: request.id,
+        provider,
+        resolvedModelId,
+        agent: agent ?? null,
+        opened,
+        messages: inlinedMessages,
+      })
+    : inlinedMessages;
 
   return {
     stream: {
@@ -871,7 +885,7 @@ const wrapToolsWithBump = (
 
 const resolveChatContext = async (
   queries: ChatTurnQueries,
-  data: ChatSubmitData,
+  data: ChatTurnRequest,
   orgId: string,
   workspaceId: string,
 ): Promise<ChatContext> => {
@@ -992,7 +1006,7 @@ const loadTools = async (
 };
 
 const resolveGenerationConfig = (
-  data: ChatSubmitData,
+  data: ChatTurnRequest,
   agent: AgentRow | undefined,
   promptCtx: SystemPromptContext,
 ): GenerationConfig => {
