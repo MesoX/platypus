@@ -111,6 +111,7 @@ export const buildMcpTransportConfig = (mcp: McpRecord) => {
   if (mcp.authType === "OAuth" && mcp.oauthAccessToken) {
     const callbackUrl = buildOAuthCallbackUrl();
     config.authProvider = new DatabaseOAuthClientProvider(mcp, callbackUrl);
+    config.fetch = oauthFetchFn;
     if (Object.keys(customHeaders).length > 0) {
       config.headers = customHeaders;
     }

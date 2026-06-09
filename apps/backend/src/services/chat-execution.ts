@@ -548,6 +548,21 @@ async function applyTier1IfNeeded(
   }
 }
 
+/**
+ * Whether the provider's native web_search tool should be injected for this
+ * turn. True only when the request opted into search AND the provider hasn't
+ * disabled native search. This is the authority over the chat search toggle:
+ * it covers both the raw-model and agent paths and ignores a stale client that
+ * still sends `search: true` for a provider whose native search was turned off
+ * (#167). `nativeSearchEnabled` is undefined for legacy provider rows, which is
+ * treated as enabled.
+ */
+export const shouldInjectNativeSearch = (
+  requestedSearch: boolean | undefined,
+  provider: Pick<Provider, "nativeSearchEnabled">,
+): boolean =>
+  Boolean(requestedSearch) && provider.nativeSearchEnabled !== false;
+
 // --- Public Module: prepare a Chat turn ---
 
 /**
@@ -585,7 +600,7 @@ export const prepareChatTurn = async (
 
   const context = await resolveChatContext(
     queries,
-    request as ChatSubmitData,
+    request,
     orgId,
     workspaceId,
   );
@@ -612,7 +627,7 @@ export const prepareChatTurn = async (
 
   const allMcpClients = [...mcpClients, ...subAgentMcpClients];
 
-  if (request.search) {
+  if (shouldInjectNativeSearch(request.search, provider)) {
     Object.assign(tools, opened.searchTools?.() ?? {});
   }
 
@@ -635,11 +650,7 @@ export const prepareChatTurn = async (
     runMode,
   };
 
-  const generation = resolveGenerationConfig(
-    request as ChatSubmitData,
-    agent,
-    promptCtx,
-  );
+  const generation = resolveGenerationConfig(request, agent, promptCtx);
 
   if (skills.length > 0) {
     tools.loadSkill = createLoadSkillTool(orgId, workspaceId);
@@ -853,7 +864,7 @@ const wrapToolsWithBump = (
         finish();
         return result;
       },
-    } as Tool;
+    };
   }
   return wrapped;
 };

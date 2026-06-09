@@ -15,6 +15,7 @@ import {
   SANDBOX_ENV_MAX_VALUE_BYTES,
   providerSchema,
   providerUpdateSchema,
+  providerCreateSchema,
   chatSchema,
 } from "./index";
 
@@ -425,6 +426,37 @@ describe("Agent compaction config (context-compaction §G)", () => {
   it("rejects a negative keepRecentMessages", () => {
     const result = agentSchema.safeParse({ ...base, keepRecentMessages: -1 });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("Provider Create Schema", () => {
+  const baseProvider = {
+    organizationId: "org-123",
+    name: "Test Provider",
+    providerType: "OpenAI" as const,
+    apiKey: "sk-test",
+    modelIds: ["gpt-4"],
+    taskModelId: "gpt-4",
+    memoryExtractionModelId: "gpt-4",
+  };
+
+  it("defaults nativeSearchEnabled to true when omitted", () => {
+    const result = providerCreateSchema.safeParse(baseProvider);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.nativeSearchEnabled).toBe(true);
+    }
+  });
+
+  it("preserves nativeSearchEnabled when explicitly set to false", () => {
+    const result = providerCreateSchema.safeParse({
+      ...baseProvider,
+      nativeSearchEnabled: false,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.nativeSearchEnabled).toBe(false);
+    }
   });
 });
 

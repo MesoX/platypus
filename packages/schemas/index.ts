@@ -512,6 +512,70 @@ export const attachmentCreateSchema = attachmentBaseSchema.pick({
 });
 export type AttachmentCreateData = z.infer<typeof attachmentCreateSchema>;
 
+// Blueprint — a named, Organization-scoped macro that, applied to a Workspace,
+// creates the Attachments for a chosen set of Shared resources in one step
+// (ADR-0008). It is a snapshot, not a living binding: applying stamps
+// Attachments at that moment; later edits never disturb already-provisioned
+// Workspaces. A Blueprint may only list org-scoped (Shared) resources, so its
+// items reuse the Attachment resource-type set.
+
+const blueprintItemSchema = z.object({
+  resourceType: attachmentResourceTypeSchema,
+  resourceId: z.string(),
+});
+export type BlueprintItem = z.infer<typeof blueprintItemSchema>;
+
+const blueprintBaseSchema = z.object({
+  id: z.string(),
+  organizationId: z.string(),
+  name: z.string().min(3).max(100),
+  description: z.string().max(500).nullable().optional(),
+  // The Shared resources this Blueprint provisions. Deduped/validated by the
+  // route; each must be an org-scoped resource in the same organization.
+  items: z.array(blueprintItemSchema),
+  // Tier 2 pointer-settings (ADR-0008) stamped onto the Workspace on apply.
+  // The three provider references must be org-scoped (Shared) — validated by
+  // the route. `context` is the default Workspace context text. All optional;
+  // a null/omitted slot leaves the Workspace's existing value untouched.
+  taskModelProviderId: z.string().nullable().optional(),
+  memoryExtractionProviderId: z.string().nullable().optional(),
+  memoryEmbeddingProviderId: z.string().nullable().optional(),
+  context: z.string().max(1000).nullable().optional(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export const blueprintSchema = blueprintBaseSchema;
+export type Blueprint = z.infer<typeof blueprintSchema>;
+
+export const blueprintCreateSchema = blueprintBaseSchema.pick({
+  name: true,
+  description: true,
+  items: true,
+  taskModelProviderId: true,
+  memoryExtractionProviderId: true,
+  memoryEmbeddingProviderId: true,
+  context: true,
+});
+export type BlueprintCreateData = z.infer<typeof blueprintCreateSchema>;
+
+export const blueprintUpdateSchema = blueprintBaseSchema.pick({
+  name: true,
+  description: true,
+  items: true,
+  taskModelProviderId: true,
+  memoryExtractionProviderId: true,
+  memoryEmbeddingProviderId: true,
+  context: true,
+});
+export type BlueprintUpdateData = z.infer<typeof blueprintUpdateSchema>;
+
+// Apply a Blueprint to an existing Workspace (admin only, ad-hoc re-apply).
+export const blueprintApplySchema = z.object({
+  workspaceId: z.string(),
+});
+export type BlueprintApplyData = z.infer<typeof blueprintApplySchema>;
+
 // Provider
 
 export const providerApiModeSchema = z.enum(["chat", "responses"]);
@@ -554,6 +618,11 @@ const providerBaseSchema = z.object({
   organization: z.string().optional(),
   project: z.string().optional(),
   apiMode: providerApiModeSchema.default("responses"),
+  // When false, the provider's native web_search tool is never injected and the
+  // chat search toggle is hidden. Defaults to true so existing providers keep
+  // their built-in search. See issue #167 — provides a path to disable native
+  // search for OpenAI-compatible endpoints (e.g. vLLM) that can't honor it.
+  nativeSearchEnabled: z.boolean().default(true),
   modelIds: z.array(z.string()).min(1),
   taskModelId: z.string(),
   memoryExtractionModelId: z.string(),
@@ -611,6 +680,7 @@ export const providerCreateSchema = providerBaseSchema.pick({
   organization: true,
   project: true,
   apiMode: true,
+  nativeSearchEnabled: true,
   modelIds: true,
   taskModelId: true,
   memoryExtractionModelId: true,
@@ -712,6 +782,10 @@ export const invitationSchema = z.object({
     .max(WORKSPACE_NAME_MAX_LENGTH)
     .nullable()
     .optional(),
+  // The ordered set of Blueprints applied to the provisioned Workspace on
+  // accept (ADR-0009). Stored in the invitation_blueprint junction; surfaced
+  // here in `position` order on reads.
+  blueprintIds: z.array(z.string()).optional(),
   expiresAt: z.date(),
   createdAt: z.date(),
 });
@@ -721,6 +795,7 @@ export type Invitation = z.infer<typeof invitationSchema>;
 export const invitationCreateSchema = invitationSchema.pick({
   email: true,
   workspaceName: true,
+  blueprintIds: true,
 });
 
 export const invitationListItemSchema = invitationSchema.extend({
@@ -741,6 +816,7 @@ export const providerUpdateSchema = providerBaseSchema.pick({
   organization: true,
   project: true,
   apiMode: true,
+  nativeSearchEnabled: true,
   modelIds: true,
   taskModelId: true,
   memoryExtractionModelId: true,

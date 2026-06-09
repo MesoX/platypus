@@ -1,5 +1,5 @@
 {
-  "id": "067940dd-f706-46cd-9c06-bc9e1a0c8281",
+  "id": "bdf4b196-f743-467d-b265-239199ff88c9",
   "prevId": "0bfe794b-8681-4b8e-bb76-6eb83712ecdf",
   "version": "7",
   "dialect": "postgresql",
@@ -2163,12 +2163,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "agent_run_settings": {
-          "name": "agent_run_settings",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -2384,6 +2378,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'responses'"
+        },
+        "native_search_enabled": {
+          "name": "native_search_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
         },
         "modelIds": {
           "name": "modelIds",

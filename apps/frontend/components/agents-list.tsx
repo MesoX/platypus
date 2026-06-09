@@ -438,6 +438,9 @@ export const AgentsList = ({
               <Item variant="outline" className="h-full items-stretch">
                 {agent.avatarUrl ? (
                   <ItemMedia variant="image" className="size-12 rounded-lg">
+                    {/* Agent avatar URL is user-supplied (arbitrary host); not
+                    routable through the Next image optimizer. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={agent.avatarUrl}
                       alt={agent.name}
@@ -539,7 +542,7 @@ export const AgentsList = ({
                     <Link
                       href={`/${orgId}/workspace/${workspaceId}/chat?agentId=${agent.id}`}
                     >
-                      <BotMessageSquare /> New Chat
+                      <BotMessageSquare /> New chat
                     </Link>
                   </Button>
                   {hasMenu(agent) && (
@@ -564,7 +567,7 @@ export const AgentsList = ({
                     <Link
                       href={`/${orgId}/workspace/${workspaceId}/chat?agentId=${agent.id}`}
                     >
-                      <BotMessageSquare /> New Chat
+                      <BotMessageSquare /> New chat
                     </Link>
                   </Button>
                   {hasMenu(agent) && (
@@ -593,7 +596,7 @@ export const AgentsList = ({
       <div className="mt-4 flex gap-2">
         <Button variant="outline" asChild>
           <Link href={`/${orgId}/workspace/${workspaceId}/agents/create`}>
-            <Plus /> Create Agent
+            <Plus /> Create agent
           </Link>
         </Button>
         {canManageShared && (

@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockDb, mockSession, resetMockDb } from "../test-utils.ts";
 import app from "../server.ts";
+import { deleteAvatar } from "../services/avatar.ts";
+
+vi.mock("../services/avatar.ts", () => ({
+  storeAvatar: vi.fn(),
+  deleteAvatar: vi.fn(),
+}));
 
 describe("Organization Agent Routes", () => {
   beforeEach(() => {
@@ -137,7 +143,8 @@ describe("Organization Agent Routes", () => {
       mockSession();
       mockDb.limit
         .mockResolvedValueOnce([{ role: "admin" }]) // requireOrgAccess
-        .mockResolvedValueOnce([]); // attachment guard: none
+        .mockResolvedValueOnce([]) // attachment guard: none
+        .mockResolvedValueOnce([]); // blueprint guard: none
       mockDb.returning.mockResolvedValueOnce([{ id: "agent-1" }]);
 
       const res = await app.request(`${baseUrl}/agent-1`, { method: "DELETE" });
@@ -145,11 +152,37 @@ describe("Organization Agent Routes", () => {
       expect(await res.json()).toEqual({ message: "Agent deleted" });
     });
 
+    it("removes the deleted agent's avatar from storage", async () => {
+      mockSession();
+      mockDb.limit
+        .mockResolvedValueOnce([{ role: "admin" }]) // requireOrgAccess
+        .mockResolvedValueOnce([]) // attachment guard: none
+        .mockResolvedValueOnce([]); // blueprint guard: none
+      mockDb.returning.mockResolvedValueOnce([
+        { id: "agent-1", avatarKey: "agents/agent-1/avatar-x.webp" },
+      ]);
+
+      const res = await app.request(`${baseUrl}/agent-1`, { method: "DELETE" });
+      expect(res.status).toBe(200);
+      expect(deleteAvatar).toHaveBeenCalledWith("agents/agent-1/avatar-x.webp");
+    });
+
     it("returns 409 when the agent is attached to a workspace", async () => {
       mockSession();
       mockDb.limit
         .mockResolvedValueOnce([{ role: "admin" }]) // requireOrgAccess
         .mockResolvedValueOnce([{ id: "att-1" }]); // attachment guard: attached
+
+      const res = await app.request(`${baseUrl}/agent-1`, { method: "DELETE" });
+      expect(res.status).toBe(409);
+    });
+
+    it("returns 409 when the agent is listed in a blueprint", async () => {
+      mockSession();
+      mockDb.limit
+        .mockResolvedValueOnce([{ role: "admin" }]) // requireOrgAccess
+        .mockResolvedValueOnce([]) // attachment guard: none
+        .mockResolvedValueOnce([{ id: "bpi-1" }]); // blueprint guard: listed
 
       const res = await app.request(`${baseUrl}/agent-1`, { method: "DELETE" });
       expect(res.status).toBe(409);

@@ -82,9 +82,10 @@ describe("Organization MCP Routes", () => {
         headers: { "Content-Type": "application/json" },
       });
 
+      // The conflict now flows through the central onError (ADR-0010).
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual({
-        error: "An MCP with this name already exists in this organization",
+        error: "A resource with that name already exists",
       });
     });
   });
@@ -132,7 +133,8 @@ describe("Organization MCP Routes", () => {
       mockSession();
       mockDb.limit
         .mockResolvedValueOnce([{ role: "admin" }]) // requireOrgAccess
-        .mockResolvedValueOnce([]); // attachment guard: none
+        .mockResolvedValueOnce([]) // attachment guard: none
+        .mockResolvedValueOnce([]); // blueprint guard: none
       mockDb.returning.mockResolvedValueOnce([{ id: "mcp-1" }]);
 
       const res = await app.request(`${baseUrl}/mcp-1`, { method: "DELETE" });
@@ -145,6 +147,17 @@ describe("Organization MCP Routes", () => {
       mockDb.limit
         .mockResolvedValueOnce([{ role: "admin" }]) // requireOrgAccess
         .mockResolvedValueOnce([{ id: "att-1" }]); // attachment guard: attached
+
+      const res = await app.request(`${baseUrl}/mcp-1`, { method: "DELETE" });
+      expect(res.status).toBe(409);
+    });
+
+    it("returns 409 when the MCP is listed in a blueprint", async () => {
+      mockSession();
+      mockDb.limit
+        .mockResolvedValueOnce([{ role: "admin" }]) // requireOrgAccess
+        .mockResolvedValueOnce([]) // attachment guard: none
+        .mockResolvedValueOnce([{ id: "bpi-1" }]); // blueprint guard: listed
 
       const res = await app.request(`${baseUrl}/mcp-1`, { method: "DELETE" });
       expect(res.status).toBe(409);

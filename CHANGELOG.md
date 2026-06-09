@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.95.0](https://github.com/willdady/platypus/compare/v1.94.0...v1.95.0) (2026-06-08)
+
+
+### Features
+
+* **docs:** add Self-Hosting section pages ([#228](https://github.com/willdady/platypus/issues/228)) ([b3d444f](https://github.com/willdady/platypus/commit/b3d444fbd9459c0dd67104dc60e97f90cf07f9d4))
+* **docs:** Extending section & Reference config pages ([#230](https://github.com/willdady/platypus/issues/230)) ([c068907](https://github.com/willdady/platypus/commit/c068907d9f3ec527dba86c02a498992341b6e6ca))
+* **docs:** Getting Started — quick start & first run ([#213](https://github.com/willdady/platypus/issues/213)) ([#227](https://github.com/willdady/platypus/issues/227)) ([76687b3](https://github.com/willdady/platypus/commit/76687b34f69ad8c6f80388413f6d9c4c77615ff0))
+* **docs:** scaffold Nextra 4 documentation site ([#206](https://github.com/willdady/platypus/issues/206)) ([#210](https://github.com/willdady/platypus/issues/210)) ([9428886](https://github.com/willdady/platypus/commit/94288869eb938aef21d6771f6627bafbce5eee06))
+* **docs:** write the Building with Platypus section ([#231](https://github.com/willdady/platypus/issues/231)) ([ee29d60](https://github.com/willdady/platypus/commit/ee29d601a68605d37bf17dee44e01c33ae0f29d3))
+* **docs:** write the Concepts section ([#212](https://github.com/willdady/platypus/issues/212)) ([#229](https://github.com/willdady/platypus/issues/229)) ([e4ebece](https://github.com/willdady/platypus/commit/e4ebece6bd65952ef93504fa14b96456d0cbe3b7))
+
+
+### Bug Fixes
+
+* **docs:** use green brand accent instead of Nextra default blue ([ce9ef19](https://github.com/willdady/platypus/commit/ce9ef19802d9df08bb2d1f376ed1e4f02a25cd70))
+
+## [1.94.0](https://github.com/willdady/platypus/compare/v1.93.0...v1.94.0) (2026-06-07)
+
+
+### Features
+
+* **backend:** migrate MCP routes onto ScopedResource ([#189](https://github.com/willdady/platypus/issues/189)) ([#196](https://github.com/willdady/platypus/issues/196)) ([c23a420](https://github.com/willdady/platypus/commit/c23a420fbccaa14c3f94cec81dd5c49c587003ae))
+* **backend:** migrate Provider routes onto ScopedResource ([#190](https://github.com/willdady/platypus/issues/190)) ([#197](https://github.com/willdady/platypus/issues/197)) ([0f999ab](https://github.com/willdady/platypus/commit/0f999ab99d8d7ee34a73b15f974726cfe6296e5b))
+* **backend:** migrate Skill routes onto ScopedResource ([#188](https://github.com/willdady/platypus/issues/188)) ([#198](https://github.com/willdady/platypus/issues/198)) ([814ffa5](https://github.com/willdady/platypus/commit/814ffa5f19bf78c3da4d2b1e815d169ed83d1e97))
+* **backend:** ScopedResource read module + typed-error seam (proven on Agent) ([#195](https://github.com/willdady/platypus/issues/195)) ([aadd822](https://github.com/willdady/platypus/commit/aadd822244be0265371e65e9d8f122c1f984a9b6))
+
+
+### Bug Fixes
+
+* **backend:** type ScopedResource registry as the real table union ([#199](https://github.com/willdady/platypus/issues/199)) ([c036a18](https://github.com/willdady/platypus/commit/c036a189acb3294a9b74b94687ebdbfc3ccf20d3))
+* **frontend:** default workspace owner to current user on create ([4ce66e1](https://github.com/willdady/platypus/commit/4ce66e18a4f7cb2330247a005da0bfb7f7a80dfd))
+* **frontend:** defer org toolbar until membership loads ([35e209b](https://github.com/willdady/platypus/commit/35e209bc93611a137cb77445df3d6504a789ce0c))
+* **frontend:** show current user as owner option on workspace create ([a41e3b9](https://github.com/willdady/platypus/commit/a41e3b95a8e6c482085285674d4921d01037ef84))
+
+## [1.93.0](https://github.com/willdady/platypus/compare/v1.92.0...v1.93.0) (2026-06-07)
+
+
+### Features
+
+* blueprints on invitations + Tier 2 workspace settings ([#192](https://github.com/willdady/platypus/issues/192)) ([9007394](https://github.com/willdady/platypus/commit/900739416aa0fa079893a60e7f1dc5e4e7b3102e))
+
+## [1.92.0](https://github.com/willdady/platypus/compare/v1.91.0...v1.92.0) (2026-06-06)
+
+
+### Features
+
+* Blueprint CRUD + apply macro (Tier 1) ([#184](https://github.com/willdady/platypus/issues/184)) ([66b9499](https://github.com/willdady/platypus/commit/66b9499e274c49df148b3b91f72d9fc6194a9e48))
+
+## [1.91.0](https://github.com/willdady/platypus/compare/v1.90.0...v1.91.0) (2026-06-06)
+
+
+### Features
+
+* **provider:** add per-provider toggle to disable native web search ([#183](https://github.com/willdady/platypus/issues/183)) ([ddeb861](https://github.com/willdady/platypus/commit/ddeb8614cc167b0d109dffb51343feac9d294696))
+
+
+### Bug Fixes
+
+* **frontend:** resolve deferred react-hooks & no-img-element lint errors ([#181](https://github.com/willdady/platypus/issues/181)) ([a938aef](https://github.com/willdady/platypus/commit/a938aefc6b423901a35b27492204d544d06d05ed))
+
 ## [1.90.0](https://github.com/willdady/platypus/compare/v1.89.1...v1.90.0) (2026-06-02)
 
 
