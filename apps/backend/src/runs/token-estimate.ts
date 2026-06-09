@@ -30,7 +30,6 @@ import type {
   FilePart,
   ToolCallPart,
   ToolResultPart,
-  ToolResultOutput,
   DataContent,
 } from "ai";
 import type { PlatypusUIMessage } from "../types.ts";
@@ -348,7 +347,7 @@ export function uiMessagesToCountUnits(
 // ---------------------------------------------------------------------------
 
 /** Extracts the model-visible string from a tool-result output wrapper. */
-function toolResultOutputText(output: ToolResultOutput): string {
+function toolResultOutputText(output: ToolResultPart["output"]): string {
   switch (output.type) {
     case "text":
     case "error-text":

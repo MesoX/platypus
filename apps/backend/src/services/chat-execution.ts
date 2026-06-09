@@ -100,6 +100,13 @@ type GenerationConfig = {
  * messages) — those arrive as separate `PrepareChatTurnInput` fields.
  */
 export type ChatTurnRequest = {
+  /**
+   * Chat id. Present for interactive chat turns (the chatSubmit payload);
+   * absent for headless callers (triggers, sub-agents) whose `request` carries
+   * no chat. Tier 1 compaction keys on it — see the skip guard in
+   * `prepareChatTurn` (plan M3: headless runs are Tier 2 only).
+   */
+  id?: string;
   agentId?: string;
   providerId?: string;
   modelId?: string;
@@ -692,14 +699,19 @@ export const prepareChatTurn = async (
   // --- Tier 1 context compaction (ADR-0009) ---
   // Best-effort: a failure here must never break the turn — recovery (§E) is the
   // net. Runs AFTER inlineFileUrls so the estimate sees the real payload (T2).
-  const compactedMessages = await applyTier1IfNeeded({
-    chatId: request.id,
-    provider,
-    resolvedModelId,
-    agent,
-    opened,
-    messages: inlinedMessages,
-  });
+  // Tier 1 is cross-turn durable compaction keyed by chat id. Headless runs
+  // (triggers, sub-agents) carry no chat id and have no durable history to
+  // compact (plan M3 — they are Tier 2 only), so send messages uncompacted.
+  const compactedMessages = request.id
+    ? await applyTier1IfNeeded({
+        chatId: request.id,
+        provider,
+        resolvedModelId,
+        agent: agent ?? null,
+        opened,
+        messages: inlinedMessages,
+      })
+    : inlinedMessages;
 
   return {
     stream: {
