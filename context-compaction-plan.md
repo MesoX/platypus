@@ -107,15 +107,35 @@ tool-bearing agent and a hard overflow.
 
 ### Branch & upstream-PR hygiene
 
-`feature/context-compaction` is the **dev** branch but it sits on the fork/deploy
-lineage (off v1.90.0, later merged with main), so it carries non-compaction commits.
-It is **NOT** a clean upstream PR base. Workflow:
+**Decided 2026-06-09. Three roles, two live branches:**
 
-- **Dev:** here, on `feature/context-compaction`.
-- **Test:** merge `feature/context-compaction` → `deploy/fresh` (shared lineage =
-  cheap), deploy `deploy/fresh` to the test server as usual.
-- **Upstream PR:** a **one-time** branch — cherry-pick the compaction-only commits
-  onto current upstream `main`. Do not PR this branch directly.
+- **`feature/context-compaction` = compaction DEV branch.** Sits on the fork/deploy
+  lineage (off v1.90.0, later merged with main v1.95.0), so it carries
+  non-compaction commits. It is **NOT** a clean upstream PR base.
+- **`deploy/fresh` = TEST/deploy target.** The test server tracks the `deploy/fresh`
+  **name** (`/srv/platypus`, compose project `platypus`; rebuilds rename back to it).
+  It also carries **deploy-runtime fixes that must NOT live in feature or the PR**
+  (MCP OAuth quirks, host routing). Do **not** deploy `feature` directly — it lacks
+  those fixes and deploying it would regress MCP OAuth + host-based URL routing.
+- **Upstream PR branch = one-time throwaway.** Cherry-pick compaction-only commits
+  onto current upstream `main` at PR time. Never PR `feature` directly.
+
+**Test cycle:** `git checkout deploy/fresh` → `git merge feature/context-compaction`
+→ deploy. Cheap (shared lineage). The old compaction on `deploy/fresh` is
+**superseded automatically** by the merge (chat-execution resolves to feature's
+version) — nothing to remove by hand. A small `chat-execution.ts` conflict is
+expected (deploy/fresh's `request.id` Tier-1 call vs feature's gated
+`ChatTurnRequest`); resolve to feature's version.
+
+**Why not collapse to one branch:** `deploy/fresh` holds deploy-runtime commits
+feature deliberately omits (see below); folding them into feature would re-pollute
+it and force a server reconfig. Keeping two branches is the lower-friction choice.
+
+**Deploy/fresh-only commits feature must NOT absorb** (deploy-runtime; keep on
+deploy/fresh, exclude from PR): `9ad424b`, `5c2fd38`, `b9e0172`, `455a390`,
+`b24f623`, `852a54a` (6 MCP OAuth runtime fixes — client_secret_post, host
+rewrites, skip resource-origin check, sync auth binding); `e26d95b`
+(backendUrl-from-Host); `4daed7a`, `43171b1` (deploy/fresh's own main merges).
 
 **EXCLUDE from the upstream PR** (fork/deploy-only or unrelated features — they
 predate the compaction work and must not leak into the diff):
