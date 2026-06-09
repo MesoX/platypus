@@ -1,6 +1,6 @@
 {
-  "id": "59070a0a-961e-4047-8ac1-6c9bd04c534e",
-  "prevId": "067940dd-f706-46cd-9c06-bc9e1a0c8281",
+  "id": "44b1a862-f636-4e44-a960-9cbc20b779cc",
+  "prevId": "bdf4b196-f743-467d-b265-239199ff88c9",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -95,42 +95,6 @@
         "frequency_penalty": {
           "name": "frequency_penalty",
           "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "compaction_enabled": {
-          "name": "compaction_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "trigger_ratio": {
-          "name": "trigger_ratio",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "target_ratio": {
-          "name": "target_ratio",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reserve_ratio": {
-          "name": "reserve_ratio",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "keep_recent_messages": {
-          "name": "keep_recent_messages",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "min_prunable_chars": {
-          "name": "min_prunable_chars",
-          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
@@ -396,6 +360,201 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.blueprint": {
+      "name": "blueprint",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_blueprint_organization_id": {
+          "name": "idx_blueprint_organization_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "blueprint_organization_id_organization_id_fk": {
+          "name": "blueprint_organization_id_organization_id_fk",
+          "tableFrom": "blueprint",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "unique_blueprint_name_org": {
+          "name": "unique_blueprint_name_org",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.blueprint_item": {
+      "name": "blueprint_item",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "blueprint_id": {
+          "name": "blueprint_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_type": {
+          "name": "resource_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_blueprint_item_blueprint": {
+          "name": "idx_blueprint_item_blueprint",
+          "columns": [
+            {
+              "expression": "blueprint_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_blueprint_item_resource": {
+          "name": "idx_blueprint_item_resource",
+          "columns": [
+            {
+              "expression": "resource_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "resource_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "blueprint_item_blueprint_id_blueprint_id_fk": {
+          "name": "blueprint_item_blueprint_id_blueprint_id_fk",
+          "tableFrom": "blueprint_item",
+          "tableTo": "blueprint",
+          "columnsFrom": [
+            "blueprint_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "unique_blueprint_item": {
+          "name": "unique_blueprint_item",
+          "nullsNotDistinct": false,
+          "columns": [
+            "blueprint_id",
+            "resource_type",
+            "resource_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.chat": {
       "name": "chat",
       "schema": "",
@@ -504,32 +663,6 @@
           "type": "real",
           "primaryKey": false,
           "notNull": false
-        },
-        "context_summary": {
-          "name": "context_summary",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "summary_watermark": {
-          "name": "summary_watermark",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "compaction_dirty": {
-          "name": "compaction_dirty",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         },
         "last_memory_processed_at": {
           "name": "last_memory_processed_at",
@@ -2225,12 +2358,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "agent_run_settings": {
-          "name": "agent_run_settings",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -2447,6 +2574,13 @@
           "notNull": true,
           "default": "'responses'"
         },
+        "native_search_enabled": {
+          "name": "native_search_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
         "modelIds": {
           "name": "modelIds",
           "type": "jsonb",
@@ -2474,12 +2608,6 @@
         "embedding_dimensions": {
           "name": "embedding_dimensions",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "model_meta": {
-          "name": "model_meta",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
