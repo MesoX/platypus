@@ -105,6 +105,36 @@ into the same chunk or the §H usage-metadata chunk, since recovery makes provid
 `usage` available — without C1, recovery is the only thing standing between a
 tool-bearing agent and a hard overflow.
 
+### Branch & upstream-PR hygiene
+
+`feature/context-compaction` is the **dev** branch but it sits on the fork/deploy
+lineage (off v1.90.0, later merged with main), so it carries non-compaction commits.
+It is **NOT** a clean upstream PR base. Workflow:
+
+- **Dev:** here, on `feature/context-compaction`.
+- **Test:** merge `feature/context-compaction` → `deploy/fresh` (shared lineage =
+  cheap), deploy `deploy/fresh` to the test server as usual.
+- **Upstream PR:** a **one-time** branch — cherry-pick the compaction-only commits
+  onto current upstream `main`. Do not PR this branch directly.
+
+**EXCLUDE from the upstream PR** (fork/deploy-only or unrelated features — they
+predate the compaction work and must not leak into the diff):
+
+- `e3ccf25` — `compose.yaml` deploy local-build edit (pure deploy)
+- `d4cd6f2` — backendUrl-from-Host (fork deploy hack)
+- `cdef399` — MCP auto-refresh on 401 + scoped quirks (separate feature)
+- `7320000`, `5cfb882` — configurable agent-run timeouts (separate feature)
+- `b1daa88` — deploy/fresh main(v1.90) merge commit
+- `759aae1` — fork docs (PROJECT.md / CLAUDE.md fork refs)
+- `b97312f`, `c18c18d`, `d194edc`, `51f69af`, `0737a6a`, `3851da6` — tool-call
+  duration / timestamps. **Borderline:** plan §I reuses this. Include ONLY if §I
+  (per-message stats) ships in the same PR; otherwise it is a separate feature.
+
+**INCLUDE** (compaction): `68cf725` (foundation+Tier 1), `d1d699e` (migration),
+`e19029c` + the chunk-1-2 fix/plan commits from this session, plus chunks 3-9.
+Note: the `0047_context_compaction` migration will need **renumbering** to match
+upstream `main`'s migration sequence at cherry-pick time.
+
 ## Goal
 
 Stop chats from hard-failing when message history exceeds a model's context
