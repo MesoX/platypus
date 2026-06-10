@@ -7,6 +7,7 @@ import { providerCreateSchema, providerUpdateSchema } from "@platypus/schemas";
 import { eq, and } from "drizzle-orm";
 import { handleEmbeddingConfigChange } from "../services/embedding-invalidation.ts";
 import { dedupeArray } from "../utils.ts";
+import { contextWindowResolver } from "../runs/context-window.ts";
 import { requireAuth } from "../middleware/authentication.ts";
 import {
   requireOrgAccess,
@@ -134,6 +135,10 @@ provider.put(
         ),
       )
       .returning();
+
+    // RV7c: bust the cached context window so a modelMeta override takes effect
+    // immediately rather than waiting out the 1-hour TTL (drift T5).
+    contextWindowResolver.evict(providerId);
 
     return c.json(record[0], 200);
   },

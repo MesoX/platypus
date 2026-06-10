@@ -519,37 +519,30 @@ async function buildCompactionRuntime(args: {
     config.compactionEnabled = false;
   }
 
-  let contextWindow = DEFAULT_CONTEXT_WINDOW;
-  let maxOutputTokens: number | undefined;
-  try {
-    const resolved = await contextWindowResolver.resolve(
-      provider,
-      resolvedModelId,
-    );
-    contextWindow = resolved.contextWindow;
-    maxOutputTokens = resolved.maxOutputTokens;
-  } catch (error) {
-    logger.error(
-      { error, chatId, resolvedModelId },
-      "context window resolution failed; using conservative default",
-    );
-  }
+  // RV7d: resolve both windows concurrently (they are independent).
+  const taskModelId = provider.taskModelId || resolvedModelId;
+  const [mainWindow, summarizerWindowResult] = await Promise.all([
+    contextWindowResolver.resolve(provider, resolvedModelId).catch((error) => {
+      logger.error(
+        { error, chatId, resolvedModelId },
+        "context window resolution failed; using conservative default",
+      );
+      return null;
+    }),
+    contextWindowResolver.resolve(provider, taskModelId).catch(() => null),
+  ]);
+
+  const contextWindow = mainWindow?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+  const maxOutputTokens = mainWindow?.maxOutputTokens;
   const budget = computeBudget(contextWindow, maxOutputTokens, config);
 
-  // The summarizer's own input budget (drift M1): a prefix larger than this is
-  // map-reduced instead of sent whole. Best-effort — undefined sends whole.
-  const taskModelId = provider.taskModelId || resolvedModelId;
-  let summarizerWindow: number | undefined;
-  try {
-    const sw = await contextWindowResolver.resolve(provider, taskModelId);
-    summarizerWindow = computeBudget(
-      sw.contextWindow,
-      sw.maxOutputTokens,
-      config,
-    ).inputBudget;
-  } catch {
-    summarizerWindow = undefined;
-  }
+  const summarizerWindow = summarizerWindowResult
+    ? computeBudget(
+        summarizerWindowResult.contextWindow,
+        summarizerWindowResult.maxOutputTokens,
+        config,
+      ).inputBudget
+    : undefined;
 
   // Summarizer uses the provider's task model, falling back to the main model
   // when unset (drift T7). generateText is one-shot, no tools.
@@ -835,7 +828,13 @@ export const prepareChatTurn = async (
   const recovery: RecoveryContext = {
     chatId,
     imageProvider: compactionRuntime.imageProvider,
-    targetTokens: compactionRuntime.budget.targetTokens,
+    // RV6: subtract the per-turn overhead so recovery uses the same effective
+    // target as Tier 1. Without this, a large overhead (e.g. 65%+ of the window)
+    // means the recovery retry still overflows even after trimming.
+    targetTokens: Math.max(
+      0,
+      compactionRuntime.budget.targetTokens - overheadTokens,
+    ),
     keepRecentMessages: compactionRuntime.config.keepRecentMessages,
     minPrunableChars: compactionRuntime.config.minPrunableChars,
     summarize: compactionRuntime.summarize,

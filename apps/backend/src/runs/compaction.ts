@@ -448,6 +448,29 @@ function pruneModelMessage(
         };
       }
     }
+    // RV5: @ai-sdk/mcp emits {type:"content"} for essentially every MCP tool
+    // result. Without this branch Stage 1 reclaims zero tokens from the bulkiest
+    // payloads and their text is invisible to the summarizer.
+    if (output.type === "content") {
+      type ContentItem = { type: string; text?: string };
+      const items = output.value as ContentItem[];
+      const text = items
+        .filter((i) => i.type === "text")
+        .map((i) => i.text ?? "")
+        .join("\n");
+      const mediaCount = items.filter((i) => i.type !== "text").length;
+      const combined =
+        mediaCount > 0 ? `${text}\n[${mediaCount} media item(s)]` : text;
+      if (combined.length > minPrunableChars) {
+        return {
+          ...part,
+          output: {
+            type: "content" as const,
+            value: [{ type: "text", text: softTrim(combined) }],
+          },
+        };
+      }
+    }
     return part;
   });
   return { ...message, content };
@@ -463,12 +486,21 @@ function renderModelMessages(messages: ModelMessage[]): string {
           if (p.type === "tool-call") return `[tool-call ${p.toolName}]`;
           if (p.type === "tool-result") {
             const o = p.output;
-            const v =
-              o.type === "text" || o.type === "error-text"
-                ? o.value
-                : o.type === "json" || o.type === "error-json"
-                  ? JSON.stringify(o.value)
-                  : "";
+            let v: string;
+            if (o.type === "text" || o.type === "error-text") {
+              v = o.value;
+            } else if (o.type === "json" || o.type === "error-json") {
+              v = JSON.stringify(o.value);
+            } else if (o.type === "content") {
+              // RV5: extract text items from content-type MCP output (RV5).
+              type ContentItem = { type: string; text?: string };
+              v = (o.value as ContentItem[])
+                .filter((i) => i.type === "text")
+                .map((i) => i.text ?? "")
+                .join("\n");
+            } else {
+              v = "";
+            }
             return `[tool-result] ${softTrim(v, 200)}`;
           }
           return "";

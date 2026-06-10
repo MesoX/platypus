@@ -121,10 +121,19 @@ export function lookupRegistry(
     if (registry[`bedrock/${bedrock}`]) return registry[`bedrock/${bedrock}`];
   }
 
-  // 6. family heuristic — longest registry key that is a prefix of the id
+  // 6. family heuristic — longest registry key that is a proper prefix of the
+  // id, separated by "-", ".", ":", or "/" so "gpt-4" does NOT match "gpt-4.5"
+  // (RV7b: raw startsWith caused gpt-4.5-preview to silently resolve via a
+  // stale gpt-4 entry with a wrong 8192 window).
   let best: { key: string; entry: RegistryEntry } | undefined;
   for (const key of Object.keys(registry)) {
-    if (stripped.startsWith(key) && (!best || key.length > best.key.length)) {
+    const isMatch =
+      stripped === key ||
+      stripped.startsWith(key + "-") ||
+      stripped.startsWith(key + ".") ||
+      stripped.startsWith(key + ":") ||
+      stripped.startsWith(key + "/");
+    if (isMatch && (!best || key.length > best.key.length)) {
       best = { key, entry: registry[key] };
     }
   }
@@ -264,8 +273,14 @@ async function detectViaApi(
 // Resolver (cache + evict)
 // ---------------------------------------------------------------------------
 
+/** RV7d: 5 s hard cap so a hung provider endpoint never blocks turns for ~300 s. */
+const API_DETECT_TIMEOUT_MS = 5000;
+
 const defaultHttpGetJson: HttpGetJson = async (url, headers) => {
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(API_DETECT_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
   return res.json();
 };
@@ -274,6 +289,8 @@ type CacheEntry = { value: ResolvedWindow; expiresAt: number };
 
 export class ContextWindowResolver {
   #cache = new Map<string, CacheEntry>();
+  /** RV7d: single-flight — concurrent callers for the same key share one fetch. */
+  #inflight = new Map<string, Promise<ResolvedWindow>>();
   #loadRegistry: () => Promise<Registry>;
   #registry: Registry | undefined;
   #aliasMap: Record<string, string>;
@@ -293,6 +310,11 @@ export class ContextWindowResolver {
   evict(providerId: string): void {
     for (const key of this.#cache.keys()) {
       if (key.startsWith(`${providerId}:`)) this.#cache.delete(key);
+    }
+    // Also cancel any in-flight fetch for this provider so the next call
+    // re-resolves with the updated modelMeta rather than caching a stale result.
+    for (const key of this.#inflight.keys()) {
+      if (key.startsWith(`${providerId}:`)) this.#inflight.delete(key);
     }
   }
 
@@ -321,9 +343,27 @@ export class ContextWindowResolver {
     const cached = this.#cache.get(cacheKey);
     if (cached && cached.expiresAt > this.#now()) return cached.value;
 
-    const value = await this.#resolveUncached(provider, modelId);
-    this.#cache.set(cacheKey, { value, expiresAt: this.#now() + this.#ttlMs });
-    return value;
+    // RV7d: single-flight — reuse an in-flight promise rather than spawning a
+    // second fetch for the same key (cold-cache stampede protection).
+    const existing = this.#inflight.get(cacheKey);
+    if (existing) return existing;
+
+    const promise = this.#resolveUncached(provider, modelId).then((value) => {
+      this.#cache.set(cacheKey, {
+        value,
+        expiresAt: this.#now() + this.#ttlMs,
+      });
+      this.#inflight.delete(cacheKey);
+      return value;
+    });
+    // Store before awaiting so concurrent callers see the same promise.
+    this.#inflight.set(cacheKey, promise);
+    try {
+      return await promise;
+    } catch (err) {
+      this.#inflight.delete(cacheKey);
+      throw err;
+    }
   }
 
   async #resolveUncached(
@@ -386,4 +426,7 @@ export class ContextWindowResolver {
 }
 
 /** Process-wide resolver. Routes use this; tests construct their own. */
-export const contextWindowResolver = new ContextWindowResolver();
+import { loadBuiltinRegistry } from "./litellm-registry.ts";
+export const contextWindowResolver = new ContextWindowResolver({
+  loadRegistry: loadBuiltinRegistry,
+});
