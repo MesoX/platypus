@@ -639,6 +639,41 @@ export function computeBudget(
   };
 }
 
+/**
+ * First-turn safety margin on the char/4 projection (drift M2): char/4
+ * under-counts CJK, dense JSON, and tool chatter, and on a cold start there is
+ * no provider-reported `usage.inputTokens` to correct it.
+ */
+export const COLD_START_MARGIN = 1.15;
+
+/**
+ * The Tier 1 trigger projection (drift C1): what THIS turn is about to put on
+ * the wire, not just the stored messages. `overheadTokens` carries the
+ * estimated system prompt + tool schemas + skill payload — invisible to a
+ * message-only estimate but sent to the model on every turn (the observed
+ * live-test gap: provider reported 8888 input tokens vs ~986 message-only).
+ * `lastInputTokens` is the provider-reported count from the prior turn — the
+ * corrective baseline for turns ≥ 2 (threaded in the §H usage-metadata chunk).
+ * When it is absent the whole char/4 projection is inflated by
+ * {@link COLD_START_MARGIN} (M2).
+ */
+export function projectTier1Tokens(args: {
+  messageTokens: number;
+  priorSummaryTokens: number;
+  overheadTokens?: number;
+  lastInputTokens?: number;
+}): number {
+  const charBased =
+    args.messageTokens + args.priorSummaryTokens + (args.overheadTokens ?? 0);
+  if (args.lastInputTokens == null) {
+    return Math.ceil(charBased * COLD_START_MARGIN);
+  }
+  // The provider count already includes overhead + the full prior history;
+  // the char-based projection covers what was added since. Take the larger —
+  // over-counting only triggers compaction earlier, never an overflow.
+  return Math.max(Math.ceil(charBased), args.lastInputTokens);
+}
+
 /** Synthetic UIMessage carrying the persisted summary, injected into the view. */
 export function summaryUIMessage(text: string): PlatypusUIMessage {
   return {
@@ -669,6 +704,15 @@ export type Tier1Input = {
   summarize: Summarize;
   store: CompactionStore;
   summarizerWindow?: number;
+  /**
+   * Estimated tokens of the per-turn payload that is NOT in `messages` —
+   * system prompt, tool schemas, skill list (drift C1). Counted toward the
+   * trigger and subtracted from the compaction target (compaction cannot
+   * shrink it, so hysteresis must leave room for it — C2).
+   */
+  overheadTokens?: number;
+  /** Provider-reported `usage.inputTokens` from the prior turn (C1, via §H). */
+  lastInputTokens?: number;
   onEvent?: (event: CompactionEvent) => void;
 };
 
@@ -716,7 +760,13 @@ export async function applyTier1Compaction(
 
   // The view that would be sent if we did nothing more this turn.
   const baseView = inject(priorSummary, afterWatermark);
-  const projected = estimate(afterWatermark) + priorSummaryTokens;
+  const overheadTokens = input.overheadTokens ?? 0;
+  const projected = projectTier1Tokens({
+    messageTokens: estimate(afterWatermark),
+    priorSummaryTokens,
+    overheadTokens,
+    lastInputTokens: input.lastInputTokens,
+  });
 
   const forceCompact = state.compactionDirty;
   const triggered =
@@ -727,8 +777,21 @@ export async function applyTier1Compaction(
     return { messages: baseView, compacted: false };
   }
 
+  // Compaction can only shrink the messages, never the per-turn overhead, so
+  // the target the messages must fit in is reduced by it (C1/C2). When the
+  // overhead alone exhausts the target, hysteresis is impossible — warn loudly
+  // (compaction will re-fire every turn) but still compact: recovery is the
+  // only other net.
+  const effectiveTarget = Math.max(0, budget.targetTokens - overheadTokens);
+  if (overheadTokens >= budget.targetTokens) {
+    logger.warn(
+      { chatId: input.chatId, overheadTokens, target: budget.targetTokens },
+      "system/tool overhead alone exceeds the compaction target — compaction will re-fire each turn",
+    );
+  }
+
   const result = await compactUIMessages(afterWatermark, {
-    targetTokens: budget.targetTokens,
+    targetTokens: effectiveTarget,
     keepRecentMessages: config.keepRecentMessages,
     minPrunableChars: config.minPrunableChars,
     imageProvider,
@@ -813,6 +876,24 @@ export function affectedBelowWatermark(
     }
   }
   return affected;
+}
+
+/**
+ * Persists `compactionDirty = true` after a context-overflow recovery (§E,
+ * drift T3). Recovery never writes summary/watermark — it only flags; the next
+ * `prepareChatTurn` sees the flag, forces Tier 1, and clears it inside the same
+ * CAS write that advances the watermark. Goes through the single writer (P3);
+ * already-dirty is a no-op.
+ */
+export async function setCompactionDirty(
+  store: CompactionStore,
+  chatId: string,
+): Promise<CommitResult> {
+  return commitWatermark(store, chatId, (state) =>
+    state.compactionDirty
+      ? { kind: "skip", reason: "no-op" }
+      : { kind: "write", patch: { dirty: true } },
+  );
 }
 
 export async function invalidateCompaction(

@@ -241,3 +241,73 @@ describe("imageProviderFor", () => {
     expect(imageProviderFor("Google")).toBe("default");
   });
 });
+
+// --- estimateOverheadTokens (drift C1) -------------------------------------
+
+import { z } from "zod";
+import { tool } from "ai";
+import { estimateOverheadTokens } from "./token-estimate.ts";
+
+describe("estimateOverheadTokens (drift C1)", () => {
+  it("counts the system prompt at char/4", () => {
+    const sys = "S".repeat(400);
+    expect(estimateOverheadTokens(sys, {})).toBe(100);
+  });
+
+  it("handles missing system prompt and tools", () => {
+    expect(estimateOverheadTokens(undefined, undefined)).toBe(0);
+  });
+
+  it("counts tool name, description, and serialized JSON schema", () => {
+    const sys = "system";
+    const base = estimateOverheadTokens(sys, {});
+    const withTool = estimateOverheadTokens(sys, {
+      searchDocuments: tool({
+        description:
+          "Searches the workspace document store and returns ranked matches.",
+        inputSchema: z.object({
+          query: z.string().describe("Full-text query string"),
+          limit: z.number().optional().describe("Maximum results to return"),
+        }),
+      }),
+    });
+    // Name + description alone are ~20 tokens; the serialized schema (with
+    // property names and descriptions) must push it well past that.
+    expect(withTool).toBeGreaterThan(base + 40);
+  });
+
+  it("falls back to a conservative flat cost for unserializable schemas", () => {
+    const tokens = estimateOverheadTokens("", {
+      weird: { description: "", inputSchema: 42 } as never,
+    });
+    // Either the fallback constant fired or some serialization succeeded —
+    // never zero, never a throw.
+    expect(tokens).toBeGreaterThanOrEqual(2); // ≥ name chars / 4
+    expect(Number.isFinite(tokens)).toBe(true);
+  });
+
+  it("scales with a realistic multi-tool agent (the 8888-vs-986 gap)", () => {
+    const sys = "You are a helpful agent.\n".repeat(40); // ~1k chars
+    const tools = Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [
+        `tool_${i}`,
+        tool({
+          description:
+            "A realistically verbose tool description explaining inputs, outputs, constraints, and error behaviour for the model.",
+          inputSchema: z.object({
+            target: z.string().describe("The resource identifier to act on"),
+            options: z
+              .object({
+                recursive: z.boolean().optional(),
+                depth: z.number().optional(),
+                filter: z.string().optional(),
+              })
+              .optional(),
+          }),
+        }),
+      ]),
+    );
+    // The point of C1: this payload is large even with a short history.
+    expect(estimateOverheadTokens(sys, tools)).toBeGreaterThan(500);
+  });
+});

@@ -30,8 +30,15 @@ import { buildMcpTransportConfig } from "./mcp-oauth-provider.ts";
 import { inlineFileUrls } from "../storage/utils.ts";
 import type { PlatypusUIMessage } from "../types.ts";
 import { chat as chatTable } from "../db/schema.ts";
-import { contextWindowResolver } from "../runs/context-window.ts";
-import { imageProviderFor } from "../runs/token-estimate.ts";
+import {
+  contextWindowResolver,
+  DEFAULT_CONTEXT_WINDOW,
+} from "../runs/context-window.ts";
+import {
+  estimateOverheadTokens,
+  imageProviderFor,
+  type ImageProvider,
+} from "../runs/token-estimate.ts";
 import {
   applyTier1Compaction,
   affectedBelowWatermark,
@@ -39,8 +46,13 @@ import {
   drizzleCompactionStore,
   invalidateCompaction,
   resolveCompactionConfig,
+  setCompactionDirty,
+  type Budget,
+  type CompactionConfig,
   type CompactionState,
+  type Summarize,
 } from "../runs/compaction.ts";
+import type { RecoveryContext } from "../runs/recovery.ts";
 
 // --- Errors ---
 
@@ -146,6 +158,12 @@ export type ChatTurn = {
     presencePenalty?: number;
     seed?: number;
   };
+  /**
+   * Context-overflow recovery wiring (§E, P4). Always present — recovery is
+   * the safety net and stays on even when proactive compaction is disabled.
+   * agent-runner wraps the model with the recovery middleware using this.
+   */
+  recovery: RecoveryContext;
   dispose: () => Promise<void>;
 };
 
@@ -459,36 +477,112 @@ async function loadPersistedMessages(
   return (rows[0]?.messages as PlatypusUIMessage[] | null) ?? [];
 }
 
-type ApplyTier1Args = {
-  chatId: string;
+/**
+ * Everything the compaction machinery needs that is resolved once per turn:
+ * the budget (from the resolved context window), the effective config, the
+ * summarizer, and the summarizer's own window (drift M1). Shared by Tier 1
+ * and the recovery middleware (§E) so the two never disagree.
+ */
+type CompactionRuntime = {
+  budget: Budget;
+  config: CompactionConfig;
+  imageProvider: ImageProvider;
+  summarize: Summarize;
+  summarizerWindow?: number;
+};
+
+/**
+ * Builds the per-turn compaction runtime. Never throws: a failed window
+ * resolution falls back to the conservative default so recovery (P4) always
+ * has a working configuration.
+ */
+async function buildCompactionRuntime(args: {
+  chatId?: string;
   provider: Provider;
   resolvedModelId: string;
   agent: AgentRow | null;
   opened: ReturnType<typeof openProvider>;
+}): Promise<CompactionRuntime> {
+  const { chatId, provider, resolvedModelId, agent, opened } = args;
+
+  const config = resolveCompactionConfig(agent);
+  // Global kill switch (§G) gates proactive compaction; recovery is unaffected.
+  if (process.env.COMPACTION_ENABLED === "false") {
+    config.compactionEnabled = false;
+  }
+
+  let contextWindow = DEFAULT_CONTEXT_WINDOW;
+  let maxOutputTokens: number | undefined;
+  try {
+    const resolved = await contextWindowResolver.resolve(
+      provider,
+      resolvedModelId,
+    );
+    contextWindow = resolved.contextWindow;
+    maxOutputTokens = resolved.maxOutputTokens;
+  } catch (error) {
+    logger.error(
+      { error, chatId, resolvedModelId },
+      "context window resolution failed; using conservative default",
+    );
+  }
+  const budget = computeBudget(contextWindow, maxOutputTokens, config);
+
+  // The summarizer's own input budget (drift M1): a prefix larger than this is
+  // map-reduced instead of sent whole. Best-effort — undefined sends whole.
+  const taskModelId = provider.taskModelId || resolvedModelId;
+  let summarizerWindow: number | undefined;
+  try {
+    const sw = await contextWindowResolver.resolve(provider, taskModelId);
+    summarizerWindow = computeBudget(
+      sw.contextWindow,
+      sw.maxOutputTokens,
+      config,
+    ).inputBudget;
+  } catch {
+    summarizerWindow = undefined;
+  }
+
+  // Summarizer uses the provider's task model, falling back to the main model
+  // when unset (drift T7). generateText is one-shot, no tools.
+  const summarize = async (text: string): Promise<string> => {
+    const { text: summary, usage } = await generateText({
+      model: opened.languageModel(taskModelId),
+      system:
+        "You compress conversation history for context reuse. Produce a dense summary capturing decisions made, facts established, files/tools touched, open questions, and the user's intent. Drop pleasantries and redundancy. Output only the summary.",
+      prompt: text,
+    });
+    logger.info({ chatId, taskModelId, usage }, "context compaction summarize");
+    return summary;
+  };
+
+  return {
+    budget,
+    config,
+    imageProvider: imageProviderFor(provider.providerType),
+    summarize,
+    summarizerWindow,
+  };
+}
+
+type ApplyTier1Args = {
+  chatId: string;
+  runtime: CompactionRuntime;
   messages: PlatypusUIMessage[];
+  /** Estimated system-prompt + tool-schema payload for this turn (drift C1). */
+  overheadTokens: number;
 };
 
 /**
- * Resolves the window, reconstructs/advances the compacted view, and persists
- * any new summary — all best-effort. Any throw degrades to the uncompacted
- * messages (recovery §E remains the safety net). Returns the message array to
- * send to the model.
+ * Reconstructs/advances the compacted view and persists any new summary — all
+ * best-effort. Any throw degrades to the uncompacted messages (recovery §E
+ * remains the safety net). Returns the message array to send to the model.
  */
 async function applyTier1IfNeeded(
   args: ApplyTier1Args,
 ): Promise<PlatypusUIMessage[]> {
-  const { chatId, provider, resolvedModelId, agent, opened, messages } = args;
+  const { chatId, runtime, messages } = args;
   try {
-    const resolvedWindow = await contextWindowResolver.resolve(
-      provider,
-      resolvedModelId,
-    );
-    const config = resolveCompactionConfig(agent);
-    // Global kill switch (§G) gates proactive compaction; recovery is unaffected.
-    if (process.env.COMPACTION_ENABLED === "false") {
-      config.compactionEnabled = false;
-    }
-
     const store = drizzleCompactionStore;
     let state = (await store.readState(chatId)) ?? EMPTY_COMPACTION_STATE;
 
@@ -511,37 +605,16 @@ async function applyTier1IfNeeded(
       }
     }
 
-    const budget = computeBudget(
-      resolvedWindow.contextWindow,
-      resolvedWindow.maxOutputTokens,
-      config,
-    );
-
-    // Summarizer uses the provider's task model, falling back to the main model
-    // when unset (drift T7). generateText is one-shot, no tools.
-    const summarize = async (text: string): Promise<string> => {
-      const taskModelId = provider.taskModelId || resolvedModelId;
-      const { text: summary, usage } = await generateText({
-        model: opened.languageModel(taskModelId),
-        system:
-          "You compress conversation history for context reuse. Produce a dense summary capturing decisions made, facts established, files/tools touched, open questions, and the user's intent. Drop pleasantries and redundancy. Output only the summary.",
-        prompt: text,
-      });
-      logger.info(
-        { chatId, taskModelId, usage },
-        "context compaction summarize",
-      );
-      return summary;
-    };
-
     const result = await applyTier1Compaction({
       chatId,
       messages,
       state,
-      budget,
-      config,
-      imageProvider: imageProviderFor(provider.providerType),
-      summarize,
+      budget: runtime.budget,
+      config: runtime.config,
+      imageProvider: runtime.imageProvider,
+      summarize: runtime.summarize,
+      summarizerWindow: runtime.summarizerWindow,
+      overheadTokens: args.overheadTokens,
       store,
       onEvent: (event) =>
         logger.info({ chatId, ...event }, "context-compacted"),
@@ -696,22 +769,50 @@ export const prepareChatTurn = async (
 
   const systemPrompt = generation.systemPrompt!;
 
-  // --- Tier 1 context compaction (ADR-0009) ---
-  // Best-effort: a failure here must never break the turn — recovery (§E) is the
-  // net. Runs AFTER inlineFileUrls so the estimate sees the real payload (T2).
-  // Tier 1 is cross-turn durable compaction keyed by chat id. Headless runs
-  // (triggers, sub-agents) carry no chat id and have no durable history to
+  // --- Context compaction & recovery (ADR-0009) ---
+  // The runtime (window budget, config, summarizer) is resolved once and shared
+  // by Tier 1 and the recovery middleware so they never disagree. Never throws.
+  const compactionRuntime = await buildCompactionRuntime({
+    chatId: request.id,
+    provider,
+    resolvedModelId,
+    agent: agent ?? null,
+    opened,
+  });
+
+  // Per-turn overhead: system prompt + tool schemas, sent on every turn but
+  // invisible to a message-only estimate (drift C1).
+  const overheadTokens = estimateOverheadTokens(systemPrompt, wrappedTools);
+
+  // Tier 1 is best-effort: a failure here must never break the turn — recovery
+  // (§E) is the net. Runs AFTER inlineFileUrls so the estimate sees the real
+  // payload (T2). Cross-turn durable compaction is keyed by chat id; headless
+  // runs (triggers, sub-agents) carry no chat id and have no durable history to
   // compact (plan M3 — they are Tier 2 only), so send messages uncompacted.
-  const compactedMessages = request.id
+  const chatId = request.id;
+  const compactedMessages = chatId
     ? await applyTier1IfNeeded({
-        chatId: request.id,
-        provider,
-        resolvedModelId,
-        agent: agent ?? null,
-        opened,
+        chatId,
+        runtime: compactionRuntime,
         messages: inlinedMessages,
+        overheadTokens,
       })
     : inlinedMessages;
+
+  // Recovery (§E, P4): always wired, even when proactive compaction is off.
+  // Headless runs get trim+retry but no dirty flag (no durable chat row).
+  const recovery: RecoveryContext = {
+    chatId,
+    imageProvider: compactionRuntime.imageProvider,
+    targetTokens: compactionRuntime.budget.targetTokens,
+    keepRecentMessages: compactionRuntime.config.keepRecentMessages,
+    minPrunableChars: compactionRuntime.config.minPrunableChars,
+    summarize: compactionRuntime.summarize,
+    summarizerWindow: compactionRuntime.summarizerWindow,
+    markDirty: chatId
+      ? () => setCompactionDirty(drizzleCompactionStore, chatId)
+      : undefined,
+  };
 
   return {
     stream: {
@@ -741,6 +842,7 @@ export const prepareChatTurn = async (
       presencePenalty: agent ? undefined : generation.presencePenalty,
       seed: agent ? undefined : request.seed,
     },
+    recovery,
     dispose,
   };
 };

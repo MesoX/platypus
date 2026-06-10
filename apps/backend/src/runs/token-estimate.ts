@@ -19,11 +19,19 @@
  *    the UIMessage and ModelMessage adapters agree exactly even though
  *    `convertToModelMessages` splits one UI message into several model messages.
  *
- * Used only on the very first turn, before any provider `usage.inputTokens`
- * exists; every later turn uses the real provider count.
+ * The char/4 estimate runs every turn. The provider-reported
+ * `usage.inputTokens` from the prior turn acts as a corrective baseline when
+ * available (`Tier1Input.lastInputTokens` — threaded by the §H usage-metadata
+ * chunk); until then the cold-start margin (M2) compensates for under-counts.
  */
 
-import type { ModelMessage, ToolResultPart, DataContent } from "ai";
+import {
+  asSchema,
+  type ModelMessage,
+  type Tool,
+  type ToolResultPart,
+  type DataContent,
+} from "ai";
 import type { PlatypusUIMessage } from "../types.ts";
 
 /** Number of characters approximated as one token (text only). */
@@ -411,6 +419,46 @@ export function modelMessagesToCountUnits(
   provider: ImageProvider = "default",
 ): CountUnit[] {
   return messages.map((m) => modelMessageToCountUnit(m, provider));
+}
+
+// ---------------------------------------------------------------------------
+// Per-turn overhead — system prompt + tool schemas (drift C1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flat fallback for a tool whose input schema cannot be serialized (e.g. a
+ * provider-defined tool with no JSON-schema representation). Conservative —
+ * over-counting beats overflow.
+ */
+export const TOOL_SCHEMA_FALLBACK_TOKENS = 200;
+
+/**
+ * Estimates the tokens of the per-turn payload that is NOT in the message
+ * history: the rendered system prompt plus every tool's name, description, and
+ * JSON input schema — all sent to the model on every turn, and the dominant
+ * cause of the C1 trigger under-count on tool-bearing agents (observed 8888
+ * provider-reported vs ~986 message-only). Same char/4 rule as the single
+ * estimator; the result feeds `Tier1Input.overheadTokens`.
+ */
+export function estimateOverheadTokens(
+  systemPrompt: string | undefined,
+  tools: Record<string, Tool> | undefined,
+): number {
+  let tokens = Math.ceil((systemPrompt ?? "").length / CHARS_PER_TOKEN);
+  for (const [name, tool] of Object.entries(tools ?? {})) {
+    const t = tool as { description?: string; inputSchema?: unknown };
+    let text = name + (t.description ?? "");
+    if (t.inputSchema != null) {
+      try {
+        // asSchema is the SDK's own conversion to the wire-format JSON schema.
+        text += stableStringify(asSchema(t.inputSchema as never).jsonSchema);
+      } catch {
+        tokens += TOOL_SCHEMA_FALLBACK_TOKENS;
+      }
+    }
+    tokens += Math.ceil(text.length / CHARS_PER_TOKEN);
+  }
+  return tokens;
 }
 
 /**

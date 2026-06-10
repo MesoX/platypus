@@ -8,9 +8,14 @@ import {
   readUIMessageStream,
   stepCountIs,
   streamText,
+  wrapLanguageModel,
   type LanguageModel,
   type UIMessageChunk,
 } from "ai";
+import {
+  contextOverflowRecoveryMiddleware,
+  isContextOverflowError,
+} from "./recovery.ts";
 import {
   prepareChatTurn,
   type ChatTurn,
@@ -356,7 +361,7 @@ export class AgentRunner {
     );
 
     const result = streamText({
-      model: turn.stream.model,
+      model: withOverflowRecovery(turn),
       messages: await convertToModelMessages(turn.stream.messages),
       stopWhen: [stepCountIs(turn.stream.maxSteps)],
       tools: turn.stream.tools,
@@ -541,7 +546,7 @@ export class AgentRunner {
     const startTime = Date.now();
     try {
       const result = await generateText({
-        model: turn.stream.model as LanguageModel,
+        model: withOverflowRecovery(turn) as LanguageModel,
         messages: await convertToModelMessages(turn.stream.messages),
         tools: turn.stream.tools,
         system: turn.stream.system,
@@ -630,6 +635,18 @@ export class AgentRunner {
 }
 
 /**
+ * Wraps the turn's model with the context-overflow recovery middleware (§E,
+ * P4): every model call — first call and every tool-loop step, stream and
+ * generate alike — gets one trim-and-retry on a provider "context too long"
+ * rejection. Always on; the §G kill switch does not gate it.
+ */
+const withOverflowRecovery = (turn: ChatTurn) =>
+  wrapLanguageModel({
+    model: turn.stream.model,
+    middleware: contextOverflowRecoveryMiddleware(turn.recovery),
+  });
+
+/**
  * Converts AI SDK errors into user-facing strings for the UI message stream.
  * Behaviour-preserving copy of the previous inline `onError` handler.
  */
@@ -637,6 +654,11 @@ const formatStreamError = (error: unknown): string => {
   logger.error({ error }, "Chat stream error");
   if (LoadAPIKeyError.isInstance(error)) {
     return "AI provider API key is missing or not configured.";
+  }
+  // Reaching here means recovery (§E) already trimmed and retried once and the
+  // provider still rejected the prompt — surface the actionable dead end.
+  if (isContextOverflowError(error)) {
+    return "Conversation too large for the model's context window even after trimming — start a new chat or reduce attachments.";
   }
   if (APICallError.isInstance(error)) {
     if (error.statusCode === 401 || error.statusCode === 403) {

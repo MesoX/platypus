@@ -686,3 +686,135 @@ describe("affectedBelowWatermark (C4 divergence detection)", () => {
     expect(affectedBelowWatermark(persisted, incoming, "m2")).toEqual([]);
   });
 });
+
+// --- Chunk 3: C1/M2 trigger projection + recovery dirty-flag producer -----
+
+import {
+  projectTier1Tokens,
+  setCompactionDirty,
+  COLD_START_MARGIN,
+} from "./compaction.ts";
+
+describe("projectTier1Tokens (drift C1/M2)", () => {
+  it("applies the cold-start margin when no provider baseline exists (M2)", () => {
+    expect(
+      projectTier1Tokens({ messageTokens: 100, priorSummaryTokens: 0 }),
+    ).toBe(Math.ceil(100 * COLD_START_MARGIN));
+  });
+
+  it("counts the per-turn overhead toward the trigger (C1)", () => {
+    expect(
+      projectTier1Tokens({
+        messageTokens: 100,
+        priorSummaryTokens: 20,
+        overheadTokens: 50,
+      }),
+    ).toBe(Math.ceil(170 * COLD_START_MARGIN));
+  });
+
+  it("uses the provider-reported count as a floor when available", () => {
+    // The observed live gap: char/4 said ~986, the provider said 8888.
+    expect(
+      projectTier1Tokens({
+        messageTokens: 986,
+        priorSummaryTokens: 0,
+        lastInputTokens: 8888,
+      }),
+    ).toBe(8888);
+  });
+
+  it("drops the margin when a provider baseline is present", () => {
+    expect(
+      projectTier1Tokens({
+        messageTokens: 100,
+        priorSummaryTokens: 0,
+        lastInputTokens: 50,
+      }),
+    ).toBe(100);
+  });
+});
+
+describe("applyTier1Compaction — overhead in the trigger (C1)", () => {
+  it("fires on system/tool overhead even when messages alone are under trigger", async () => {
+    const store = storeFromState({ version: 0 });
+    // ~4 tokens of messages — far under the 50-token trigger on their own.
+    const messages = [
+      uiText("p1", "user", "aaaa"),
+      uiText("p2", "assistant", "bbbb"),
+      uiText("r1", "user", "cccc"),
+      uiText("r2", "assistant", "dddd"),
+    ];
+    const out = await applyTier1Compaction({
+      chatId: "c",
+      messages,
+      state: {
+        version: 0,
+        summaryWatermark: null,
+        contextSummary: null,
+        compactionDirty: false,
+      },
+      budget: { inputBudget: 100, triggerTokens: 50, targetTokens: 25 },
+      config: cfg(),
+      imageProvider: "default",
+      summarize: noopSummarize,
+      store,
+      overheadTokens: 60, // tool schemas + system prompt dominate
+    });
+    expect(out.compacted).toBe(true);
+    expect(store.state.summaryWatermark).toBe("p2");
+  });
+
+  it("does not fire when messages + overhead stay under the trigger", async () => {
+    const store = storeFromState({ version: 0 });
+    const messages = [
+      uiText("r1", "user", "cccc"),
+      uiText("r2", "assistant", "dddd"),
+    ];
+    const out = await applyTier1Compaction({
+      chatId: "c",
+      messages,
+      state: {
+        version: 0,
+        summaryWatermark: null,
+        contextSummary: null,
+        compactionDirty: false,
+      },
+      budget: { inputBudget: 100, triggerTokens: 50, targetTokens: 25 },
+      config: cfg(),
+      imageProvider: "default",
+      summarize: noopSummarize,
+      store,
+      overheadTokens: 10,
+    });
+    expect(out.compacted).toBe(false);
+    expect(store.casCalls).toBe(0);
+  });
+});
+
+describe("setCompactionDirty (§E recovery producer, drift T3)", () => {
+  it("sets the flag through the CAS writer", async () => {
+    const store = storeFromState({ version: 3 });
+    const res = await setCompactionDirty(store, "c");
+    expect(res).toEqual({ status: "applied", version: 4 });
+    expect(store.state.compactionDirty).toBe(true);
+  });
+
+  it("is a no-op when already dirty (no version churn)", async () => {
+    const store = storeFromState({ version: 3, compactionDirty: true });
+    const res = await setCompactionDirty(store, "c");
+    expect(res).toEqual({ status: "skipped", reason: "no-op" });
+    expect(store.casCalls).toBe(0);
+    expect(store.state.version).toBe(3);
+  });
+
+  it("never touches summary or watermark (recovery only flags)", async () => {
+    const store = storeFromState({
+      version: 1,
+      contextSummary: "KEEP",
+      summaryWatermark: "m7",
+    });
+    await setCompactionDirty(store, "c");
+    expect(store.state.contextSummary).toBe("KEEP");
+    expect(store.state.summaryWatermark).toBe("m7");
+  });
+});
