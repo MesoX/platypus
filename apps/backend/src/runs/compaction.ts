@@ -535,6 +535,12 @@ export type ModelCompactOptions = {
   summarizerWindow?: number;
   /** Bypass the no-op estimate gate (same semantics as UICompactOptions.force). */
   force?: boolean;
+  /**
+   * Estimate of `messages` the caller already computed (e.g. the Tier 2
+   * prepareStep trigger check). Reuses it for gate 1 instead of re-running a
+   * full estimate pass over the same messages.
+   */
+  knownEstimate?: number;
 };
 
 export type ModelCompactionResult = {
@@ -558,12 +564,13 @@ export async function compactModelMessages(
   const estimate = (msgs: ModelMessage[]) =>
     estimateTokens(modelMessagesToCountUnits(msgs, provider));
 
-  if (!opts.force && estimate(messages) <= opts.targetTokens) {
+  const initialEstimate = opts.knownEstimate ?? estimate(messages);
+  if (!opts.force && initialEstimate <= opts.targetTokens) {
     return {
       messages,
       messagesDropped: 0,
       usedModelCall: false,
-      estimatedTokens: estimate(messages),
+      estimatedTokens: initialEstimate,
     };
   }
 

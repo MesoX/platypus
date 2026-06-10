@@ -10,6 +10,7 @@ import {
   streamText,
   wrapLanguageModel,
   type LanguageModel,
+  type PrepareStepFunction,
   type UIMessageChunk,
 } from "ai";
 import {
@@ -677,8 +678,8 @@ const withOverflowRecovery = (turn: ChatTurn) =>
  * returns `undefined` so the SDK proceeds unchanged (drift m3: no per-step
  * overhead when the loop is small). Exported for unit testing.
  */
-export function buildTier2PrepareStep(ctx: Tier2Context) {
-  return async ({ messages }: { messages: import("ai").ModelMessage[] }) => {
+export function buildTier2PrepareStep(ctx: Tier2Context): PrepareStepFunction {
+  return async ({ messages }) => {
     const estimate = estimateTokens(
       modelMessagesToCountUnits(messages, ctx.imageProvider),
     );
@@ -691,6 +692,8 @@ export function buildTier2PrepareStep(ctx: Tier2Context) {
       imageProvider: ctx.imageProvider,
       summarize: ctx.summarize,
       summarizerWindow: ctx.summarizerWindow,
+      // Reuse the trigger-check estimate; skips a redundant full pass (RV9).
+      knownEstimate: estimate,
     });
 
     if (result.messagesDropped === 0) return undefined;

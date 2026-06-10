@@ -897,8 +897,21 @@ export const prepareChatTurn = async (
     recovery,
     tier2: compactionRuntime.config.compactionEnabled
       ? {
-          triggerTokens: compactionRuntime.budget.triggerTokens,
-          targetTokens: compactionRuntime.budget.targetTokens,
+          // RV6 (Tier 2): the prepareStep estimate counts ModelMessages only —
+          // system prompt + tool schemas go as separate streamText params and
+          // are invisible to it, yet they consume the same window. Subtract the
+          // per-turn overhead so the trigger/target reflect the real wire
+          // payload (mirrors the Tier 1 and recovery targets above). Without
+          // this, a large overhead lets the payload blow past the budget before
+          // Tier 2 ever fires — exactly the tool-heavy case it exists for.
+          triggerTokens: Math.max(
+            0,
+            compactionRuntime.budget.triggerTokens - overheadTokens,
+          ),
+          targetTokens: Math.max(
+            0,
+            compactionRuntime.budget.targetTokens - overheadTokens,
+          ),
           keepRecentMessages: compactionRuntime.config.keepRecentMessages,
           minPrunableChars: compactionRuntime.config.minPrunableChars,
           imageProvider: compactionRuntime.imageProvider,

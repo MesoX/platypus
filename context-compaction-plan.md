@@ -925,6 +925,14 @@ Emit metrics (not just logs):
    `compactModelMessages` adapter (drift T3); null when kill switch off.
    `Tier2Context` on `ChatTurn` threads config from `buildCompactionRuntime`.
    Tests: 1074 pass; tsc source clean.
+   - **Chunk 4 review fix (2026-06-10):** Tier 2 trigger/target now subtract
+     `overheadTokens` (RV6 extended to Tier 2 — the prepareStep estimate sees
+     ModelMessages only, but system prompt + tool schemas consume the same
+     window; without this, a large overhead lets the payload exceed the budget
+     before Tier 2 fires). `compactModelMessages` gained `knownEstimate` so the
+     prepareStep trigger estimate is reused instead of recomputed (RV9). Tests
+     strengthened: summarize-on-fire + pairing-safety asserted, empty-prefix
+     no-op asserts `undefined`.
 5. Sub-agent wiring (Tier 2 only).
 6. Frontend usage metadata + ring (§H).
 7. Per-message stats popover (§I) — depends on metadata stamping from step 6.

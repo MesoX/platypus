@@ -520,6 +520,20 @@ describe("buildTier2PrepareStep", () => {
     summarizerWindow: undefined,
   });
 
+  // Invoke a PrepareStepFunction supplying only the field under test; the
+  // callback ignores steps/stepNumber/model/experimental_context.
+  const callStep = (
+    fn: ReturnType<typeof buildTier2PrepareStep>,
+    messages: import("ai").ModelMessage[],
+  ) =>
+    fn({
+      messages,
+      steps: [],
+      stepNumber: 0,
+      model: {} as never,
+      experimental_context: undefined,
+    });
+
   const shortMessages: import("ai").ModelMessage[] = [
     { role: "user", content: [{ type: "text", text: "hi" }] },
     {
@@ -565,35 +579,41 @@ describe("buildTier2PrepareStep", () => {
 
   it("returns undefined when messages are below triggerTokens (drift m3)", async () => {
     const fn = buildTier2PrepareStep(makeCtx(10_000));
-    const result = await fn({ messages: shortMessages });
+    const result = await callStep(fn, shortMessages);
     expect(result).toBeUndefined();
   });
 
   it("compacts when messages exceed triggerTokens", async () => {
     const msgs = longMessages();
-    const fn = buildTier2PrepareStep(makeCtx(1));
-    const result = await fn({ messages: msgs });
-    expect(result).toBeDefined();
-    expect(result!.messages.length).toBeLessThan(msgs.length);
+    const ctx = makeCtx(1);
+    const fn = buildTier2PrepareStep(ctx);
+    const result = await callStep(fn, msgs);
+    expect(result?.messages).toBeDefined();
+    const out = result!.messages!;
+    expect(out.length).toBeLessThan(msgs.length);
+    // Stage 2 summarizes the dropped prefix.
+    expect(ctx.summarize).toHaveBeenCalled();
+    // First surviving message is the synthetic summary (role "user"); the one
+    // after it starts the kept tail and must not be an orphaned tool result
+    // (its assistant tool-call would have been dropped into the prefix).
+    expect(out[1]?.role).not.toBe("tool");
   });
 
-  it("returns undefined when compactModelMessages makes no change (prefix empty)", async () => {
-    // Two messages: no prefix to summarize → compactModelMessages no-ops.
-    const fn = buildTier2PrepareStep(makeCtx(1));
-    const result = await fn({ messages: shortMessages });
-    // compactModelMessages won't grow the list — if nothing dropped, messages same
-    // length. The function still returns { messages } but with 0 dropped.
-    // The prepareStep contract: returning undefined vs returning same messages
-    // both let the SDK proceed unchanged. Either is acceptable here.
-    if (result !== undefined) {
-      expect(result.messages.length).toBeLessThanOrEqual(shortMessages.length);
-    }
+  it("returns undefined when prefix is empty (no-op, drift m3 / RV4)", async () => {
+    // Two messages, keepRecentMessages 4 → no prefix to summarize →
+    // compactModelMessages drops nothing → prepareStep returns undefined so the
+    // SDK proceeds unchanged, and the summarizer is never called.
+    const ctx = makeCtx(1);
+    const fn = buildTier2PrepareStep(ctx);
+    const result = await callStep(fn, shortMessages);
+    expect(result).toBeUndefined();
+    expect(ctx.summarize).not.toHaveBeenCalled();
   });
 
   it("does not call summarize when estimate is below triggerTokens", async () => {
     const ctx = makeCtx(10_000);
     const fn = buildTier2PrepareStep(ctx);
-    await fn({ messages: shortMessages });
+    await callStep(fn, shortMessages);
     expect(ctx.summarize).not.toHaveBeenCalled();
   });
 });
