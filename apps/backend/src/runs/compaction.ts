@@ -15,7 +15,7 @@
  */
 
 import { and, eq } from "drizzle-orm";
-import type { ModelMessage } from "ai";
+import type { ModelMessage, PrepareStepFunction } from "ai";
 import { db } from "../index.ts";
 import { chat as chatTable } from "../db/schema.ts";
 import { logger } from "../logger.ts";
@@ -1008,4 +1008,62 @@ export async function invalidateCompaction(
     if (!affectsSummarized) return { kind: "skip", reason: "no-op" };
     return { kind: "write", patch: { summary: null, watermark: null } };
   });
+}
+
+// --- Tier 2 in-turn compaction (§D, ADR-0009) ---
+
+/**
+ * Per-turn Tier 2 compaction context (§D). Null when the §G kill switch or
+ * agent config disables proactive compaction. Sub-agents also receive Tier 2
+ * (drift M3 — they have no durable history for Tier 1, but their tool loop
+ * can bloat intra-turn).
+ */
+export type Tier2Context = {
+  triggerTokens: number;
+  targetTokens: number;
+  keepRecentMessages: number;
+  minPrunableChars: number;
+  imageProvider: ImageProvider;
+  summarize: Summarize;
+  summarizerWindow?: number;
+};
+
+/**
+ * Builds the Tier 2 in-turn compaction `prepareStep` callback (§D). Fires
+ * before each step of a tool loop when the accumulated model messages exceed
+ * `triggerTokens` — compacts via `compactModelMessages` and returns the
+ * trimmed messages. Returns `undefined` when below the threshold so the SDK
+ * proceeds unchanged (drift m3: no per-step overhead when the loop is small).
+ */
+export function buildTier2PrepareStep(ctx: Tier2Context): PrepareStepFunction {
+  return async ({ messages }) => {
+    const estimate = estimateTokens(
+      modelMessagesToCountUnits(messages, ctx.imageProvider),
+    );
+    if (estimate < ctx.triggerTokens) return undefined;
+
+    const result = await compactModelMessages(messages, {
+      targetTokens: ctx.targetTokens,
+      keepRecentMessages: ctx.keepRecentMessages,
+      minPrunableChars: ctx.minPrunableChars,
+      imageProvider: ctx.imageProvider,
+      summarize: ctx.summarize,
+      summarizerWindow: ctx.summarizerWindow,
+      // Reuse the trigger-check estimate; skips a redundant full pass (RV9).
+      knownEstimate: estimate,
+    });
+
+    if (result.messagesDropped === 0) return undefined;
+
+    logger.info(
+      {
+        messagesDropped: result.messagesDropped,
+        estimatedTokensBefore: estimate,
+        estimatedTokensAfter: result.estimatedTokens,
+      },
+      "Tier 2 in-turn compaction fired",
+    );
+
+    return { messages: result.messages };
+  };
 }

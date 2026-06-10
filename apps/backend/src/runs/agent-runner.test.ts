@@ -33,11 +33,8 @@ vi.mock("../logger.ts", () => ({
   },
 }));
 
-import {
-  AgentRunner,
-  buildTier2PrepareStep,
-  withToolTimestamps,
-} from "./agent-runner.ts";
+import { AgentRunner, withToolTimestamps } from "./agent-runner.ts";
+import { buildTier2PrepareStep } from "./compaction.ts";
 import type { UIMessageChunk } from "ai";
 import { runRegistry, TimeoutError } from "./run-registry.ts";
 import type { ResolvedRunPlan, RunInput, RunSink } from "./types.ts";

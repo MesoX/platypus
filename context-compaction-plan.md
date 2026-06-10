@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-4 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; chunk 3a RV1-RV4 fixes landed 2026-06-10; **chunk 3b RV5-RV7 fixes landed 2026-06-10**; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
+Status: **chunks 1-5 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; chunk 3a RV1-RV4 fixes landed 2026-06-10; chunk 3b RV5-RV7 fixes landed 2026-06-10; **chunk 5 sub-agent Tier 2 wiring landed 2026-06-10**; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -933,7 +933,7 @@ Emit metrics (not just logs):
      prepareStep trigger estimate is reused instead of recomputed (RV9). Tests
      strengthened: summarize-on-fire + pairing-safety asserted, empty-prefix
      no-op asserts `undefined`.
-5. Sub-agent wiring (Tier 2 only).
+5. Sub-agent wiring (Tier 2 only). **✅ DONE 2026-06-10** `Tier2Context` + `buildTier2PrepareStep` moved to `compaction.ts` (no-cycle); `createSubAgentTool` gains `prepareStep?`; `createSubAgentTools` gains `prepareStepFn?`; `loadSubAgents` resolves per-sub-agent compaction runtime + builds prepareStep map. Tests: 1077 pass; tsc source clean.
 6. Frontend usage metadata + ring (§H).
 7. Per-message stats popover (§I) — depends on metadata stamping from step 6.
 8. Clickable ring → compact endpoint (§J) — depends on Tier 1 (step 2).

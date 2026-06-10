@@ -42,6 +42,7 @@ import {
 import {
   applyTier1Compaction,
   affectedBelowWatermark,
+  buildTier2PrepareStep,
   computeBudget,
   drizzleCompactionStore,
   invalidateCompaction,
@@ -51,6 +52,7 @@ import {
   type CompactionConfig,
   type CompactionState,
   type Summarize,
+  type Tier2Context,
 } from "../runs/compaction.ts";
 import type { RecoveryContext } from "../runs/recovery.ts";
 
@@ -130,22 +132,6 @@ export type ChatTurnRequest = {
   seed?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
-};
-
-/**
- * Per-turn Tier 2 compaction context (§D). Null when the §G kill switch or
- * agent config disables proactive compaction. Sub-agents also receive Tier 2
- * (drift M3 — they have no durable history for Tier 1, but their tool loop
- * can bloat intra-turn).
- */
-export type Tier2Context = {
-  triggerTokens: number;
-  targetTokens: number;
-  keepRecentMessages: number;
-  minPrunableChars: number;
-  imageProvider: ImageProvider;
-  summarize: Summarize;
-  summarizerWindow?: number;
 };
 
 export type ChatTurn = {
@@ -1242,6 +1228,49 @@ const loadSubAgents = async (
     description: sa.description,
   }));
 
+  // Tier 2 only for sub-agents (drift M3: no durable history for Tier 1).
+  // Resolve per-sub-agent compaction runtime so each sub-agent's tool loop
+  // gets a prepareStep calibrated to its own model's context window.
+  const subAgentPrepareSteps = new Map<
+    string,
+    import("ai").PrepareStepFunction
+  >();
+  await Promise.all(
+    subAgentRecords.map(async (sa) => {
+      try {
+        const subProvider = await queries.getProvider(
+          sa.providerId,
+          orgId,
+          workspaceId,
+        );
+        if (!subProvider) return;
+        const subOpened = openProvider(subProvider);
+        const runtime = await buildCompactionRuntime({
+          provider: subProvider,
+          resolvedModelId: sa.modelId,
+          agent: sa,
+          opened: subOpened,
+        });
+        if (!runtime.config.compactionEnabled) return;
+        const tier2: Tier2Context = {
+          triggerTokens: Math.max(0, runtime.budget.triggerTokens),
+          targetTokens: Math.max(0, runtime.budget.targetTokens),
+          keepRecentMessages: runtime.config.keepRecentMessages,
+          minPrunableChars: runtime.config.minPrunableChars,
+          imageProvider: runtime.imageProvider,
+          summarize: runtime.summarize,
+          summarizerWindow: runtime.summarizerWindow,
+        };
+        subAgentPrepareSteps.set(sa.id, buildTier2PrepareStep(tier2));
+      } catch (error) {
+        logger.warn(
+          { error, subAgentId: sa.id },
+          "Failed to build Tier 2 for sub-agent; skipping",
+        );
+      }
+    }),
+  );
+
   const subAgentMcpClients: any[] = [];
 
   const subAgentTools = await createSubAgentTools(
@@ -1270,6 +1299,7 @@ const loadSubAgents = async (
       return subTools;
     },
     onProgress,
+    (id) => subAgentPrepareSteps.get(id),
   );
 
   return { subAgents, subAgentTools, subAgentMcpClients };
