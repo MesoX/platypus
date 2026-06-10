@@ -125,14 +125,18 @@ export function lookupRegistry(
   // id, separated by "-", ".", ":", or "/" so "gpt-4" does NOT match "gpt-4.5"
   // (RV7b: raw startsWith caused gpt-4.5-preview to silently resolve via a
   // stale gpt-4 entry with a wrong 8192 window).
+  // Case-insensitive so mixed-case registry keys ("Qwen/…", "meta-llama/…")
+  // still match lowercase ids from providers that normalize model names.
+  const strippedLower = stripped.toLowerCase();
   let best: { key: string; entry: RegistryEntry } | undefined;
   for (const key of Object.keys(registry)) {
+    const keyLower = key.toLowerCase();
     const isMatch =
-      stripped === key ||
-      stripped.startsWith(key + "-") ||
-      stripped.startsWith(key + ".") ||
-      stripped.startsWith(key + ":") ||
-      stripped.startsWith(key + "/");
+      strippedLower === keyLower ||
+      strippedLower.startsWith(keyLower + "-") ||
+      strippedLower.startsWith(keyLower + ".") ||
+      strippedLower.startsWith(keyLower + ":") ||
+      strippedLower.startsWith(keyLower + "/");
     if (isMatch && (!best || key.length > best.key.length)) {
       best = { key, entry: registry[key] };
     }
@@ -349,11 +353,17 @@ export class ContextWindowResolver {
     if (existing) return existing;
 
     const promise = this.#resolveUncached(provider, modelId).then((value) => {
-      this.#cache.set(cacheKey, {
-        value,
-        expiresAt: this.#now() + this.#ttlMs,
-      });
-      this.#inflight.delete(cacheKey);
+      // Only write the cache if this promise is still the live in-flight one.
+      // An evict() during the fetch deletes the inflight entry; without this
+      // guard the resolving promise would repopulate the cache with the stale
+      // pre-update value and defeat the eviction for a full TTL (RV7c race).
+      if (this.#inflight.get(cacheKey) === promise) {
+        this.#cache.set(cacheKey, {
+          value,
+          expiresAt: this.#now() + this.#ttlMs,
+        });
+        this.#inflight.delete(cacheKey);
+      }
       return value;
     });
     // Store before awaiting so concurrent callers see the same promise.

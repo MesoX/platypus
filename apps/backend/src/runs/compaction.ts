@@ -451,7 +451,7 @@ function pruneModelMessage(
     // RV5: @ai-sdk/mcp emits {type:"content"} for essentially every MCP tool
     // result. Without this branch Stage 1 reclaims zero tokens from the bulkiest
     // payloads and their text is invisible to the summarizer.
-    if (output.type === "content") {
+    if (output.type === "content" && Array.isArray(output.value)) {
       type ContentItem = { type: string; text?: string };
       const items = output.value as ContentItem[];
       const text = items
@@ -459,14 +459,17 @@ function pruneModelMessage(
         .map((i) => i.text ?? "")
         .join("\n");
       const mediaCount = items.filter((i) => i.type !== "text").length;
-      const combined =
-        mediaCount > 0 ? `${text}\n[${mediaCount} media item(s)]` : text;
-      if (combined.length > minPrunableChars) {
+      const marker = mediaCount > 0 ? `\n[${mediaCount} media item(s)]` : "";
+      // Trim the text BEFORE appending the media marker so a huge text payload
+      // can never truncate the "[N media item(s)]" signal.
+      if (text.length + marker.length > minPrunableChars) {
         return {
           ...part,
           output: {
             type: "content" as const,
-            value: [{ type: "text", text: softTrim(combined) }],
+            value: [
+              { type: "text" as const, text: `${softTrim(text)}${marker}` },
+            ],
           },
         };
       }
