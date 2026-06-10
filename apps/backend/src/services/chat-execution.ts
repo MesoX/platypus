@@ -1228,6 +1228,24 @@ const loadSubAgents = async (
     description: sa.description,
   }));
 
+  // Provider lookups are memoized so the Tier 2 loop below and the
+  // createModelFn callback don't each re-fetch + re-open the same provider
+  // (F1): one getProvider + openProvider per distinct providerId per turn.
+  const providerCache = new Map<
+    string,
+    { provider: Provider; opened: ReturnType<typeof openProvider> } | null
+  >();
+  const resolveSubProvider = async (providerId: string) => {
+    if (!providerCache.has(providerId)) {
+      const p = await queries.getProvider(providerId, orgId, workspaceId);
+      providerCache.set(
+        providerId,
+        p ? { provider: p, opened: openProvider(p) } : null,
+      );
+    }
+    return providerCache.get(providerId) ?? null;
+  };
+
   // Tier 2 only for sub-agents (drift M3: no durable history for Tier 1).
   // Resolve per-sub-agent compaction runtime so each sub-agent's tool loop
   // gets a prepareStep calibrated to its own model's context window.
@@ -1238,18 +1256,15 @@ const loadSubAgents = async (
   await Promise.all(
     subAgentRecords.map(async (sa) => {
       try {
-        const subProvider = await queries.getProvider(
-          sa.providerId,
-          orgId,
-          workspaceId,
-        );
-        if (!subProvider) return;
-        const subOpened = openProvider(subProvider);
+        const resolved = await resolveSubProvider(sa.providerId);
+        if (!resolved) return;
         const runtime = await buildCompactionRuntime({
-          provider: subProvider,
+          // Sub-agents have no chat row; tag logs with the sub-agent id (F3).
+          chatId: sa.id,
+          provider: resolved.provider,
           resolvedModelId: sa.modelId,
           agent: sa,
-          opened: subOpened,
+          opened: resolved.opened,
         });
         if (!runtime.config.compactionEnabled) return;
         const tier2: Tier2Context = {
@@ -1276,15 +1291,11 @@ const loadSubAgents = async (
   const subAgentTools = await createSubAgentTools(
     subAgentRecords,
     async (providerId: string, modelId: string) => {
-      const subProvider = await queries.getProvider(
-        providerId,
-        orgId,
-        workspaceId,
-      );
-      if (!subProvider) {
+      const resolved = await resolveSubProvider(providerId);
+      if (!resolved) {
         throw new Error(`Provider '${providerId}' not found for sub-agent`);
       }
-      return openProvider(subProvider).languageModel(modelId);
+      return resolved.opened.languageModel(modelId);
     },
     async (subAgentId: string, toolSetIds: string[]) => {
       const subAgentRecord = subAgentRecords.find((sa) => sa.id === subAgentId);
