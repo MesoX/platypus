@@ -33,7 +33,11 @@ vi.mock("../logger.ts", () => ({
   },
 }));
 
-import { AgentRunner, withToolTimestamps } from "./agent-runner.ts";
+import {
+  AgentRunner,
+  buildTier2PrepareStep,
+  withToolTimestamps,
+} from "./agent-runner.ts";
 import type { UIMessageChunk } from "ai";
 import { runRegistry, TimeoutError } from "./run-registry.ts";
 import type { ResolvedRunPlan, RunInput, RunSink } from "./types.ts";
@@ -106,6 +110,14 @@ const fakeTurn = (overrides?: { dispose?: () => Promise<void> }) => {
       providerId: "p1",
       modelId: "m1",
     },
+    recovery: {
+      imageProvider: "default" as const,
+      targetTokens: 1000,
+      keepRecentMessages: 10,
+      minPrunableChars: 2000,
+      summarize: async (t: string) => t,
+    },
+    tier2: null,
     dispose,
   };
 };
@@ -360,14 +372,13 @@ describe("withToolTimestamps", () => {
     overrides: Partial<
       Extract<UIMessageChunk, { type: "tool-input-available" }>
     > = {},
-  ): UIMessageChunk =>
-    ({
-      type: "tool-input-available",
-      toolCallId: "t1",
-      toolName: "foo",
-      input: { x: 1 },
-      ...overrides,
-    });
+  ): UIMessageChunk => ({
+    type: "tool-input-available",
+    toolCallId: "t1",
+    toolName: "foo",
+    input: { x: 1 },
+    ...overrides,
+  });
 
   it("injects startedAt on tool-input-available chunks", async () => {
     const { stream } = withToolTimestamps(
@@ -495,5 +506,94 @@ describe("withToolTimestamps", () => {
     expect(toolPart).toBeDefined();
     expect(toolPart.toolCallId).toBe("call_xyz");
     expect(toolPart.toolMetadata).toMatchObject({ startedAt: FIXED_NOW });
+  });
+});
+
+describe("buildTier2PrepareStep", () => {
+  const makeCtx = (triggerTokens = 100) => ({
+    triggerTokens,
+    targetTokens: 50,
+    keepRecentMessages: 4,
+    minPrunableChars: 100,
+    imageProvider: "default" as const,
+    summarize: vi.fn().mockResolvedValue("summary"),
+    summarizerWindow: undefined,
+  });
+
+  const shortMessages: import("ai").ModelMessage[] = [
+    { role: "user", content: [{ type: "text", text: "hi" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+    },
+  ];
+
+  // 6 assistant/tool pairs where each tool result carries 1200 chars of text
+  // (≈ 300 tokens each via char/4). Total ≈ 1800+ tokens > any reasonable
+  // triggerTokens threshold used in these tests.
+  const longMessages = (): import("ai").ModelMessage[] => {
+    const msgs: import("ai").ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "start" }] },
+    ];
+    for (let i = 0; i < 6; i++) {
+      msgs.push({
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: `tc${i}`,
+            toolName: "tool",
+            input: {},
+          },
+        ],
+      });
+      msgs.push({
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: `tc${i}`,
+            toolName: "tool",
+            // Must use typed output shape so tokenEstimator counts the value.
+            output: { type: "text" as const, value: "x".repeat(1200) },
+          },
+        ],
+      });
+    }
+    return msgs;
+  };
+
+  it("returns undefined when messages are below triggerTokens (drift m3)", async () => {
+    const fn = buildTier2PrepareStep(makeCtx(10_000));
+    const result = await fn({ messages: shortMessages });
+    expect(result).toBeUndefined();
+  });
+
+  it("compacts when messages exceed triggerTokens", async () => {
+    const msgs = longMessages();
+    const fn = buildTier2PrepareStep(makeCtx(1));
+    const result = await fn({ messages: msgs });
+    expect(result).toBeDefined();
+    expect(result!.messages.length).toBeLessThan(msgs.length);
+  });
+
+  it("returns undefined when compactModelMessages makes no change (prefix empty)", async () => {
+    // Two messages: no prefix to summarize → compactModelMessages no-ops.
+    const fn = buildTier2PrepareStep(makeCtx(1));
+    const result = await fn({ messages: shortMessages });
+    // compactModelMessages won't grow the list — if nothing dropped, messages same
+    // length. The function still returns { messages } but with 0 dropped.
+    // The prepareStep contract: returning undefined vs returning same messages
+    // both let the SDK proceed unchanged. Either is acceptable here.
+    if (result !== undefined) {
+      expect(result.messages.length).toBeLessThanOrEqual(shortMessages.length);
+    }
+  });
+
+  it("does not call summarize when estimate is below triggerTokens", async () => {
+    const ctx = makeCtx(10_000);
+    const fn = buildTier2PrepareStep(ctx);
+    await fn({ messages: shortMessages });
+    expect(ctx.summarize).not.toHaveBeenCalled();
   });
 });

@@ -16,10 +16,13 @@ import {
   contextOverflowRecoveryMiddleware,
   isContextOverflowError,
 } from "./recovery.ts";
+import { compactModelMessages } from "./compaction.ts";
+import { estimateTokens, modelMessagesToCountUnits } from "./token-estimate.ts";
 import {
   loadChatMessages,
   prepareChatTurn,
   type ChatTurn,
+  type Tier2Context,
   type ToolActivityEvent,
 } from "../services/chat-execution.ts";
 import { logger } from "../logger.ts";
@@ -391,6 +394,7 @@ export class AgentRunner {
       frequencyPenalty: turn.stream.frequencyPenalty,
       presencePenalty: turn.stream.presencePenalty,
       seed: turn.stream.seed,
+      prepareStep: turn.tier2 ? buildTier2PrepareStep(turn.tier2) : undefined,
       onStepFinish: (step) => {
         handle.bumpStep();
         accumulateStepStats(lastStats, step);
@@ -570,6 +574,7 @@ export class AgentRunner {
         system: turn.stream.system,
         stopWhen: [stepCountIs(turn.stream.maxSteps)],
         abortSignal: handle.signal,
+        prepareStep: turn.tier2 ? buildTier2PrepareStep(turn.tier2) : undefined,
         onStepFinish: (step) => {
           handle.bumpStep();
           accumulateStepStats(lastStats, step);
@@ -663,6 +668,45 @@ const withOverflowRecovery = (turn: ChatTurn) =>
     model: turn.stream.model,
     middleware: contextOverflowRecoveryMiddleware(turn.recovery),
   });
+
+/**
+ * Builds the Tier 2 in-turn compaction `prepareStep` callback (§D). Fires
+ * before each step of a tool loop when the accumulated model messages exceed
+ * `triggerTokens` — compacts via `compactModelMessages` (the shared adapter,
+ * drift T3) and returns the trimmed messages. When below the threshold,
+ * returns `undefined` so the SDK proceeds unchanged (drift m3: no per-step
+ * overhead when the loop is small). Exported for unit testing.
+ */
+export function buildTier2PrepareStep(ctx: Tier2Context) {
+  return async ({ messages }: { messages: import("ai").ModelMessage[] }) => {
+    const estimate = estimateTokens(
+      modelMessagesToCountUnits(messages, ctx.imageProvider),
+    );
+    if (estimate < ctx.triggerTokens) return undefined;
+
+    const result = await compactModelMessages(messages, {
+      targetTokens: ctx.targetTokens,
+      keepRecentMessages: ctx.keepRecentMessages,
+      minPrunableChars: ctx.minPrunableChars,
+      imageProvider: ctx.imageProvider,
+      summarize: ctx.summarize,
+      summarizerWindow: ctx.summarizerWindow,
+    });
+
+    if (result.messagesDropped === 0) return undefined;
+
+    logger.info(
+      {
+        messagesDropped: result.messagesDropped,
+        estimatedTokensBefore: estimate,
+        estimatedTokensAfter: result.estimatedTokens,
+      },
+      "Tier 2 in-turn compaction fired",
+    );
+
+    return { messages: result.messages };
+  };
+}
 
 /**
  * Converts AI SDK errors into user-facing strings for the UI message stream.

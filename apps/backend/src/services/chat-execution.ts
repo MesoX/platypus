@@ -132,6 +132,22 @@ export type ChatTurnRequest = {
   frequencyPenalty?: number;
 };
 
+/**
+ * Per-turn Tier 2 compaction context (§D). Null when the §G kill switch or
+ * agent config disables proactive compaction. Sub-agents also receive Tier 2
+ * (drift M3 — they have no durable history for Tier 1, but their tool loop
+ * can bloat intra-turn).
+ */
+export type Tier2Context = {
+  triggerTokens: number;
+  targetTokens: number;
+  keepRecentMessages: number;
+  minPrunableChars: number;
+  imageProvider: ImageProvider;
+  summarize: Summarize;
+  summarizerWindow?: number;
+};
+
 export type ChatTurn = {
   stream: {
     model: any;
@@ -164,6 +180,12 @@ export type ChatTurn = {
    * agent-runner wraps the model with the recovery middleware using this.
    */
   recovery: RecoveryContext;
+  /**
+   * Tier 2 in-turn compaction config (§D). Null when proactive compaction is
+   * disabled (§G kill switch or agent override). agent-runner builds the
+   * prepareStep callback from this and wires it into streamText/generateText.
+   */
+  tier2: Tier2Context | null;
   dispose: () => Promise<void>;
 };
 
@@ -873,6 +895,17 @@ export const prepareChatTurn = async (
       seed: agent ? undefined : request.seed,
     },
     recovery,
+    tier2: compactionRuntime.config.compactionEnabled
+      ? {
+          triggerTokens: compactionRuntime.budget.triggerTokens,
+          targetTokens: compactionRuntime.budget.targetTokens,
+          keepRecentMessages: compactionRuntime.config.keepRecentMessages,
+          minPrunableChars: compactionRuntime.config.minPrunableChars,
+          imageProvider: compactionRuntime.imageProvider,
+          summarize: compactionRuntime.summarize,
+          summarizerWindow: compactionRuntime.summarizerWindow,
+        }
+      : null,
     dispose,
   };
 };
