@@ -17,6 +17,7 @@ import {
   isContextOverflowError,
 } from "./recovery.ts";
 import {
+  loadChatMessages,
   prepareChatTurn,
   type ChatTurn,
   type ToolActivityEvent,
@@ -258,6 +259,7 @@ export class AgentRunner {
     origin: string | undefined,
     frontendUrl?: string,
     onActivity?: (event?: ToolActivityEvent) => void,
+    priorMessages?: PlatypusUIMessage[],
   ): Promise<ChatTurn> {
     return prepareChatTurn({
       orgId: scope.orgId,
@@ -269,6 +271,7 @@ export class AgentRunner {
       frontendUrl,
       runMode: scope.principal.kind === "user" ? "interactive" : "headless",
       onActivity,
+      priorMessages,
     });
   }
 
@@ -287,6 +290,12 @@ export class AgentRunner {
     options: StreamOptions;
   }): Promise<Response> {
     const { scope, input, sink, options } = params;
+
+    // RV1: snapshot the DB state BEFORE onStart overwrites it so applyTier1IfNeeded
+    // has the correct C4 baseline. Only needed for interactive chats (request.id).
+    const priorMessages = input.request.id
+      ? await loadChatMessages(input.request.id).catch(() => undefined)
+      : undefined;
 
     await sink.onStart({ runId: input.runId, messages: input.messages });
 
@@ -345,6 +354,7 @@ export class AgentRunner {
         options.origin,
         options.frontendUrl,
         onActivity,
+        priorMessages,
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));

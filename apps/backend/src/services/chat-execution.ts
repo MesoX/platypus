@@ -195,6 +195,13 @@ export type PrepareChatTurnInput = {
    * yield bumps invoke with no event (timer-only).
    */
   onActivity?: (event?: ToolActivityEvent) => void;
+  /**
+   * Messages as they were in the DB BEFORE this submission's `ChatSink.onStart`
+   * overwrote them — the C4 baseline for detecting edits below the watermark
+   * (RV1). Loaded by agent-runner before calling onStart. When absent the C4
+   * check falls back to a DB read that now returns the post-overwrite state.
+   */
+  priorMessages?: PlatypusUIMessage[];
 };
 
 /**
@@ -462,11 +469,12 @@ const EMPTY_COMPACTION_STATE: CompactionState = {
 };
 
 /**
- * Loads the canonical (raw) persisted history for a chat. Used only to detect
- * edit/delete/regenerate divergence below the watermark (C4); raw messages are
- * never mutated (P1).
+ * Loads the canonical (raw) persisted history for a chat. Exported so
+ * agent-runner can snapshot it BEFORE `ChatSink.onStart` overwrites the row —
+ * that snapshot is the C4 baseline (RV1: onStart runs before prepareChatTurn,
+ * so a read inside applyTier1IfNeeded would see the just-submitted messages).
  */
-async function loadPersistedMessages(
+export async function loadChatMessages(
   chatId: string,
 ): Promise<PlatypusUIMessage[]> {
   const rows = await db
@@ -568,7 +576,20 @@ async function buildCompactionRuntime(args: {
 type ApplyTier1Args = {
   chatId: string;
   runtime: CompactionRuntime;
+  /** Post-inlineFileUrls messages — used for the compaction itself (T2). */
   messages: PlatypusUIMessage[];
+  /**
+   * Pre-inlineFileUrls messages from this submission — used as the incoming
+   * side of the C4 divergence check (RV1). Must NOT be inlined: the persisted
+   * side also uses storage:// / http:// URLs, so both sides are comparable.
+   */
+  rawMessages: PlatypusUIMessage[];
+  /**
+   * Messages as they were in the DB BEFORE this submission's onStart overwrote
+   * them (RV1). When absent, the C4 check falls back to a fresh DB read, which
+   * returns the post-overwrite state and therefore never detects edits.
+   */
+  priorMessages?: PlatypusUIMessage[];
   /** Estimated system-prompt + tool-schema payload for this turn (drift C1). */
   overheadTokens: number;
 };
@@ -581,7 +602,7 @@ type ApplyTier1Args = {
 async function applyTier1IfNeeded(
   args: ApplyTier1Args,
 ): Promise<PlatypusUIMessage[]> {
-  const { chatId, runtime, messages } = args;
+  const { chatId, runtime, messages, rawMessages } = args;
   try {
     const store = drizzleCompactionStore;
     let state = (await store.readState(chatId)) ?? EMPTY_COMPACTION_STATE;
@@ -589,15 +610,20 @@ async function applyTier1IfNeeded(
     // C4 invalidation: if the submitted history changed at/below the watermark
     // (edit/delete/regenerate), reset the stale summary before compacting. The
     // single submit endpoint is the only "edit handler" in this architecture.
+    //
+    // RV1 fix: the baseline must be the DB state BEFORE this submission's
+    // onStart overwrote the row. agent-runner reads it before calling onStart
+    // and threads it here as `priorMessages`. We also compare the pre-inline
+    // (`rawMessages`) side so file-URL inlining doesn't trigger false positives.
     if (state.summaryWatermark || state.contextSummary) {
-      const persisted = await loadPersistedMessages(chatId);
+      const persisted = args.priorMessages ?? (await loadChatMessages(chatId));
       const affected = affectedBelowWatermark(
         persisted,
-        messages,
+        rawMessages,
         state.summaryWatermark,
       );
       if (affected.length > 0) {
-        const orderedIds = messages
+        const orderedIds = rawMessages
           .map((m) => m.id)
           .filter((id): id is string => Boolean(id));
         await invalidateCompaction(store, chatId, affected, orderedIds);
@@ -795,6 +821,11 @@ export const prepareChatTurn = async (
         chatId,
         runtime: compactionRuntime,
         messages: inlinedMessages,
+        // Pre-inline messages for C4 comparison (RV1): both sides must use the
+        // same URL format (storage:// / http://) to avoid false positives.
+        rawMessages: messages,
+        // Pre-overwrite baseline threaded from agent-runner (RV1).
+        priorMessages: input.priorMessages,
         overheadTokens,
       })
     : inlinedMessages;

@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-3 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; **full-branch review 2026-06-10 found 4 critical defects — fix RV1-RV4 before chunk 4 or any deploy**, see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
+Status: **chunks 1-3 + 3a implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; chunk 3a RV1-RV4 fixes landed 2026-06-10; **RV5-RV7 remain HIGH but non-blocking**; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -56,7 +56,7 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
   `setCompactionDirty` goes through `commitWatermark` (P3); no-op when already
   dirty. Headless runs get trim+retry but no dirty flag (no chat row).
 - **C1 fix (partial — overhead path)** — `estimateOverheadTokens(systemPrompt,
-  tools)` in token-estimate.ts (char/4 of system prompt + each tool's name,
+tools)` in token-estimate.ts (char/4 of system prompt + each tool's name,
   description, `asSchema(...).jsonSchema`; flat 200/tool fallback). Threaded as
   `Tier1Input.overheadTokens`; the trigger projection
   (`projectTier1Tokens`) now counts it, and the compaction target is reduced by
@@ -81,14 +81,34 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
   retry/dirty/failure paths, trim boundary safety, projection C1/M2 cases,
   `setCompactionDirty`, overhead estimator. Source tsc clean; eslint 0 errors.
 
-## Code review 2026-06-10 — full-branch review of chunks 1-3 (OPEN — fix before chunk 4 / deploy)
+## Chunk 3a — RV1-RV4 fixes (landed 2026-06-10)
+
+All 4 critical defects resolved. Tests: 1068 pass (unchanged count). tsc clean on
+source files. Key changes:
+
+- **RV1** — `stableStringify` exported from `token-estimate.ts`; `affectedBelowWatermark`
+  now uses it instead of `JSON.stringify` (jsonb key-order stability). C4 baseline
+  fixed: `agent-runner.stream()` reads `loadChatMessages(id)` BEFORE `sink.onStart`
+  overwrites the row, threads as `priorMessages` through `prepare()` →
+  `prepareChatTurn()` → `applyTier1IfNeeded()`. C4 comparison now uses
+  `rawMessages` (pre-`inlineFileUrls`) so file URLs match on both sides.
+- **RV2** — Submit handler in `routes/chat.ts` verifies `data.id` belongs to
+  `scope.workspaceId` (SELECT + 404 if workspace mismatch) before any run starts.
+- **RV3** — `force?: boolean` added to both `UICompactOptions` and `ModelCompactOptions`;
+  no-op estimate gate skipped when `force:true`. `applyTier1Compaction` passes
+  `force: forceCompact` to `compactUIMessages` (dirty-forced path). Recovery's
+  `trimOverflowingPrompt` passes `force: true` to `compactModelMessages`.
+- **RV4** — Empty-prefix guard added before Stage 2 in `compactUIMessages`: when
+  `prefix.length === 0` (history ≤ keepRecentMessages), return the pruned-recent
+  without calling `summarize` and without committing a `watermark:null` + non-null
+  summary (which would orphan the summary every turn).
+
+## Code review 2026-06-10 — full-branch review of chunks 1-3 (RV1-RV4 FIXED; RV5-RV7 open)
 
 Multi-angle adversarial review of all compaction code (7 finder angles, every
 candidate independently verified against the source). Every finding below is
-CONFIRMED unless marked otherwise. **RV1-RV4 are blocking**: RV1 breaks the
-feature's core promise on the happy path; RV2 is a tenant-isolation hole; RV3/RV4
-defeat the recovery net in exactly the cases it exists for. Recommended fix
-order: RV1 → RV2 → RV3/RV4, then the rest opportunistically.
+CONFIRMED unless marked otherwise. **RV1-RV4 were blocking** and are now fixed.
+RV5-RV7 are HIGH but non-blocking for deploy.
 
 ### Critical
 
@@ -883,12 +903,8 @@ Emit metrics (not just logs):
 3. Recovery (overflow detect + retry-once + dirty flag). **✅ DONE 2026-06-10**
    (C1 overhead fix + M2 margin + summarizerWindow threading folded in; the
    `lastInputTokens` half of C1 moves to step 6 — see Chunk 3 §).
-3a. **Review-fix chunk (RV1-RV7, §Code review 2026-06-10). ← NEXT — blocking.**
-   RV1 (C4 baseline + equality rework), RV2 (chat-id workspace scoping),
-   RV3 (force-trim past the estimate gate + count reasoning parts),
-   RV4 (empty-prefix guard), then RV5-RV7 (content-type pruning, recovery
-   overhead target, registry/heuristic/evict/timeout). Do this before chunk 4
-   and before any deploy to the test server.
+   3a. **Review-fix chunk (RV1-RV4). ✅ DONE 2026-06-10.** RV5-RV7 open (HIGH,
+   non-blocking) — address opportunistically or fold into chunk 4.
 4. Tier 2 (`prepareStep`, in-memory) — note the recovery middleware
    already covers per-step overflow reactively; Tier 2 adds the proactive
    in-loop trim. Remaining HIGH defect: empty litellm registry (RV7a) —

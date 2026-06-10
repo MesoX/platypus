@@ -160,7 +160,7 @@ export const estimateTokens = (units: CountUnit[]): number => {
  * string from either adapter (the UIMessage and ModelMessage shapes must agree
  * exactly — drift T1). Cheaper than guarding key order at every call site.
  */
-function stableStringify(value: unknown): string {
+export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object")
     return JSON.stringify(value) ?? "";
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;

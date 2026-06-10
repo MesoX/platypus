@@ -25,6 +25,8 @@ vi.mock("../services/chat-execution.ts", () => {
   }
   return {
     prepareChatTurn: mockPrepareChatTurn,
+    // loadChatMessages is called by agent-runner before onStart (RV1 baseline).
+    loadChatMessages: vi.fn().mockResolvedValue([]),
     ValidationError,
     NotFoundError,
     drizzleChatTurnQueries: {},
@@ -239,6 +241,7 @@ describe("Chat Routes", () => {
       mockDb.limit.mockResolvedValueOnce([
         { ownerId: "user-1", organizationId: "org-1" },
       ]); // requireWorkspaceAccess
+      mockDb.limit.mockResolvedValueOnce([{ workspaceId: "ws-1" }]); // RV2 chat workspace check
 
       // ChatSink.onStart upserts the chat row with status=running before
       // prepareChatTurn runs. Returning a non-empty array skips the insert

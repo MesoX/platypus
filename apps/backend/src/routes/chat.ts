@@ -144,6 +144,23 @@ chat.post(
     const scope = c.get("workspaceScope")!;
     const data = c.req.valid("json");
 
+    // RV2: verify the submitted chat id (if any) belongs to this workspace.
+    // Without this check a workspace-A user could supply a workspace-B chat id
+    // and corrupt B's compaction state via the unscoped store writes.
+    if (data.id) {
+      const existing = await db
+        .select({ workspaceId: chatTable.workspaceId })
+        .from(chatTable)
+        .where(eq(chatTable.id, data.id))
+        .limit(1);
+      if (
+        existing.length > 0 &&
+        existing[0].workspaceId !== scope.workspaceId
+      ) {
+        return c.json({ message: "Chat not found" }, 404);
+      }
+    }
+
     const input: RunInput = {
       runId: data.id,
       request: data,

@@ -22,6 +22,7 @@ import { logger } from "../logger.ts";
 import type { PlatypusUIMessage } from "../types.ts";
 import {
   estimateTokens,
+  stableStringify,
   uiMessagesToCountUnits,
   modelMessagesToCountUnits,
   CHARS_PER_TOKEN,
@@ -272,6 +273,13 @@ export type UICompactOptions = {
   summarize: Summarize;
   /** Token budget of one summarize call; larger prefixes are map-reduced (M1). */
   summarizerWindow?: number;
+  /**
+   * Bypass the no-op estimate gate and force compaction even when char/4 says
+   * we are within budget. Used for dirty-forced Tier 1 (§E/RV3): recovery sets
+   * the dirty flag AFTER a provider rejection, so the estimator already failed;
+   * re-using it as the no-op gate causes an infinite overflow→dirty→no-op loop.
+   */
+  force?: boolean;
 };
 
 export type UICompactionResult = {
@@ -334,7 +342,10 @@ export async function compactUIMessages(
 
   // No-op when already within target (incl. the existing summary). This is what
   // makes a follow-up turn after compaction NOT re-fire (hysteresis, C2).
-  if (estimate(messages) + priorTokens <= opts.targetTokens) {
+  // Bypassed when `force` is set — recovery sets the dirty flag AFTER a provider
+  // rejection, so the estimator already proved wrong; using it as a no-op gate
+  // causes an infinite overflow→dirty→no-op loop (RV3).
+  if (!opts.force && estimate(messages) + priorTokens <= opts.targetTokens) {
     return {
       keptMessages: messages,
       summaryText: opts.priorSummary ?? null,
@@ -358,11 +369,26 @@ export async function compactUIMessages(
     (m) => pruneUIMessage(m, opts.minPrunableChars).message,
   );
   const prunedAll = [...prunedPrefix, ...recent];
-  if (estimate(prunedAll) + priorTokens <= opts.targetTokens) {
+  if (!opts.force && estimate(prunedAll) + priorTokens <= opts.targetTokens) {
     return {
       keptMessages: prunedAll,
       summaryText: opts.priorSummary ?? null,
       watermarkId: null, // pruning advances no watermark (no new summary)
+      messagesDropped: 0,
+      usedModelCall: false,
+      estimatedTokens: estimate(prunedAll) + priorTokens,
+    };
+  }
+
+  // RV4: nothing to summarize when the prefix is empty (history fits within
+  // keepRecentMessages). Committing a watermark:null + non-null summary would
+  // orphan the summary — viewAfterWatermark ignores contextSummary when the
+  // watermark is null, causing the previously-summarised prefix to reappear.
+  if (prefix.length === 0) {
+    return {
+      keptMessages: prunedAll,
+      summaryText: opts.priorSummary ?? null,
+      watermarkId: null,
       messagesDropped: 0,
       usedModelCall: false,
       estimatedTokens: estimate(prunedAll) + priorTokens,
@@ -376,8 +402,7 @@ export async function compactUIMessages(
     opts.summarize,
     opts.summarizerWindow,
   );
-  const watermarkId =
-    prefix.length > 0 ? (prefix[prefix.length - 1].id ?? null) : null;
+  const watermarkId = prefix[prefix.length - 1].id ?? null;
 
   return {
     keptMessages: recent,
@@ -470,6 +495,8 @@ export type ModelCompactOptions = {
   imageProvider?: ImageProvider;
   summarize: Summarize;
   summarizerWindow?: number;
+  /** Bypass the no-op estimate gate (same semantics as UICompactOptions.force). */
+  force?: boolean;
 };
 
 export type ModelCompactionResult = {
@@ -493,7 +520,7 @@ export async function compactModelMessages(
   const estimate = (msgs: ModelMessage[]) =>
     estimateTokens(modelMessagesToCountUnits(msgs, provider));
 
-  if (estimate(messages) <= opts.targetTokens) {
+  if (!opts.force && estimate(messages) <= opts.targetTokens) {
     return {
       messages,
       messagesDropped: 0,
@@ -798,6 +825,9 @@ export async function applyTier1Compaction(
     priorSummary,
     summarize: input.summarize,
     summarizerWindow: input.summarizerWindow,
+    // When dirty-forced the estimator already proved wrong (RV3): bypass the
+    // no-op gate so recovery's dirty flag actually shrinks the history.
+    force: forceCompact,
   });
 
   const view = inject(result.summaryText ?? priorSummary, result.keptMessages);
@@ -871,7 +901,7 @@ export function affectedBelowWatermark(
     const p = persisted[i];
     if (!p.id) continue;
     const inc = incomingById.get(p.id);
-    if (!inc || JSON.stringify(inc.parts) !== JSON.stringify(p.parts)) {
+    if (!inc || stableStringify(inc.parts) !== stableStringify(p.parts)) {
       affected.push(p.id);
     }
   }

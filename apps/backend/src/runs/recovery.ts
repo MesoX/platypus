@@ -118,6 +118,9 @@ export async function trimOverflowingPrompt<T extends PromptMessage>(
     imageProvider: ctx.imageProvider,
     summarize: ctx.summarize,
     summarizerWindow: ctx.summarizerWindow,
+    // The provider already rejected this prompt, so the estimator is wrong;
+    // bypass the no-op gate or the retry will be byte-identical (RV3).
+    force: true,
   });
 
   return {
