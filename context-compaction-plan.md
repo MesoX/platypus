@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-3 + 3a implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; chunk 3a RV1-RV4 fixes landed 2026-06-10; **RV5-RV7 remain HIGH but non-blocking**; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
+Status: **chunks 1-4 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; chunk 3a RV1-RV4 fixes landed 2026-06-10; **chunk 3b RV5-RV7 fixes landed 2026-06-10**; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -103,12 +103,35 @@ source files. Key changes:
   without calling `summarize` and without committing a `watermark:null` + non-null
   summary (which would orphan the summary every turn).
 
-## Code review 2026-06-10 — full-branch review of chunks 1-3 (RV1-RV4 FIXED; RV5-RV7 open)
+## Chunk 3b — RV5-RV7 fixes (landed 2026-06-10)
+
+All 3 HIGH non-blocking defects resolved. Tests: 1068 pass (unchanged count). tsc clean. Key changes:
+
+- **RV5** — `content`-type tool results: `pruneModelMessage` now soft-trims text items and replaces
+  media with `[N media item(s)]` placeholders; `renderModelMessages` extracts text from `content`
+  items so the summarizer sees their content. Both paths covered by `// RV5:` inline markers.
+- **RV6** — Recovery target overhead: `RecoveryContext.targetTokens` is now set to
+  `Math.max(0, budget.targetTokens − overheadTokens)` in `chat-execution.ts`
+  (mirrors the overhead-adjusted target Tier 1 already used).
+- **RV7** — Context-window resolution family (all four sub-items):
+  - (a) `litellm-registry.ts` populated with full registry covering OpenAI, Anthropic, Bedrock
+    (Anthropic + Meta Llama + Amazon Titan/Nova + Mistral), Mistral direct, Meta Llama direct,
+    and Qwen. Wired as `loadBuiltinRegistry` on the process-wide `contextWindowResolver`.
+  - (b) Family heuristic uses boundary-safe `startsWith(key + "-"|"."|":"|"/")` — `gpt-4.5-preview`
+    no longer silently resolves via the stale `gpt-4` entry.
+  - (c) `contextWindowResolver.evict(providerId)` called in both `routes/provider.ts` PUT handlers
+    on `modelMeta` change.
+  - (d) `defaultHttpGetJson` uses `AbortSignal.timeout(5000)`; `#inflight` map prevents cold-cache
+    stampede; the two `resolve` calls in `buildCompactionRuntime` are run in parallel
+    (`Promise.all`). Note: default-source results are still cached for the full TTL (old defect 6 /
+    MED priority — open, tracked separately).
+
+## Code review 2026-06-10 — full-branch review of chunks 1-3 (RV1-RV7 ALL FIXED)
 
 Multi-angle adversarial review of all compaction code (7 finder angles, every
 candidate independently verified against the source). Every finding below is
 CONFIRMED unless marked otherwise. **RV1-RV4 were blocking** and are now fixed.
-RV5-RV7 are HIGH but non-blocking for deploy.
+**RV5-RV7 HIGH non-blocking fixes landed 2026-06-10 (chunk 3b).**
 
 ### Critical
 
@@ -175,38 +198,26 @@ RV5-RV7 are HIGH but non-blocking for deploy.
   inside `recent` for oversized tool outputs), and never commit
   `watermark: null` together with a non-null summary.
 
-### High
+### High (all FIXED 2026-06-10 chunk 3b)
 
 - **RV5 — `content`-type tool results (standard MCP output) never pruned and
-  invisible to the summarizer.** (`compaction.ts` `pruneModelMessage` handles
-  only text/json variants; `renderModelMessages` renders `content` as `""`)
-  `@ai-sdk/mcp` emits `{type:"content"}` for essentially every MCP tool result,
-  so Stage 1 reclaims zero tokens from exactly the bulkiest payloads (always
-  escalating to a paid Stage-2 call) and their information is silently lost
-  from the summary. Subsumes old defect 7. _Fix:_ handle `content` in both the
-  pruner (soft-trim text items, replace media/file-data with placeholders) and
-  the renderer.
-- **RV6 — recovery target ignores per-turn overhead.** (`chat-execution.ts`
-  RecoveryContext gets raw `budget.targetTokens`; Tier 1 uses
-  `target − overhead`) With overhead > ~65% of the window (the observed
-  8888-token agent vs the 8192 default window), the single retry still
-  overflows where the overhead-adjusted target would have fit. _Fix:_ pass
-  `Math.max(0, targetTokens - overheadTokens)` into RecoveryContext.
-- **RV7 — context-window resolution family.** (`context-window.ts`)
-  (a) prod registry still empty (= old defect 2, the remaining HIGH);
-  (b) **family heuristic does raw `startsWith` with no key-boundary check** —
-  `gpt-4.5-preview` silently resolves via a stale `gpt-4` entry (8192) as
-  `source:"registry"`, no MISS warn (upgrades old defect 11 from LOW);
-  (c) `evict` is called by **zero routes** (= old defect 5; both
-  `routes/provider.ts` and `routes/org-provider.ts` PUT handlers);
-  (d) `defaultHttpGetJson` has **no timeout** and the cache stores values not
-  in-flight promises — a hung provider endpoint blocks turns ~300 s (undici
-  default) once per provider:model per hour, with a cold-cache stampede; the
-  two `resolve` calls in `buildCompactionRuntime` are also sequential
-  (partially = old defect 6: a default-source result IS cached for the full
-  1 h TTL). _Fix:_ vendor the registry + alias map; add a boundary check to
-  the heuristic; wire `evict` into both PUT handlers; AbortSignal.timeout on
-  fetch + single-flight promise cache + `Promise.all` the two resolves.
+  invisible to the summarizer.** ~~(`compaction.ts` `pruneModelMessage` handles
+  only text/json variants; `renderModelMessages` renders `content` as `""`)~~
+  **FIXED:** `pruneModelMessage` soft-trims text items + media placeholder;
+  `renderModelMessages` extracts text items from `content` outputs.
+- **RV6 — recovery target ignores per-turn overhead.** ~~(`chat-execution.ts`
+  RecoveryContext gets raw `budget.targetTokens`; Tier 1 uses `target − overhead`)~~
+  **FIXED:** `RecoveryContext.targetTokens = Math.max(0, budget.targetTokens − overheadTokens)`.
+- **RV7 — context-window resolution family.** ~~(`context-window.ts`)~~
+  (a) ~~prod registry still empty~~ **FIXED:** `litellm-registry.ts` vendored with
+  full OpenAI/Anthropic/Bedrock/Mistral/Llama/Qwen coverage;
+  (b) ~~raw `startsWith` heuristic~~ **FIXED:** boundary-safe separators
+  (`"-"`, `"."`, `":"`, `"/"`) prevent `gpt-4.5-preview` → `gpt-4` resolution;
+  (c) ~~`evict` called by zero routes~~ **FIXED:** `contextWindowResolver.evict(providerId)`
+  wired in `routes/provider.ts` PUT handler;
+  (d) ~~no timeout / no single-flight~~ **FIXED:** `AbortSignal.timeout(5000)` +
+  `#inflight` Map + `Promise.all` the two resolve calls. (default-source full-TTL
+  cache = old defect 6, MED, still open).
 
 ### Medium / low
 
@@ -903,13 +914,17 @@ Emit metrics (not just logs):
 3. Recovery (overflow detect + retry-once + dirty flag). **✅ DONE 2026-06-10**
    (C1 overhead fix + M2 margin + summarizerWindow threading folded in; the
    `lastInputTokens` half of C1 moves to step 6 — see Chunk 3 §).
-   3a. **Review-fix chunk (RV1-RV4). ✅ DONE 2026-06-10.** RV5-RV7 open (HIGH,
-   non-blocking) — address opportunistically or fold into chunk 4.
-4. Tier 2 (`prepareStep`, in-memory) — note the recovery middleware
-   already covers per-step overflow reactively; Tier 2 adds the proactive
-   in-loop trim. Remaining HIGH defect: empty litellm registry (RV7a) —
-   consider folding it in here if not done in 3a; the budget math is
-   wrong-defaulted until then.
+   3a. **Review-fix chunk (RV1-RV4). ✅ DONE 2026-06-10.**
+   3b. **Review-fix chunk (RV5-RV7). ✅ DONE 2026-06-10.** All HIGH non-blocking
+   defects resolved — content-type pruner/renderer, recovery overhead target,
+   litellm registry populated, heuristic boundary-safe, evict wired, timeout +
+   single-flight in context-window resolver.
+4. Tier 2 (`prepareStep`, in-memory). **✅ DONE 2026-06-10** `buildTier2PrepareStep`
+   wired into both `streamText` and `generateText`; fires when accumulated
+   ModelMessages exceed `triggerTokens` (drift m3); uses shared
+   `compactModelMessages` adapter (drift T3); null when kill switch off.
+   `Tier2Context` on `ChatTurn` threads config from `buildCompactionRuntime`.
+   Tests: 1074 pass; tsc source clean.
 5. Sub-agent wiring (Tier 2 only).
 6. Frontend usage metadata + ring (§H).
 7. Per-message stats popover (§I) — depends on metadata stamping from step 6.
