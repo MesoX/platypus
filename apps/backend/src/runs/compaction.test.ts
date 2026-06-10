@@ -368,6 +368,45 @@ describe("compactModelMessages (Tier 2 / recovery)", () => {
     const toolIdx = roles.indexOf("tool");
     expect(roles[toolIdx - 1]).toBe("assistant");
   });
+
+  it("force bypasses BOTH no-op gates so recovery never retries byte-identically (RV3)", async () => {
+    // Estimator says we are within target AND nothing is prunable (small,
+    // non-bulky messages). Without force both the whole-message gate and the
+    // post-prune gate would no-op → recovery would retry the exact same prompt
+    // and fail again. force must push through to a real summarize.
+    const msgs: ModelMessage[] = [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "recent-1" },
+      { role: "assistant", content: "recent-2" },
+    ];
+    const res = await compactModelMessages(msgs, {
+      ...baseOpts,
+      targetTokens: 100000, // estimator is well under target
+      force: true,
+    });
+    expect(res.usedModelCall).toBe(true);
+    expect(res.messagesDropped).toBeGreaterThan(0);
+    expect(res.messages).not.toBe(msgs);
+  });
+
+  it("force with an empty prefix is a no-op, not a prompt-growing summary (RV4 model-side)", async () => {
+    // recent alone exceeds keepRecentMessages → prefix is empty. Summarizing
+    // nothing would ADD a synthetic message and grow the prompt, never
+    // converging. Surface the overflow instead.
+    const msgs: ModelMessage[] = [
+      { role: "user", content: "only-1" },
+      { role: "assistant", content: "only-2" },
+    ];
+    const res = await compactModelMessages(msgs, {
+      ...baseOpts,
+      keepRecentMessages: 2,
+      targetTokens: 1,
+      force: true,
+    });
+    expect(res.usedModelCall).toBe(false);
+    expect(res.messages.length).toBe(msgs.length);
+  });
 });
 
 // --- Slice 2c: Tier 1 orchestration -------------------------------------

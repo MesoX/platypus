@@ -294,7 +294,15 @@ export class AgentRunner {
     // RV1: snapshot the DB state BEFORE onStart overwrites it so applyTier1IfNeeded
     // has the correct C4 baseline. Only needed for interactive chats (request.id).
     const priorMessages = input.request.id
-      ? await loadChatMessages(input.request.id).catch(() => undefined)
+      ? await loadChatMessages(input.request.id).catch((err) => {
+          // Falls back to the post-overwrite DB read inside applyTier1IfNeeded,
+          // which cannot detect edits below the watermark — log the degradation.
+          logger.warn(
+            { err, chatId: input.request.id },
+            "RV1: failed to snapshot prior messages; C4 edit-detection degraded this turn",
+          );
+          return undefined;
+        })
       : undefined;
 
     await sink.onStart({ runId: input.runId, messages: input.messages });

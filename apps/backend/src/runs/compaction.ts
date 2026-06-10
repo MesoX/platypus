@@ -381,10 +381,14 @@ export async function compactUIMessages(
   }
 
   // RV4: nothing to summarize when the prefix is empty (history fits within
-  // keepRecentMessages). Committing a watermark:null + non-null summary would
-  // orphan the summary — viewAfterWatermark ignores contextSummary when the
-  // watermark is null, causing the previously-summarised prefix to reappear.
-  if (prefix.length === 0) {
+  // keepRecentMessages). Also bail when the boundary message has no id — we
+  // cannot anchor a watermark there, and committing a watermark:null +
+  // non-null summary would orphan the summary (viewAfterWatermark ignores
+  // contextSummary when the watermark is null, so the previously-summarised
+  // prefix reappears every turn).
+  const watermarkId =
+    prefix.length > 0 ? (prefix[prefix.length - 1].id ?? null) : null;
+  if (prefix.length === 0 || watermarkId === null) {
     return {
       keptMessages: prunedAll,
       summaryText: opts.priorSummary ?? null,
@@ -402,7 +406,6 @@ export async function compactUIMessages(
     opts.summarize,
     opts.summarizerWindow,
   );
-  const watermarkId = prefix[prefix.length - 1].id ?? null;
 
   return {
     keptMessages: recent,
@@ -544,7 +547,23 @@ export async function compactModelMessages(
     pruneModelMessage(m, opts.minPrunableChars),
   );
   const prunedAll = [...prunedPrefix, ...recent];
-  if (estimate(prunedAll) <= opts.targetTokens) {
+  // Force-guarded like gate 1 (RV3): when recovery forces a trim the provider
+  // already rejected this prompt, so the estimator proved wrong — re-trusting
+  // it here would return a byte-identical prompt and burn the single retry.
+  if (!opts.force && estimate(prunedAll) <= opts.targetTokens) {
+    return {
+      messages: prunedAll,
+      messagesDropped: 0,
+      usedModelCall: false,
+      estimatedTokens: estimate(prunedAll),
+    };
+  }
+
+  // RV4 (model-side): nothing to summarize when the prefix is empty (recent
+  // alone exceeds keepRecentMessages). Summarizing an empty prefix would add a
+  // synthetic message and GROW the prompt — never converges. Surface the
+  // overflow instead (recovery retries once, then propagates).
+  if (prefix.length === 0) {
     return {
       messages: prunedAll,
       messagesDropped: 0,
