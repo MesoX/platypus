@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-3 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10 — see Implementation status §) · Branch target: `feature/context-compaction`
+Status: **chunks 1-3 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; **full-branch review 2026-06-10 found 4 critical defects — fix RV1-RV4 before chunk 4 or any deploy**, see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -27,10 +27,10 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
   then-skip, no livelock. No field write bypasses it.
 - **C2 hysteresis, C3 budget, C4 invalidation, M1 map-reduce primitive, T7
   summarizer fallback** — VERIFIED in `compaction.ts`.
-- **C4 wiring** — VERIFIED. By design there is no separate edit/delete/regenerate
-  endpoint; the client resubmits the full array, so invalidation is correctly
-  detected at submit (`chat-execution.ts` `affectedBelowWatermark`→
-  `invalidateCompaction`). The earlier "never invoked" worry does NOT apply.
+- **C4 wiring** — ~~VERIFIED~~ **OVERTURNED by the 2026-06-10 review (RV1).**
+  The mechanism is wired but the comparison baseline is destroyed before it runs
+  (ChatSink.onStart overwrite) and the two sides are canonicalized differently
+  (inlined URLs, jsonb key order). See §Code review 2026-06-10, RV1.
 - **Schema / migration / zod / lazy-rollout** — VERIFIED. Columns additive +
   nullable/defaulted; migration `0047_context_compaction.sql` matches schema;
   `modelMeta` optional in all variants; `contextSummary`/`summaryWatermark` kept
@@ -81,7 +81,159 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
   retry/dirty/failure paths, trim boundary safety, projection C1/M2 cases,
   `setCompactionDirty`, overhead estimator. Source tsc clean; eslint 0 errors.
 
+## Code review 2026-06-10 — full-branch review of chunks 1-3 (OPEN — fix before chunk 4 / deploy)
+
+Multi-angle adversarial review of all compaction code (7 finder angles, every
+candidate independently verified against the source). Every finding below is
+CONFIRMED unless marked otherwise. **RV1-RV4 are blocking**: RV1 breaks the
+feature's core promise on the happy path; RV2 is a tenant-isolation hole; RV3/RV4
+defeat the recovery net in exactly the cases it exists for. Recommended fix
+order: RV1 → RV2 → RV3/RV4, then the rest opportunistically.
+
+### Critical
+
+- **RV1 — C4 invalidation broken in BOTH directions; durable summary likely never
+  survives a turn in prod.** (`chat-execution.ts` `applyTier1IfNeeded` /
+  `chat-sink.ts` `onStart` / `compaction.ts` `affectedBelowWatermark`)
+  - _Missed edits:_ `AgentRunner.stream` awaits `sink.onStart` **before**
+    `prepareChatTurn`, and `ChatSink.onStart` overwrites `chat.messages` with the
+    just-submitted history — so `loadPersistedMessages` reads back the edited
+    submission and the C4 check compares the edit against itself. An **in-place
+    edit below the watermark is never detected**: the model gets the stale
+    summary and the edited message is dropped from the view. (Truncate-and-
+    regenerate accidentally still invalidates via the watermark-gone fallback.)
+  - _Spurious invalidation:_ the incoming side is post-`inlineFileUrls`
+    (`data:` URLs) while the persisted side holds `http /files/…` — any chat
+    with a file at/below the watermark **invalidates + fully re-summarizes every
+    turn** (one wasted summarize model call per turn, forever). Additionally
+    `chat.messages` is **jsonb** (Postgres re-orders object keys), so the
+    `JSON.stringify` byte-equality very likely diverges for ALL chats after one
+    write→read round trip — the incremental summary never survives.
+  - _Fix direction:_ capture the pre-overwrite history (read the row BEFORE
+    onStart overwrites, or have onStart return the previous messages), compare
+    the **un-inlined** submission, and use semantic equality (id + extracted
+    text/tool content, or the SDK's `isDeepEqualData`) instead of
+    `JSON.stringify` byte-equality. Also consider a content digest persisted at
+    compaction time to avoid the per-turn full-history read (see RV9).
+- **RV2 — cross-tenant compaction writes via unvalidated `request.id`
+  (security).** (`routes/chat.ts` submit handler; `compaction.ts`
+  `drizzleCompactionStore`) The submit route never verifies the body `id`
+  belongs to the caller's workspace (every other chat route filters
+  `id AND workspaceId`; submit does no chat-row lookup at all). The compaction
+  store, `loadPersistedMessages`, `invalidateCompaction`, `setCompactionDirty`
+  are keyed by `chat.id` only. A workspace-A owner submitting `id` = a
+  workspace-B chat id can clear B's summary/watermark, set B's dirty flag, and
+  CAS-write a summary derived from A's messages onto B's row (integrity, not
+  read-exfiltration; requires knowing B's chat id). _Fix:_ verify `request.id`
+  belongs to `scope.workspaceId` before the run starts (mirror the other chat
+  routes), and/or scope the store's queries by workspaceId.
+- **RV3 — recovery + dirty-forced compaction trust the estimator that already
+  failed → permanent fail loop.** (`compaction.ts` no-op branches in both
+  compactors; `recovery.ts` `trimOverflowingPrompt`) Both compactors return the
+  messages **unchanged** when the char/4 estimate is ≤ target — but recovery
+  only runs after the provider has REJECTED the prompt. With a >2× under-count
+  (CJK ≈1 token/char; assistant `reasoning` parts excluded from counting AND
+  from pruning/summarizing — they ARE wire payload in the V3 prompt), the retry
+  resends a byte-identical prompt and deterministically fails; next turn the
+  dirty flag forces Tier 1, which no-ops and **clears the flag without
+  shrinking** → overflow → dirty again, every turn. _Fix:_ recovery (and
+  dirty-forced Tier 1) must force-trim past the estimate gate — e.g. a `force`
+  option on the compactors that skips the no-op branch and/or scales the
+  target down when invoked post-rejection; count reasoning parts in the
+  ModelMessage adapter (the "reasoning is UI-only" assumption in §B is wrong
+  for the V3 prompt path).
+- **RV4 — small-history compaction clobbers the watermark and orphans the
+  summary.** (`compaction.ts` `compactUIMessages` boundary=0 path +
+  `applyTier1Compaction` commit) When the over-target history has ≤
+  `keepRecentMessages` messages (one huge paste; or `effectiveTarget≈0` from
+  overhead), prefix=[] → a **wasted summarize call over an empty transcript** →
+  commit of `{summary, watermark: null}`. A pre-existing watermark is
+  overwritten with null; `viewAfterWatermark` ignores `contextSummary` when the
+  watermark is null, so the summary is orphaned, the previously-summarized
+  prefix reappears in the view, and the cycle repeats each turn. _Fix:_ skip
+  Stage 2 when the prefix is empty (return the no-op shape; optionally prune
+  inside `recent` for oversized tool outputs), and never commit
+  `watermark: null` together with a non-null summary.
+
+### High
+
+- **RV5 — `content`-type tool results (standard MCP output) never pruned and
+  invisible to the summarizer.** (`compaction.ts` `pruneModelMessage` handles
+  only text/json variants; `renderModelMessages` renders `content` as `""`)
+  `@ai-sdk/mcp` emits `{type:"content"}` for essentially every MCP tool result,
+  so Stage 1 reclaims zero tokens from exactly the bulkiest payloads (always
+  escalating to a paid Stage-2 call) and their information is silently lost
+  from the summary. Subsumes old defect 7. _Fix:_ handle `content` in both the
+  pruner (soft-trim text items, replace media/file-data with placeholders) and
+  the renderer.
+- **RV6 — recovery target ignores per-turn overhead.** (`chat-execution.ts`
+  RecoveryContext gets raw `budget.targetTokens`; Tier 1 uses
+  `target − overhead`) With overhead > ~65% of the window (the observed
+  8888-token agent vs the 8192 default window), the single retry still
+  overflows where the overhead-adjusted target would have fit. _Fix:_ pass
+  `Math.max(0, targetTokens - overheadTokens)` into RecoveryContext.
+- **RV7 — context-window resolution family.** (`context-window.ts`)
+  (a) prod registry still empty (= old defect 2, the remaining HIGH);
+  (b) **family heuristic does raw `startsWith` with no key-boundary check** —
+  `gpt-4.5-preview` silently resolves via a stale `gpt-4` entry (8192) as
+  `source:"registry"`, no MISS warn (upgrades old defect 11 from LOW);
+  (c) `evict` is called by **zero routes** (= old defect 5; both
+  `routes/provider.ts` and `routes/org-provider.ts` PUT handlers);
+  (d) `defaultHttpGetJson` has **no timeout** and the cache stores values not
+  in-flight promises — a hung provider endpoint blocks turns ~300 s (undici
+  default) once per provider:model per hour, with a cold-cache stampede; the
+  two `resolve` calls in `buildCompactionRuntime` are also sequential
+  (partially = old defect 6: a default-source result IS cached for the full
+  1 h TTL). _Fix:_ vendor the registry + alias map; add a boundary check to
+  the heuristic; wire `evict` into both PUT handlers; AbortSignal.timeout on
+  fetch + single-flight promise cache + `Promise.all` the two resolves.
+
+### Medium / low
+
+- **RV8 (PLAUSIBLE) — `finalize` in the snapshot-consumer's `finally` can mark
+  a broken run "succeeded".** (`agent-runner.ts`) Introduced by the
+  tool-timestamps commits (`3851da6`/`b97312f`), **not** the compaction chunks
+  — note for the upstream-PR exclusion list. An internal stream-machinery fault
+  ends the for-await loop early (readUIMessageStream swallows errors,
+  `terminateOnError` defaults false) → `finalize("succeeded")` persists a
+  partial message, disposes MCP clients under a live tool loop, unregisters the
+  run (cancel becomes no-op). Rare trigger; fix when touching the timestamps
+  feature.
+- **RV9 — hot-path waste.** 3-4 full-history estimation passes per triggered
+  turn (each re-running sorted-key `stableStringify` over all tool I/O,
+  event-loop-blocking tens-to-hundreds of ms on big histories); image data-URLs
+  fully base64-decoded per pass to read a ~30-byte header; tool JSON schemas
+  re-serialized every turn (`estimateOverheadTokens`); once a watermark exists,
+  C4 reads the full `messages` JSONB row + stringify-compares the whole prefix
+  every turn. _Fix:_ compute each estimate once and reuse; decode only a base64
+  prefix for header parsing; cache per-tool overhead in a WeakMap; digest-based
+  C4 check (folds into RV1's rework).
+- **RV10 — cleanup minors.** Dead `MODEL_BOUND_UI_PART_TYPES` export whose
+  comment promises a test that doesn't exist; `toolResultOutputText` 5-label
+  switch collapses to 2 behaviors; two near-identical `commitWatermark`
+  closures in `applyTier1Compaction` (the version-pinning gate lives in two
+  copies); orphaned jsdoc block above `affectedBelowWatermark` (describes
+  `invalidateCompaction`); JPEG walker mishandles 0xFF fill bytes / TEM marker
+  (safe 1200-token fallback in practice — hardening only: skip `0xFF` fill
+  bytes, add `0x01` to the standalone set); `bytesFromUrl` duplicates
+  storage/utils' private `parseDataUrl` with a diverging regex.
+
+### Re-affirmed solid by this review
+
+CAS writer/loser logic (P3/R1/T10), budget math (C3), tool-pairing boundaries,
+the synthetic `context-summary` message (server-side only — never leaks to
+persistence/frontend; cannot become the watermark), recovery middleware
+single-retry semantics and summarizer non-recursion (fresh unwrapped task
+model), Tier-1 skip for headless runs (M3), kill-switch wiring (§G) with the
+documented dirty-forces-compaction exception (intent, has a test — though §G's
+wording "disables ALL proactive compaction" should gain a sentence noting the
+recovery hand-off still summarizes).
+
 ### Defects to fix (ordered by impact)
+
+> 2026-06-10 note: still-open items below are subsumed by the §Code review
+> 2026-06-10 list — defect 2 → RV7(a), 5 → RV7(c), 6 → RV7(d), 7 → RV5,
+> 11's heuristic item → RV7(b). Track them there.
 
 1. **C1 — trigger under-counts (HIGH). _FIXED (overhead half) 2026-06-10; `lastInputTokens` half → §H chunk._** `compaction.ts:719`
    `projected = estimate(afterWatermark) + priorSummaryTokens` — omits the prior
@@ -133,8 +285,11 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
 `C1` → **PARTIAL** (overhead + margin landed 2026-06-10; `lastInputTokens`
 plumbing waits on §H). `M2` → **VERIFIED**. `T3` → **VERIFIED** (producer landed
 in chunk 3). `T9` → **VERIFIED**. `R4` → **PARTIAL** (window present & correctly
-unfixed, but the gating `cas.conflict` metric is missing). Everything else listed
-above → VERIFIED. `T5` → module hook present, **PATCH-handler call missing** (defect 5).
+unfixed, but the gating `cas.conflict` metric is missing). `C4` → **BROKEN**
+(2026-06-10 review, RV1 — baseline overwritten + byte-equality false
+positives/negatives). `T1` → **PARTIAL** (reasoning parts ARE wire payload in
+the V3 prompt path but excluded — RV3). Everything else listed
+above → VERIFIED. `T5` → module hook present, **PUT-handler call missing** (RV7c).
 
 ### Chunk 3 (Recovery) — hand-off is clean
 
@@ -728,10 +883,17 @@ Emit metrics (not just logs):
 3. Recovery (overflow detect + retry-once + dirty flag). **✅ DONE 2026-06-10**
    (C1 overhead fix + M2 margin + summarizerWindow threading folded in; the
    `lastInputTokens` half of C1 moves to step 6 — see Chunk 3 §).
-4. Tier 2 (`prepareStep`, in-memory). **← NEXT** — note the recovery middleware
+3a. **Review-fix chunk (RV1-RV7, §Code review 2026-06-10). ← NEXT — blocking.**
+   RV1 (C4 baseline + equality rework), RV2 (chat-id workspace scoping),
+   RV3 (force-trim past the estimate gate + count reasoning parts),
+   RV4 (empty-prefix guard), then RV5-RV7 (content-type pruning, recovery
+   overhead target, registry/heuristic/evict/timeout). Do this before chunk 4
+   and before any deploy to the test server.
+4. Tier 2 (`prepareStep`, in-memory) — note the recovery middleware
    already covers per-step overflow reactively; Tier 2 adds the proactive
-   in-loop trim. Remaining HIGH defect: empty litellm registry (defect 2) —
-   consider folding it in here, the budget math is wrong-defaulted until then.
+   in-loop trim. Remaining HIGH defect: empty litellm registry (RV7a) —
+   consider folding it in here if not done in 3a; the budget math is
+   wrong-defaulted until then.
 5. Sub-agent wiring (Tier 2 only).
 6. Frontend usage metadata + ring (§H).
 7. Per-message stats popover (§I) — depends on metadata stamping from step 6.
