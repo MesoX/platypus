@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-2 implemented & reviewed** (spec passed 4 review rounds; code reviewed 2026-06-09 — see Implementation status §) · Branch target: `feature/context-compaction`
+Status: **chunks 1-3 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10 — see Implementation status §) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -41,9 +41,49 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
 - **`compactModelMessages` Tier 2 adapter** — fully implemented + tested (NOT a
   stub). Recovery (chunk 3) and Tier 2 (chunk 4) can call it directly.
 
+### Chunk 3 (Recovery + C1/M2) — landed 2026-06-10
+
+- **§E recovery** — new `runs/recovery.ts`. `isContextOverflowError` (400/413 +
+  per-provider body regex: OpenAI/vLLM, Anthropic, Google, Bedrock — drift T9,
+  fixture-tested). `contextOverflowRecoveryMiddleware` wraps the model via
+  `wrapLanguageModel` in BOTH `streamText` and `generateText` (agent-runner), so
+  every step of a tool loop gets detect → `setCompactionDirty` (flag persisted on
+  DETECTION, before retry outcome) → trim via **`compactModelMessages`** (T3, no
+  bespoke trim; system head pinned; keep-recent halved, floor 2) → retry once.
+  Second failure surfaces "Conversation too large… start a new chat" via
+  `formatStreamError`. The V3 prompt is passed to `compactModelMessages`
+  directly (structurally compatible shape) — no converter, no second trimmer.
+  `setCompactionDirty` goes through `commitWatermark` (P3); no-op when already
+  dirty. Headless runs get trim+retry but no dirty flag (no chat row).
+- **C1 fix (partial — overhead path)** — `estimateOverheadTokens(systemPrompt,
+  tools)` in token-estimate.ts (char/4 of system prompt + each tool's name,
+  description, `asSchema(...).jsonSchema`; flat 200/tool fallback). Threaded as
+  `Tier1Input.overheadTokens`; the trigger projection
+  (`projectTier1Tokens`) now counts it, and the compaction target is reduced by
+  it (`targetTokens − overhead`) so hysteresis (C2) still holds. `log.warn` when
+  overhead alone ≥ target (compaction would re-fire each turn).
+  **Remaining C1 half:** `Tier1Input.lastInputTokens` exists and acts as a floor
+  on the projection, but no call site supplies it yet — thread the provider
+  `usage.inputTokens` from the prior turn in the §H usage-metadata chunk.
+- **M2 fixed** — `COLD_START_MARGIN = 1.15` applied to the whole char-based
+  projection whenever no provider baseline exists; dropped when
+  `lastInputTokens` is present.
+- **Defect 4 fixed** — `summarizerWindow` now resolved (task-model window →
+  `computeBudget(...).inputBudget`) in `buildCompactionRuntime` and threaded to
+  Tier 1 and recovery; M1 map-reduce is live in the wired flow.
+- **Defect 9 fixed** — token-estimate header no longer claims per-turn provider
+  counts.
+- **Refactor** — `buildCompactionRuntime` (chat-execution) resolves window /
+  config / budget / summarizer once per turn, never throws (falls back to the
+  8192 default), and is shared by Tier 1 and the recovery middleware; `ChatTurn`
+  gained a required `recovery: RecoveryContext` field consumed by agent-runner.
+- Tests: backend suite 1068 pass (was 1037) — recovery matrix + middleware
+  retry/dirty/failure paths, trim boundary safety, projection C1/M2 cases,
+  `setCompactionDirty`, overhead estimator. Source tsc clean; eslint 0 errors.
+
 ### Defects to fix (ordered by impact)
 
-1. **C1 — trigger under-counts (HIGH).** `compaction.ts:719`
+1. **C1 — trigger under-counts (HIGH). _FIXED (overhead half) 2026-06-10; `lastInputTokens` half → §H chunk._** `compaction.ts:719`
    `projected = estimate(afterWatermark) + priorSummaryTokens` — omits the prior
    turn's provider `usage.inputTokens` AND the system prompt / tool schemas / skill
    payload sent every turn. `Tier1Input` has no `lastInputTokens` field; the call
@@ -57,9 +97,11 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
    resolves to `DEFAULT_CONTEXT_WINDOW = 8192`. The budget math is therefore
    wrong-defaulted for those providers today. Must vendor litellm
    `model_prices_and_context_window.json` + build the alias map and wire them in.
-3. **M2 — first-turn ×1.15 margin absent (MED).** `compaction.ts:719` applies no
+3. **M2 — first-turn ×1.15 margin absent (MED). _FIXED 2026-06-10._**
+   `compaction.ts:719` applies no
    cold-start inflation; a char/4 under-count can keep turn-1 from triggering.
-4. **`summarizerWindow` not threaded (MED).** `chat-execution.ts:537` calls
+4. **`summarizerWindow` not threaded (MED). _FIXED 2026-06-10._**
+   `chat-execution.ts:537` calls
    `applyTier1Compaction` without `summarizerWindow`, so the M1 map-reduce path is
    dead in the wired flow — a large cold-start/imported history can overflow the
    summarizer call itself.
@@ -76,7 +118,7 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
    full tool output, but a tool with custom `toModelOutput` (e.g. the sub-agent
    tool) is collapsed on the model side → UI vs Model counts differ. Untested; add
    a `toModelOutput` fixture.
-9. **Doc bug.** `token-estimate.ts` header claims "every later turn uses the real
+9. **Doc bug. _FIXED 2026-06-10._** `token-estimate.ts` header claims "every later turn uses the real
    provider count" — false; char/4 is used every turn (ties to C1). Fix the comment
    when C1 is plumbed.
 10. **Observability metrics absent (across both chunks).** No `cas.conflict` (gates
@@ -88,8 +130,9 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
 
 ### Drift-checklist deltas (vs the table at the bottom)
 
-`C1` → **MISSING** (defect 1). `M2` → **MISSING** (defect 3). `T3` → **PARTIAL**
-(consumer wired; producer = chunk 3). `R4` → **PARTIAL** (window present & correctly
+`C1` → **PARTIAL** (overhead + margin landed 2026-06-10; `lastInputTokens`
+plumbing waits on §H). `M2` → **VERIFIED**. `T3` → **VERIFIED** (producer landed
+in chunk 3). `T9` → **VERIFIED**. `R4` → **PARTIAL** (window present & correctly
 unfixed, but the gating `cas.conflict` metric is missing). Everything else listed
 above → VERIFIED. `T5` → module hook present, **PATCH-handler call missing** (defect 5).
 
@@ -682,9 +725,13 @@ Emit metrics (not just logs):
 2. Compaction module + `writeWatermark` CAS + Tier 1 (cross-turn, persist).
    **✅ DONE** (open defects: C1 trigger under-count, M2 margin, summarizerWindow
    not threaded — see Review §).
-3. Recovery (overflow detect + retry-once + dirty flag). **← NEXT** (hand-off ready;
-   fold in the C1 fix — see Review §).
-4. Tier 2 (`prepareStep`, in-memory).
+3. Recovery (overflow detect + retry-once + dirty flag). **✅ DONE 2026-06-10**
+   (C1 overhead fix + M2 margin + summarizerWindow threading folded in; the
+   `lastInputTokens` half of C1 moves to step 6 — see Chunk 3 §).
+4. Tier 2 (`prepareStep`, in-memory). **← NEXT** — note the recovery middleware
+   already covers per-step overflow reactively; Tier 2 adds the proactive
+   in-loop trim. Remaining HIGH defect: empty litellm registry (defect 2) —
+   consider folding it in here, the budget math is wrong-defaulted until then.
 5. Sub-agent wiring (Tier 2 only).
 6. Frontend usage metadata + ring (§H).
 7. Per-message stats popover (§I) — depends on metadata stamping from step 6.
