@@ -32,6 +32,7 @@ import {
   Agent,
   ToolSet,
   Skill,
+  type MessageStats,
 } from "@platypus/schemas";
 import { type PlatypusUIMessage } from "@platypus/backend/src/types";
 import useSWR from "swr";
@@ -55,6 +56,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChatMessage } from "./chat-message";
+import { ContextUsageRing } from "./context-usage-ring";
 import { ModelSelectorDialog } from "./model-selector-dialog";
 import { toast } from "sonner";
 
@@ -378,6 +380,46 @@ export const Chat = ({
     [messages, setMessages],
   );
 
+  // Resolve the effective provider+model for the ring (drift U1: use selected
+  // model's window, not last message's window). When an agent is selected we
+  // look up its provider/model; otherwise use the directly selected values.
+  const effectiveRingProviderId = agentId
+    ? (agents.find((a) => a.id === agentId)?.providerId ?? "")
+    : providerId;
+  const effectiveRingModelId = agentId
+    ? (agents.find((a) => a.id === agentId)?.modelId ?? "")
+    : modelId;
+
+  // Fetch resolved context window for the currently-selected model (cached on
+  // the backend). Returns null contextWindow when source = "default" so the ring
+  // renders neutral (drift T6). Re-fetches automatically on model/agent change.
+  const { data: contextWindowData } = useSWR<{
+    contextWindow: number | null;
+    source: string;
+  }>(
+    backendUrl && user && effectiveRingProviderId && effectiveRingModelId
+      ? joinUrl(
+          backendUrl,
+          `/organizations/${orgId}/workspaces/${workspaceId}/providers/${effectiveRingProviderId}/context-window?modelId=${encodeURIComponent(effectiveRingModelId)}`,
+        )
+      : null,
+    fetcher,
+  );
+
+  // Stats from the last completed assistant message for the ring (§H) and
+  // per-message stats popover (§I).
+  const lastAssistantStats = useMemo<MessageStats | null>(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      const stats = (msg.metadata as { stats?: MessageStats } | undefined)
+        ?.stats;
+      if (msg.role === "assistant" && stats) {
+        return stats;
+      }
+    }
+    return null;
+  }, [messages]);
+
   // TODO: Ideally show a loading indicator here
   if (isLoading || !providersData) return null;
 
@@ -576,6 +618,10 @@ export const Chat = ({
                         <TooltipContent>Search</TooltipContent>
                       </Tooltip>
                     )}
+                    <ContextUsageRing
+                      usedTokens={lastAssistantStats?.contextTokens}
+                      contextWindow={contextWindowData?.contextWindow}
+                    />
                     <ModelSelectorDialog
                       agents={agents}
                       providers={providers}

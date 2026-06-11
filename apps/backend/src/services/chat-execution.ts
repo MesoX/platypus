@@ -159,6 +159,10 @@ export type ChatTurn = {
     frequencyPenalty?: number;
     presencePenalty?: number;
     seed?: number;
+    /** Resolved context window for the main model (§H ring, §I stats). */
+    contextWindow: number;
+    /** True when contextWindow fell to the conservative default (T6: ring → neutral). */
+    contextWindowIsDefault: boolean;
   };
   /**
    * Context-overflow recovery wiring (§E, P4). Always present — recovery is
@@ -505,6 +509,10 @@ type CompactionRuntime = {
   imageProvider: ImageProvider;
   summarize: Summarize;
   summarizerWindow?: number;
+  /** Resolved context window for the main model (§H ring). */
+  contextWindow: number;
+  /** True when the window fell to the conservative default (T6: ring → neutral). */
+  contextWindowIsDefault: boolean;
 };
 
 /**
@@ -571,6 +579,8 @@ async function buildCompactionRuntime(args: {
     imageProvider: imageProviderFor(provider.providerType),
     summarize,
     summarizerWindow,
+    contextWindow,
+    contextWindowIsDefault: !mainWindow || mainWindow.source === "default",
   };
 }
 
@@ -879,6 +889,8 @@ export const prepareChatTurn = async (
       frequencyPenalty: agent ? undefined : generation.frequencyPenalty,
       presencePenalty: agent ? undefined : generation.presencePenalty,
       seed: agent ? undefined : request.seed,
+      contextWindow: compactionRuntime.contextWindow,
+      contextWindowIsDefault: compactionRuntime.contextWindowIsDefault,
     },
     recovery,
     tier2: compactionRuntime.config.compactionEnabled

@@ -1572,3 +1572,23 @@ export const dashboardUpdateSchema = z.object({
   desktopLayout: z.array(rglLayoutItemSchema).optional(),
   mobileLayout: z.array(rglLayoutItemSchema).optional(),
 });
+
+// Message stats (context-compaction-plan §H/§I)
+// Stamped on the last assistant message's metadata.stats after each stream run.
+// Used by the frontend context-usage ring (§H) and per-message stats popover (§I).
+
+export const messageStatsSchema = z.object({
+  // Run-wide totals across every step (sum) — for the §I cost popover.
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+  // Input tokens of the LAST model call = peak context fullness — for the §H
+  // ring. NOT the run-wide sum (which over-counts on multi-step tool loops).
+  contextTokens: z.number().nonnegative(),
+  startedAt: z.string(),
+  firstTokenAt: z.string().optional(),
+  finishedAt: z.string(),
+  contextWindow: z.number().positive(),
+  contextWindowIsDefault: z.boolean(),
+});
+
+export type MessageStats = z.infer<typeof messageStatsSchema>;

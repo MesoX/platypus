@@ -176,4 +176,44 @@ provider.delete(
   },
 );
 
+/**
+ * Returns the resolved context window for a specific model on this provider
+ * (§H ring, drift U1). Uses the cached resolver — fast for repeated calls.
+ * Returns `{ contextWindow: null }` when the window fell to the conservative
+ * default so the frontend can render the ring neutral (drift T6).
+ */
+provider.get(
+  "/:providerId/context-window",
+  requireAuth,
+  requireOrgAccess(),
+  requireWorkspaceAccess,
+  async (c) => {
+    const orgId = c.req.param("orgId")!;
+    const workspaceId = c.req.param("workspaceId")!;
+    const providerId = c.req.param("providerId");
+    const modelId = c.req.query("modelId");
+
+    if (!modelId) {
+      return c.json({ error: "modelId query parameter required" }, 400);
+    }
+
+    const found = await requireScoped(db, "provider", providerId, {
+      orgId,
+      wsId: workspaceId,
+    });
+
+    const resolved = await contextWindowResolver
+      .resolve(found.row, modelId)
+      .catch(() => null);
+
+    return c.json({
+      contextWindow:
+        resolved && resolved.source !== "default"
+          ? resolved.contextWindow
+          : null,
+      source: resolved?.source ?? "default",
+    });
+  },
+);
+
 export { provider };

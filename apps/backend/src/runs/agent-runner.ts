@@ -16,7 +16,7 @@ import {
   contextOverflowRecoveryMiddleware,
   isContextOverflowError,
 } from "./recovery.ts";
-import { buildTier2PrepareStep, type Tier2Context } from "./compaction.ts";
+import { buildTier2PrepareStep } from "./compaction.ts";
 import {
   loadChatMessages,
   prepareChatTurn,
@@ -96,6 +96,44 @@ export function withToolTimestamps<TChunk extends UIMessageChunk>(
     }),
   );
   return { stream: out, completions };
+}
+
+/** Stats stamped on the last assistant message's metadata after each stream (§H/§I). */
+export type MessageStats = {
+  /** Run-wide totals across every step (sum) — §I cost popover. */
+  inputTokens: number;
+  outputTokens: number;
+  /**
+   * Input tokens of the LAST model call = peak context fullness — §H ring.
+   * NOT the run-wide sum (which over-counts on multi-step tool loops).
+   */
+  contextTokens: number;
+  startedAt: string;
+  firstTokenAt?: string;
+  finishedAt: string;
+  contextWindow: number;
+  contextWindowIsDefault: boolean;
+};
+
+/**
+ * Stamps per-run stats (token counts, timing, resolved context window) onto
+ * the last assistant message's `metadata.stats` in place. Applied at the same
+ * point as {@link applyToolCompletions} so both mutations happen before the
+ * sink persists the final state (§H/§I).
+ */
+function applyMessageStats(
+  messages: PlatypusUIMessage[],
+  stats: MessageStats,
+): void {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      const msg = messages[i] as PlatypusUIMessage & {
+        metadata?: Record<string, unknown>;
+      };
+      msg.metadata = { ...msg.metadata, stats };
+      return;
+    }
+  }
 }
 
 /**
@@ -379,6 +417,12 @@ export class AgentRunner {
       "System prompt for chat",
     );
 
+    const startedAt = new Date().toISOString();
+    let firstTokenAt: string | undefined;
+    // Last step's input tokens = peak context fullness for the §H ring.
+    // lastStats.inputTokens is the run-wide SUM and over-counts tool loops.
+    let lastStepInputTokens = 0;
+
     const result = streamText({
       model: withOverflowRecovery(turn),
       messages: await convertToModelMessages(turn.stream.messages),
@@ -396,6 +440,7 @@ export class AgentRunner {
       onStepFinish: (step) => {
         handle.bumpStep();
         accumulateStepStats(lastStats, step);
+        lastStepInputTokens = step.usage?.inputTokens ?? lastStepInputTokens;
         logger.info(
           {
             runId: input.runId,
@@ -457,6 +502,9 @@ export class AgentRunner {
               "Snapshot stream parse error",
             ),
         })) {
+          if (!firstTokenAt && message.parts?.some((p) => p.type === "text")) {
+            firstTokenAt = new Date().toISOString();
+          }
           lastMessages = [...input.messages, message];
         }
       } catch (err) {
@@ -465,7 +513,20 @@ export class AgentRunner {
           "Server-side UI stream consumer error",
         );
       } finally {
+        const finishedAt = new Date().toISOString();
         applyToolCompletions(lastMessages, completions);
+        if (turn) {
+          applyMessageStats(lastMessages, {
+            inputTokens: lastStats.inputTokens ?? 0,
+            outputTokens: lastStats.outputTokens ?? 0,
+            contextTokens: lastStepInputTokens,
+            startedAt,
+            firstTokenAt,
+            finishedAt,
+            contextWindow: turn.resolved.contextWindow,
+            contextWindowIsDefault: turn.resolved.contextWindowIsDefault,
+          });
+        }
         let status: RunStatus = "succeeded";
         let err: Error | undefined;
         if (handle.signal.aborted) {
