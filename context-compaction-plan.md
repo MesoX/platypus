@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-2 implemented & reviewed** (spec passed 4 review rounds; code reviewed 2026-06-09 — see Implementation status §) · Branch target: `feature/context-compaction`
+Status: **chunks 1-9 implemented (ALL DONE)** (1-2 reviewed 2026-06-09; chunks 3-5 landed 2026-06-10; chunks 6-8 landed 2026-06-11; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -27,10 +27,10 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
   then-skip, no livelock. No field write bypasses it.
 - **C2 hysteresis, C3 budget, C4 invalidation, M1 map-reduce primitive, T7
   summarizer fallback** — VERIFIED in `compaction.ts`.
-- **C4 wiring** — VERIFIED. By design there is no separate edit/delete/regenerate
-  endpoint; the client resubmits the full array, so invalidation is correctly
-  detected at submit (`chat-execution.ts` `affectedBelowWatermark`→
-  `invalidateCompaction`). The earlier "never invoked" worry does NOT apply.
+- **C4 wiring** — ~~VERIFIED~~ **OVERTURNED by the 2026-06-10 review (RV1).**
+  The mechanism is wired but the comparison baseline is destroyed before it runs
+  (ChatSink.onStart overwrite) and the two sides are canonicalized differently
+  (inlined URLs, jsonb key order). See §Code review 2026-06-10, RV1.
 - **Schema / migration / zod / lazy-rollout** — VERIFIED. Columns additive +
   nullable/defaulted; migration `0047_context_compaction.sql` matches schema;
   `modelMeta` optional in all variants; `contextSummary`/`summaryWatermark` kept
@@ -41,9 +41,238 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
 - **`compactModelMessages` Tier 2 adapter** — fully implemented + tested (NOT a
   stub). Recovery (chunk 3) and Tier 2 (chunk 4) can call it directly.
 
+### Chunk 3 (Recovery + C1/M2) — landed 2026-06-10
+
+- **§E recovery** — new `runs/recovery.ts`. `isContextOverflowError` (400/413 +
+  per-provider body regex: OpenAI/vLLM, Anthropic, Google, Bedrock — drift T9,
+  fixture-tested). `contextOverflowRecoveryMiddleware` wraps the model via
+  `wrapLanguageModel` in BOTH `streamText` and `generateText` (agent-runner), so
+  every step of a tool loop gets detect → `setCompactionDirty` (flag persisted on
+  DETECTION, before retry outcome) → trim via **`compactModelMessages`** (T3, no
+  bespoke trim; system head pinned; keep-recent halved, floor 2) → retry once.
+  Second failure surfaces "Conversation too large… start a new chat" via
+  `formatStreamError`. The V3 prompt is passed to `compactModelMessages`
+  directly (structurally compatible shape) — no converter, no second trimmer.
+  `setCompactionDirty` goes through `commitWatermark` (P3); no-op when already
+  dirty. Headless runs get trim+retry but no dirty flag (no chat row).
+- **C1 fix (partial — overhead path)** — `estimateOverheadTokens(systemPrompt,
+tools)` in token-estimate.ts (char/4 of system prompt + each tool's name,
+  description, `asSchema(...).jsonSchema`; flat 200/tool fallback). Threaded as
+  `Tier1Input.overheadTokens`; the trigger projection
+  (`projectTier1Tokens`) now counts it, and the compaction target is reduced by
+  it (`targetTokens − overhead`) so hysteresis (C2) still holds. `log.warn` when
+  overhead alone ≥ target (compaction would re-fire each turn).
+  **C1 second half — DONE 2026-06-11.** `prepareChatTurn` now threads
+  `lastInputTokens` from the last assistant message's
+  `metadata.stats.contextTokens` (stamped by `applyMessageStats`, §H) into
+  `applyTier1IfNeeded`. `projectTier1Tokens` takes
+  `max(charBased, lastInputTokens)` (not additive — `charBased` is the whole
+  unsummarized view, so adding would double-count history); cold-start margin
+  applies only when it is absent (turn 1). C1 fully closed.
+- **M2 fixed** — `COLD_START_MARGIN = 1.15` applied to the whole char-based
+  projection whenever no provider baseline exists; dropped when
+  `lastInputTokens` is present.
+- **Defect 4 fixed** — `summarizerWindow` now resolved (task-model window →
+  `computeBudget(...).inputBudget`) in `buildCompactionRuntime` and threaded to
+  Tier 1 and recovery; M1 map-reduce is live in the wired flow.
+- **Defect 9 fixed** — token-estimate header no longer claims per-turn provider
+  counts.
+- **Refactor** — `buildCompactionRuntime` (chat-execution) resolves window /
+  config / budget / summarizer once per turn, never throws (falls back to the
+  8192 default), and is shared by Tier 1 and the recovery middleware; `ChatTurn`
+  gained a required `recovery: RecoveryContext` field consumed by agent-runner.
+- Tests: backend suite 1068 pass (was 1037) — recovery matrix + middleware
+  retry/dirty/failure paths, trim boundary safety, projection C1/M2 cases,
+  `setCompactionDirty`, overhead estimator. Source tsc clean; eslint 0 errors.
+
+## Chunk 3a — RV1-RV4 fixes (landed 2026-06-10)
+
+All 4 critical defects resolved. Tests: 1068 pass (unchanged count). tsc clean on
+source files. Key changes:
+
+- **RV1** — `stableStringify` exported from `token-estimate.ts`; `affectedBelowWatermark`
+  now uses it instead of `JSON.stringify` (jsonb key-order stability). C4 baseline
+  fixed: `agent-runner.stream()` reads `loadChatMessages(id)` BEFORE `sink.onStart`
+  overwrites the row, threads as `priorMessages` through `prepare()` →
+  `prepareChatTurn()` → `applyTier1IfNeeded()`. C4 comparison now uses
+  `rawMessages` (pre-`inlineFileUrls`) so file URLs match on both sides.
+- **RV2** — Submit handler in `routes/chat.ts` verifies `data.id` belongs to
+  `scope.workspaceId` (SELECT + 404 if workspace mismatch) before any run starts.
+- **RV3** — `force?: boolean` added to both `UICompactOptions` and `ModelCompactOptions`;
+  no-op estimate gate skipped when `force:true`. `applyTier1Compaction` passes
+  `force: forceCompact` to `compactUIMessages` (dirty-forced path). Recovery's
+  `trimOverflowingPrompt` passes `force: true` to `compactModelMessages`.
+- **RV4** — Empty-prefix guard added before Stage 2 in `compactUIMessages`: when
+  `prefix.length === 0` (history ≤ keepRecentMessages), return the pruned-recent
+  without calling `summarize` and without committing a `watermark:null` + non-null
+  summary (which would orphan the summary every turn).
+
+## Chunk 3b — RV5-RV7 fixes (landed 2026-06-10)
+
+All 3 HIGH non-blocking defects resolved. Tests: 1068 pass (unchanged count). tsc clean. Key changes:
+
+- **RV5** — `content`-type tool results: `pruneModelMessage` now soft-trims text items and replaces
+  media with `[N media item(s)]` placeholders; `renderModelMessages` extracts text from `content`
+  items so the summarizer sees their content. Both paths covered by `// RV5:` inline markers.
+- **RV6** — Recovery target overhead: `RecoveryContext.targetTokens` is now set to
+  `Math.max(0, budget.targetTokens − overheadTokens)` in `chat-execution.ts`
+  (mirrors the overhead-adjusted target Tier 1 already used).
+- **RV7** — Context-window resolution family (all four sub-items):
+  - (a) `litellm-registry.ts` populated with full registry covering OpenAI, Anthropic, Bedrock
+    (Anthropic + Meta Llama + Amazon Titan/Nova + Mistral), Mistral direct, Meta Llama direct,
+    and Qwen. Wired as `loadBuiltinRegistry` on the process-wide `contextWindowResolver`.
+  - (b) Family heuristic uses boundary-safe `startsWith(key + "-"|"."|":"|"/")` — `gpt-4.5-preview`
+    no longer silently resolves via the stale `gpt-4` entry.
+  - (c) `contextWindowResolver.evict(providerId)` called in both `routes/provider.ts` PUT handlers
+    on `modelMeta` change.
+  - (d) `defaultHttpGetJson` uses `AbortSignal.timeout(5000)`; `#inflight` map prevents cold-cache
+    stampede; the two `resolve` calls in `buildCompactionRuntime` are run in parallel
+    (`Promise.all`). Note: default-source results are still cached for the full TTL (old defect 6 /
+    MED priority — open, tracked separately).
+
+## Code review 2026-06-10 — full-branch review of chunks 1-3 (RV1-RV7 ALL FIXED)
+
+Multi-angle adversarial review of all compaction code (7 finder angles, every
+candidate independently verified against the source). Every finding below is
+CONFIRMED unless marked otherwise. **RV1-RV4 were blocking** and are now fixed.
+**RV5-RV7 HIGH non-blocking fixes landed 2026-06-10 (chunk 3b).**
+
+### Critical
+
+- **RV1 — C4 invalidation broken in BOTH directions; durable summary likely never
+  survives a turn in prod.** (`chat-execution.ts` `applyTier1IfNeeded` /
+  `chat-sink.ts` `onStart` / `compaction.ts` `affectedBelowWatermark`)
+  - _Missed edits:_ `AgentRunner.stream` awaits `sink.onStart` **before**
+    `prepareChatTurn`, and `ChatSink.onStart` overwrites `chat.messages` with the
+    just-submitted history — so `loadPersistedMessages` reads back the edited
+    submission and the C4 check compares the edit against itself. An **in-place
+    edit below the watermark is never detected**: the model gets the stale
+    summary and the edited message is dropped from the view. (Truncate-and-
+    regenerate accidentally still invalidates via the watermark-gone fallback.)
+  - _Spurious invalidation:_ the incoming side is post-`inlineFileUrls`
+    (`data:` URLs) while the persisted side holds `http /files/…` — any chat
+    with a file at/below the watermark **invalidates + fully re-summarizes every
+    turn** (one wasted summarize model call per turn, forever). Additionally
+    `chat.messages` is **jsonb** (Postgres re-orders object keys), so the
+    `JSON.stringify` byte-equality very likely diverges for ALL chats after one
+    write→read round trip — the incremental summary never survives.
+  - _Fix direction:_ capture the pre-overwrite history (read the row BEFORE
+    onStart overwrites, or have onStart return the previous messages), compare
+    the **un-inlined** submission, and use semantic equality (id + extracted
+    text/tool content, or the SDK's `isDeepEqualData`) instead of
+    `JSON.stringify` byte-equality. Also consider a content digest persisted at
+    compaction time to avoid the per-turn full-history read (see RV9).
+- **RV2 — cross-tenant compaction writes via unvalidated `request.id`
+  (security).** (`routes/chat.ts` submit handler; `compaction.ts`
+  `drizzleCompactionStore`) The submit route never verifies the body `id`
+  belongs to the caller's workspace (every other chat route filters
+  `id AND workspaceId`; submit does no chat-row lookup at all). The compaction
+  store, `loadPersistedMessages`, `invalidateCompaction`, `setCompactionDirty`
+  are keyed by `chat.id` only. A workspace-A owner submitting `id` = a
+  workspace-B chat id can clear B's summary/watermark, set B's dirty flag, and
+  CAS-write a summary derived from A's messages onto B's row (integrity, not
+  read-exfiltration; requires knowing B's chat id). _Fix:_ verify `request.id`
+  belongs to `scope.workspaceId` before the run starts (mirror the other chat
+  routes), and/or scope the store's queries by workspaceId.
+- **RV3 — recovery + dirty-forced compaction trust the estimator that already
+  failed → permanent fail loop.** (`compaction.ts` no-op branches in both
+  compactors; `recovery.ts` `trimOverflowingPrompt`) Both compactors return the
+  messages **unchanged** when the char/4 estimate is ≤ target — but recovery
+  only runs after the provider has REJECTED the prompt. With a >2× under-count
+  (CJK ≈1 token/char; assistant `reasoning` parts excluded from counting AND
+  from pruning/summarizing — they ARE wire payload in the V3 prompt), the retry
+  resends a byte-identical prompt and deterministically fails; next turn the
+  dirty flag forces Tier 1, which no-ops and **clears the flag without
+  shrinking** → overflow → dirty again, every turn. _Fix:_ recovery (and
+  dirty-forced Tier 1) must force-trim past the estimate gate — e.g. a `force`
+  option on the compactors that skips the no-op branch and/or scales the
+  target down when invoked post-rejection; count reasoning parts in the
+  ModelMessage adapter (the "reasoning is UI-only" assumption in §B is wrong
+  for the V3 prompt path).
+- **RV4 — small-history compaction clobbers the watermark and orphans the
+  summary.** (`compaction.ts` `compactUIMessages` boundary=0 path +
+  `applyTier1Compaction` commit) When the over-target history has ≤
+  `keepRecentMessages` messages (one huge paste; or `effectiveTarget≈0` from
+  overhead), prefix=[] → a **wasted summarize call over an empty transcript** →
+  commit of `{summary, watermark: null}`. A pre-existing watermark is
+  overwritten with null; `viewAfterWatermark` ignores `contextSummary` when the
+  watermark is null, so the summary is orphaned, the previously-summarized
+  prefix reappears in the view, and the cycle repeats each turn. _Fix:_ skip
+  Stage 2 when the prefix is empty (return the no-op shape; optionally prune
+  inside `recent` for oversized tool outputs), and never commit
+  `watermark: null` together with a non-null summary.
+
+### High (all FIXED 2026-06-10 chunk 3b)
+
+- **RV5 — `content`-type tool results (standard MCP output) never pruned and
+  invisible to the summarizer.** ~~(`compaction.ts` `pruneModelMessage` handles
+  only text/json variants; `renderModelMessages` renders `content` as `""`)~~
+  **FIXED:** `pruneModelMessage` soft-trims text items + media placeholder;
+  `renderModelMessages` extracts text items from `content` outputs.
+- **RV6 — recovery target ignores per-turn overhead.** ~~(`chat-execution.ts`
+  RecoveryContext gets raw `budget.targetTokens`; Tier 1 uses `target − overhead`)~~
+  **FIXED:** `RecoveryContext.targetTokens = Math.max(0, budget.targetTokens − overheadTokens)`.
+- **RV7 — context-window resolution family.** ~~(`context-window.ts`)~~
+  (a) ~~prod registry still empty~~ **FIXED:** `litellm-registry.ts` vendored with
+  full OpenAI/Anthropic/Bedrock/Mistral/Llama/Qwen coverage;
+  (b) ~~raw `startsWith` heuristic~~ **FIXED:** boundary-safe separators
+  (`"-"`, `"."`, `":"`, `"/"`) prevent `gpt-4.5-preview` → `gpt-4` resolution;
+  (c) ~~`evict` called by zero routes~~ **FIXED:** `contextWindowResolver.evict(providerId)`
+  wired in `routes/provider.ts` PUT handler;
+  (d) ~~no timeout / no single-flight~~ **FIXED:** `AbortSignal.timeout(5000)` +
+  `#inflight` Map + `Promise.all` the two resolve calls.
+  (e) ~~default-source full-TTL cache (old defect 6, MED)~~ **FIXED 2026-06-11:**
+  `source:"default"` results get `DEFAULT_SOURCE_CACHE_TTL_MS` (60 s) instead of
+  the hour, so a registry MISS / transient API blip no longer pins 8192.
+
+### Medium / low (RV8-RV10 — FIXED 2026-06-11, chunk 10)
+
+- **RV8 — `finalize` in the snapshot-consumer's `finally` could mark a broken
+  run "succeeded".** ~~(`agent-runner.ts`)~~ **FIXED:** the snapshot loop now
+  captures the stream error (both the `readUIMessageStream` `onError` callback
+  and the surrounding `catch` set `streamError`); the `finally` finalizes
+  `"failed"` with that error unless the run was aborted/cancelled. (Origin note
+  retained for the upstream-PR exclusion list: introduced by the tool-timestamps
+  commits `3851da6`/`b97312f`, not the compaction chunks.)
+- **RV9 — hot-path waste.** ~~3-4 full-history estimation passes; full base64
+  decode per image; tool schemas re-serialized every turn~~ **FIXED (partial):**
+  Tier 1 computes the unsummarized-view estimate **once** and threads it as
+  `knownEstimate` into `compactUIMessages` (mirrors the Tier 2 `knownEstimate`
+  from chunk 4); `bytesFromUrl` decodes only a 64 KB prefix for header parsing;
+  `estimateOverheadTokens` memoizes each tool's serialized-schema length in a
+  `WeakMap` keyed by the schema object. **Deliberately deferred:** the digest-based
+  C4 check — the full-prefix compare is already correct (RV1 landed), so this is
+  pure optimization of a correct path; revisit only if the per-turn JSONB
+  read+stringify shows up in profiling.
+- **RV10 — cleanup minors. FIXED:** `MODEL_BOUND_UI_PART_TYPES` now has the
+  promised test (membership assertion); `toolResultOutputText` collapsed to the
+  two real behaviours (`execution-denied` reason vs `value`), removing the dead
+  `default`; the two `commitWatermark` closures in `applyTier1Compaction` share
+  one `pinnedWrite` helper; the orphaned `invalidateCompaction` jsdoc above
+  `affectedBelowWatermark` removed; JPEG walker skips `0xFF` fill bytes + `0xFF00`
+  stuffing and treats TEM (`0x01`) as standalone. **Not done (cosmetic):**
+  `bytesFromUrl` still duplicates storage/utils' private `parseDataUrl` — left as
+  is; merging them couples the estimator to the storage layer for no behaviour
+  change.
+
+### Re-affirmed solid by this review
+
+CAS writer/loser logic (P3/R1/T10), budget math (C3), tool-pairing boundaries,
+the synthetic `context-summary` message (server-side only — never leaks to
+persistence/frontend; cannot become the watermark), recovery middleware
+single-retry semantics and summarizer non-recursion (fresh unwrapped task
+model), Tier-1 skip for headless runs (M3), kill-switch wiring (§G) with the
+documented dirty-forces-compaction exception (intent, has a test — though §G's
+wording "disables ALL proactive compaction" should gain a sentence noting the
+recovery hand-off still summarizes).
+
 ### Defects to fix (ordered by impact)
 
-1. **C1 — trigger under-counts (HIGH).** `compaction.ts:719`
+> 2026-06-10 note: still-open items below are subsumed by the §Code review
+> 2026-06-10 list — defect 2 → RV7(a), 5 → RV7(c), 6 → RV7(d), 7 → RV5,
+> 11's heuristic item → RV7(b). Track them there.
+
+1. **C1 — trigger under-counts (HIGH). _FIXED: overhead half 2026-06-10; `lastInputTokens` half 2026-06-11 — threaded from last assistant message `metadata.stats.contextTokens` in `chat-execution.ts`._** `compaction.ts:719`
    `projected = estimate(afterWatermark) + priorSummaryTokens` — omits the prior
    turn's provider `usage.inputTokens` AND the system prompt / tool schemas / skill
    payload sent every turn. `Tier1Input` has no `lastInputTokens` field; the call
@@ -57,41 +286,50 @@ all green. Source `tsc --noEmit` clean for these files. This section is the
    resolves to `DEFAULT_CONTEXT_WINDOW = 8192`. The budget math is therefore
    wrong-defaulted for those providers today. Must vendor litellm
    `model_prices_and_context_window.json` + build the alias map and wire them in.
-3. **M2 — first-turn ×1.15 margin absent (MED).** `compaction.ts:719` applies no
+3. **M2 — first-turn ×1.15 margin absent (MED). _FIXED 2026-06-10._**
+   `compaction.ts:719` applies no
    cold-start inflation; a char/4 under-count can keep turn-1 from triggering.
-4. **`summarizerWindow` not threaded (MED).** `chat-execution.ts:537` calls
+4. **`summarizerWindow` not threaded (MED). _FIXED 2026-06-10._**
+   `chat-execution.ts:537` calls
    `applyTier1Compaction` without `summarizerWindow`, so the M1 map-reduce path is
    dead in the wired flow — a large cold-start/imported history can overflow the
    summarizer call itself.
 5. **T5 evict not wired (MED).** `routes/provider.ts:126` updates a provider
    (incl. `modelMeta`) without `contextWindowResolver.evict(providerId)`; window
    cache serves stale values until TTL.
-6. **Window cache pins transient failures (MED).** `context-window.ts:324` caches
-   `source:"default"`/MISS results for the full TTL (1h); one API blip pins 8192.
-   Don't cache default-source results (or use a short TTL).
-7. **Latent T2 violation (LOW).** `token-estimate.ts:352` `case "content"`
+6. **Window cache pins transient failures (MED). _FIXED 2026-06-11 (RV7e)._**
+   default/MISS results now get a 60 s `DEFAULT_SOURCE_CACHE_TTL_MS`, not the hour.
+7. **Latent T2 violation (LOW).** `token-estimate.ts` `case "content"`
    `stableStringify`s tool-output base64 image bytes into char/4 text. No current
    tool emits this shape; fix before any tool returns `content`-type media.
-8. **Latent T1 divergence (LOW).** `token-estimate.ts:318` the UI adapter folds the
-   full tool output, but a tool with custom `toModelOutput` (e.g. the sub-agent
-   tool) is collapsed on the model side → UI vs Model counts differ. Untested; add
-   a `toModelOutput` fixture.
-9. **Doc bug.** `token-estimate.ts` header claims "every later turn uses the real
+   _Still open — see note below._
+8. **Latent T1 divergence (LOW). _Test added 2026-06-11._** The model adapter now
+   has explicit per-variant tool-result-output coverage (text/json/content/
+   execution-denied), which is the shape a custom `toModelOutput` emits. The
+   exact UI-vs-Model equality (T1) holds for SDK-converted messages; a tool whose
+   `toModelOutput` reshapes the payload remains a bounded, documented divergence.
+9. **Doc bug. _FIXED 2026-06-10._** `token-estimate.ts` header claims "every later turn uses the real
    provider count" — false; char/4 is used every turn (ties to C1). Fix the comment
    when C1 is plumbed.
-10. **Observability metrics absent (across both chunks).** No `cas.conflict` (gates
-    whether R4 ever needs fixing), `context_window.fell_to_default`,
-    `litellm.key_miss`, `compaction.fired`, `summarize.latency_ms`, etc. Logs only.
-11. **Low:** litellm family heuristic lacks a key-boundary check
-    (`context-window.ts:126`); Bedrock-ARN path not lowercased (`:118`); dead
-    `default: return ""` in the output switch (`token-estimate.ts:357`).
+10. **Observability metrics absent. _FIXED 2026-06-11._** No metrics infra exists
+    (pino only), so emitted as structured `metric:`-tagged log lines, greppable /
+    dashboardable: `cas.conflict` (commitWatermark), `context_window.fell_to_default`
+    - `litellm.key_miss` (context-window), `compaction.fired` (Tier 1),
+      `summarize.latency_ms` (summarize wrapper), `recovery.overflow_detected` /
+      `recovery.retry` / `recovery.failed` (recovery middleware).
+11. **Low. _FIXED 2026-06-11 (partial):_** key-boundary heuristic done (RV7b);
+    Bedrock-ARN path now also tries lowercased candidates (`context-window.ts`);
+    dead `default: return ""` in the output switch removed (switch collapsed).
 
 ### Drift-checklist deltas (vs the table at the bottom)
 
-`C1` → **MISSING** (defect 1). `M2` → **MISSING** (defect 3). `T3` → **PARTIAL**
-(consumer wired; producer = chunk 3). `R4` → **PARTIAL** (window present & correctly
-unfixed, but the gating `cas.conflict` metric is missing). Everything else listed
-above → VERIFIED. `T5` → module hook present, **PATCH-handler call missing** (defect 5).
+`C1` → **VERIFIED** (overhead + margin 2026-06-10; `lastInputTokens` threaded 2026-06-11). `M2` → **VERIFIED**. `T3` → **VERIFIED** (producer landed
+in chunk 3). `T9` → **VERIFIED**. `R4` → **PARTIAL** (window present & correctly
+unfixed, but the gating `cas.conflict` metric is missing). `C4` → **BROKEN**
+(2026-06-10 review, RV1 — baseline overwritten + byte-equality false
+positives/negatives). `T1` → **PARTIAL** (reasoning parts ARE wire payload in
+the V3 prompt path but excluded — RV3). Everything else listed
+above → VERIFIED. `T5` → module hook present, **PUT-handler call missing** (RV7c).
 
 ### Chunk 3 (Recovery) — hand-off is clean
 
@@ -617,15 +855,21 @@ Migration:
 
 ## Observability (item 4 — the design is only as good as the prod signal)
 
-Emit metrics (not just logs):
+**Landed 2026-06-11.** No metrics infra exists in the backend (pino logging
+only), so each signal is emitted as a structured `metric:`-tagged log line —
+greppable today, trivially shipped to a counter later. Emitted:
 
-- `compaction.fired{tier}`, `tokens_before` / `tokens_after`
-- `summarize.latency_ms`, `summarize.model`
-- `recovery.overflow_detected`, `recovery.retry`, `recovery.failed`
-- `estimate_vs_real.divergence` (drift T2 feedback loop)
-- `context_window.fell_to_default` + `litellm.key_miss` (drift T4/T6)
-- `cas.conflict` — **decides whether the R4 efficiency note ever needs fixing**.
-  Without this counter, contention is a guess.
+- `compaction.fired` (Tier 1) with `tier` / `tokensBefore` / `tokensAfter` /
+  `messagesDropped`. ✅
+- `summarize.latency_ms` with `latencyMs` + `taskModelId` + `usage` (the model
+  is in the same line). ✅
+- `recovery.overflow_detected`, `recovery.retry`, `recovery.failed`. ✅
+- `context_window.fell_to_default` + `litellm.key_miss` (drift T4/T6). ✅
+- `cas.conflict` (per lost CAS + on contended-skip) — **decides whether the R4
+  efficiency note ever needs fixing**. ✅
+
+Still log-only (no dedicated metric): `estimate_vs_real.divergence` (drift T2
+feedback loop) — deferred with the T2 image-constant tuning work.
 
 ---
 
@@ -682,14 +926,47 @@ Emit metrics (not just logs):
 2. Compaction module + `writeWatermark` CAS + Tier 1 (cross-turn, persist).
    **✅ DONE** (open defects: C1 trigger under-count, M2 margin, summarizerWindow
    not threaded — see Review §).
-3. Recovery (overflow detect + retry-once + dirty flag). **← NEXT** (hand-off ready;
-   fold in the C1 fix — see Review §).
-4. Tier 2 (`prepareStep`, in-memory).
-5. Sub-agent wiring (Tier 2 only).
-6. Frontend usage metadata + ring (§H).
-7. Per-message stats popover (§I) — depends on metadata stamping from step 6.
-8. Clickable ring → compact endpoint (§J) — depends on Tier 1 (step 2).
-9. Per-agent config surface + `COMPACTION_ENABLED` kill switch.
+3. Recovery (overflow detect + retry-once + dirty flag). **✅ DONE 2026-06-10**
+   (C1 overhead fix + M2 margin + summarizerWindow threading folded in; the
+   `lastInputTokens` half of C1 moves to step 6 — see Chunk 3 §).
+   3a. **Review-fix chunk (RV1-RV4). ✅ DONE 2026-06-10.**
+   3b. **Review-fix chunk (RV5-RV7). ✅ DONE 2026-06-10.** All HIGH non-blocking
+   defects resolved — content-type pruner/renderer, recovery overhead target,
+   litellm registry populated, heuristic boundary-safe, evict wired, timeout +
+   single-flight in context-window resolver.
+4. Tier 2 (`prepareStep`, in-memory). **✅ DONE 2026-06-10** `buildTier2PrepareStep`
+   wired into both `streamText` and `generateText`; fires when accumulated
+   ModelMessages exceed `triggerTokens` (drift m3); uses shared
+   `compactModelMessages` adapter (drift T3); null when kill switch off.
+   `Tier2Context` on `ChatTurn` threads config from `buildCompactionRuntime`.
+   Tests: 1074 pass; tsc source clean.
+   - **Chunk 4 review fix (2026-06-10):** Tier 2 trigger/target now subtract
+     `overheadTokens` (RV6 extended to Tier 2 — the prepareStep estimate sees
+     ModelMessages only, but system prompt + tool schemas consume the same
+     window; without this, a large overhead lets the payload exceed the budget
+     before Tier 2 fires). `compactModelMessages` gained `knownEstimate` so the
+     prepareStep trigger estimate is reused instead of recomputed (RV9). Tests
+     strengthened: summarize-on-fire + pairing-safety asserted, empty-prefix
+     no-op asserts `undefined`.
+5. Sub-agent wiring (Tier 2 only). **✅ DONE 2026-06-10** `Tier2Context` + `buildTier2PrepareStep` moved to `compaction.ts` (no-cycle); `createSubAgentTool` gains `prepareStep?`; `createSubAgentTools` gains `prepareStepFn?`; `loadSubAgents` resolves per-sub-agent compaction runtime + builds prepareStep map. Tests: 1077 pass; tsc source clean.
+6. Frontend usage metadata + ring (§H). **✅ DONE 2026-06-10** `CompactionRuntime` + `ChatTurn.resolved` carry `contextWindow` + `contextWindowIsDefault` (from resolved window source). `applyMessageStats` stamps `metadata.stats = { inputTokens, outputTokens, contextTokens, startedAt, firstTokenAt, finishedAt, contextWindow, contextWindowIsDefault }` on last assistant message at `applyToolCompletions` point. New `GET /:providerId/context-window?modelId=X` endpoint returns resolved window (null when source = "default", drift T6). `MessageStats` schema in `@platypus/schemas`. New `ContextUsageRing` component (SVG donut, green/amber/red ramp, neutral when unknown, required tooltip, drift T6/U2). Ring placed in `PromptInputTools` between search and model selector; `contextWindowData` SWR-fetched per selected model (drift U1). Tests: 1077 pass; source tsc clean.
+   - **✅ Code review for chunk 6 (2026-06-11).** One critical bug fixed: `inputTokens`/`outputTokens` from `accumulateStepStats` are the run-wide SUM across steps; feeding the summed input into the ring over-counts on multi-step tool loops (5-step loop → reported ≈ sum-of-all-prompts, pegging the ring red >100% when real fill ~37%). **Fix:** added `contextTokens` = last step's `usage.inputTokens` (peak context fullness, tracked in `streamText.onStepFinish`); the ring uses `contextTokens`, the §I cost popover keeps the summed `inputTokens`/`outputTokens`. Also: `ContextUsageRing` prop `inputTokens`→`usedTokens`; frontend `as any` casts replaced with typed `MessageStats`; removed dead `Tier2Context` import in `agent-runner.ts`. Documented trade-offs left as-is: numerator (last response's model) vs denominator (selected model) mismatch after a model switch is intentional (drift U1); `generate()` headless path stamps no stats (no UI); TTFT = first text part, excludes leading reasoning (matches §I wording).
+7. Per-message stats popover (§I). **✅ DONE 2026-06-11** `MessageStatsPopover` in `chat-message.tsx`: info icon (lucide `InfoIcon`) in `MessageActions` for all assistant messages with `metadata.stats`; popover shows In/Out token counts (run-wide sums), TTFT (when `firstTokenAt` present), Total elapsed. Uses `formatDurationMs` from `lib/utils`. tsc clean; 1077 tests pass.
+8. Clickable ring → compact endpoint (§J). **✅ DONE 2026-06-11** `POST /chats/:id/compact` runs force-Tier-1 via new `forceCompactChat` helper in `chat-execution.ts`; returns token estimate + context window so ring refreshes immediately. Frontend: `onClick` with defer-while-streaming + pending badge (drift U4); confirm dialog above threshold (drift U3); ring keyboard-accessible; hooks hoisted above early returns (rules-of-hooks fix). Tests: 1081 pass; tsc clean.
+9. Per-agent config surface + `COMPACTION_ENABLED` kill switch. **✅ DONE 2026-06-11** DB + Zod schemas already had per-agent fields (`compactionEnabled`, `triggerRatio`, `targetRatio`, `reserveRatio`, `keepRecentMessages`, `minPrunableChars`); `resolveCompactionConfig` + `buildCompactionRuntime` already wired them; global `COMPACTION_ENABLED=false` kill switch in `chat-execution.ts`. Added compaction fields to `agentCreateSchema` / `agentUpdateSchema` (so routes pass through) and "Context compaction" section in `agent-form.tsx` Advanced settings. Backend 1081 pass; tsc clean.
+   - **✅ Code review for chunk 9 (2026-06-11).** One MEDIUM + minors fixed. The
+     editable surface newly exposed the C2 thrash hole (a user/API could set
+     `targetRatio >= triggerRatio` → compaction re-fires every turn). **Fix:**
+     (1) `agentCreateSchema`/`agentUpdateSchema` gained a zod `.refine` rejecting
+     an inverted pair (checked only when both supplied; error on `targetRatio`);
+     (2) `resolveCompactionConfig` clamps `targetRatio → triggerRatio * 0.9` as a
+     runtime backstop for legacy/direct-write rows. Minors: `keepRecentMessages`
+     base schema tightened `.nonnegative()`→`.min(1)` (0 keep-recent breaks
+     pairing; form already enforced min=1); form description now states the
+     target<trigger rule + that the global `COMPACTION_ENABLED` kill switch
+     overrides the per-agent switch; lone `minPrunableChars` grid cell spans both
+     columns (cosmetic). Backend 1081 pass; backend/schemas/frontend tsc clean on
+     touched files (pre-existing unrelated test-type errors untouched).
 
 Steps 1–3 deliver the core "no more hard fails" value; 4–9 are progressive
 enhancement. Each step independently testable.
@@ -709,34 +986,48 @@ enhancement. Each step independently testable.
 - **CAS contention optimization (drift R4)** — under a contended chat, the
   version is read → summarize (seconds) → CAS write, so the version can be stale
   by write time → wasted summarize (not corruption; loser skips safely). Bounded
-  by one-retry-then-skip. **Do NOT fix now.** Gated on the `cas.conflict` metric;
-  if it shows repeated waste, move the version read to just-before-write or take a
-  short advisory lock for the summarize window.
-- **Trigger estimator scope — CONFIRMED bug (drift C1), see Review § defect 1.**
-  Originally flagged from live test 2026-06-03; the 2026-06-09 code review confirmed
-  it is unfixed in chunk 2 (`compaction.ts:719`, no `lastInputTokens` plumbing).
-  Promote from "possible" to a chunk-3 must-fix.
-  Tier 1's projection in `compaction.ts` only estimates `messages` (char/4 over
-  the stored UIMessages). System prompt, tool schemas, skill prompts, and
-  sub-agent context — all sent to the model on every turn — are invisible to the
-  trigger. Observed gap on Qwen3.6 / vLLM with a tool-bearing agent: provider
-  reported 8888 `inputTokens` while the local estimate was ~986 (≈ 3× under).
-  Trigger never fired against the 8192 fallback; only fired after forcing
-  `model_meta.contextWindow = 4096` to drop the threshold below the
-  under-counted estimate. Two paths to consider, not mutually exclusive:
-  1. Extend the estimator (or the projection at the call site) to include the
-     system + tool-schema + skill payload that `chat-execution` actually puts on
-     the wire — same `CountUnit[]` shape, just more inputs.
-  2. Wire the ADR-prescribed "use provider `usage.inputTokens` from the prior
-     turn as the corrective baseline for turns ≥2" (ADR §"Char/4 estimate, not
-     a real tokenizer"). Chunks 1-2 left this half-implemented — the design
-     calls for it; the code uses char/4 every turn.
+  by one-retry-then-skip. **Do NOT fix now.** Gated on the `cas.conflict` metric
+  (now emitted, chunk 10); if it shows repeated waste, move the version read to
+  just-before-write or take a short advisory lock for the summarize window.
 
-  Re-verify: a unit test with an agent carrying realistic tool schemas + a
-  short message history should show the projection ≥ the provider's reported
-  `inputTokens` (within margin), and the trigger should fire **before** the
-  provider's count crosses the budget. Currently the asymmetry lets real input
-  blow past the trigger silently.
+### Deliberately NOT done in chunk 10 (2026-06-11) — with reasons
+
+The RV7e-RV10 + observability sweep closed the review backlog; these four were
+left undone **on purpose**, not missed:
+
+- **RV9 digest-based C4 check** — once a watermark exists, C4 reads the full
+  `messages` JSONB row and `stableStringify`-compares the whole prefix every
+  turn. The compare is already **correct** (RV1 landed); a content digest would
+  only make it cheaper. Pure optimization of a correct path → revisit only if the
+  per-turn read+stringify shows up in profiling, and fold it into any future
+  C4 rework rather than touching the correctness path now.
+- **defect 7 — `content`-type tool output base64 → char/4** (`token-estimate.ts`).
+  The `content` tool-result variant `stableStringify`s media bytes into the
+  char/4 blob. Fixing it **symmetrically** (so estimate(UI) === estimate(Model)
+  still holds — the load-bearing P2/T1 invariant) requires extracting media into
+  `nonText` on BOTH adapters, where the UI side stores `output` as untyped
+  `unknown`. The risk to the tested invariant outweighs the benefit: **no current
+  tool emits `content`-type media**. Fix before the first tool that does.
+- **`bytesFromUrl` vs storage/utils `parseDataUrl` duplication** — merging them
+  couples the estimator to the storage layer for zero behaviour change. Left as
+  two small private regexes.
+- **`estimate_vs_real.divergence` metric** (drift T2 feedback loop) — deferred
+  with the image-constant tuning work it feeds; still log-only.
+- **Trigger estimator scope — FIXED (drift C1).** Originally flagged from live
+  test 2026-06-03; confirmed unfixed in chunk 2 by the 2026-06-09 review. **Both
+  prescribed paths now landed:**
+  1. **DONE 2026-06-10** — `estimateOverheadTokens` adds the system prompt + tool
+     schemas to the projection (`projectTier1Tokens`) and subtracts them from the
+     compaction target (the ~986-vs-8888 gap was dominated by tool schemas).
+  2. **DONE 2026-06-11** — the ADR-prescribed prior-turn provider baseline is
+     wired: `prepareChatTurn` threads `lastInputTokens` from the last assistant
+     message's `metadata.stats.contextTokens`; `projectTier1Tokens` returns
+     `max(charBased, lastInputTokens)` so turns ≥ 2 are floored by the real
+     provider count instead of trusting char/4.
+
+  The Qwen3.6 / vLLM under-count (provider 8888 vs estimate ~986) is closed: the
+  projection now sees both the tool-schema overhead and the prior-turn provider
+  count, so it no longer blows past the trigger silently.
 
 ---
 

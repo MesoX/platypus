@@ -297,4 +297,34 @@ describe("cache + evict (drift T5)", () => {
     await r.resolve(p, "m");
     expect(httpGetJson).toHaveBeenCalledTimes(2);
   });
+
+  it("RV7d: a default-source result is cached briefly, not for the full TTL", async () => {
+    let now = 0;
+    // API probe never yields a window and the model is not in the registry →
+    // every resolve falls to source:"default".
+    const httpGetJson = vi.fn().mockResolvedValue({ data: [] });
+    const r = new ContextWindowResolver({
+      loadRegistry,
+      httpGetJson,
+      ttlMs: 60 * 60 * 1000, // full TTL is an hour
+      now: () => now,
+    });
+    const p = {
+      id: "v",
+      providerType: "OpenAI",
+      baseUrl: "http://x",
+      apiKey: "k",
+    };
+
+    const first = await r.resolve(p, "unknown-model");
+    expect(first.source).toBe("default");
+
+    now += 30 * 1000; // within the 60 s default-source TTL
+    await r.resolve(p, "unknown-model");
+    expect(httpGetJson).toHaveBeenCalledTimes(1); // still cached
+
+    now += 40 * 1000; // 70 s total — past the short TTL, far short of the hour
+    await r.resolve(p, "unknown-model");
+    expect(httpGetJson).toHaveBeenCalledTimes(2); // re-probed, blip not pinned
+  });
 });

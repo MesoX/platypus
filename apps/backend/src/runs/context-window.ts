@@ -30,6 +30,14 @@ export const DEFAULT_CONTEXT_WINDOW = 8192;
 /** Default cache TTL: API-detected windows can drift, the override path evicts. */
 export const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+/**
+ * Short TTL for `source: "default"` resolutions (defect 6 / RV7d). A registry
+ * MISS or a transient API failure falls to 8192; caching that for the full hour
+ * pins a wrong window long after the blip clears. A 60 s TTL lets the next turn
+ * re-probe while still collapsing a burst of same-turn lookups.
+ */
+export const DEFAULT_SOURCE_CACHE_TTL_MS = 60 * 1000; // 1 minute
+
 /** Where a resolved window came from — drives ring neutrality (T6). */
 export type WindowSource = "override" | "api" | "registry" | "default";
 
@@ -114,17 +122,37 @@ export function lookupRegistry(
   const alias = aliasMap[modelId];
   if (alias && registry[alias]) return registry[alias];
 
-  // 5. Bedrock ARN → vendor.model, tried bare and under the "bedrock/" prefix
+  // 5. Bedrock ARN → vendor.model, tried bare and under the "bedrock/" prefix,
+  // each also lowercased (registry keys for Bedrock are lowercase; ARNs are not
+  // guaranteed to be — defect 11).
   const bedrock = bedrockModelFromArn(modelId);
   if (bedrock) {
-    if (registry[bedrock]) return registry[bedrock];
-    if (registry[`bedrock/${bedrock}`]) return registry[`bedrock/${bedrock}`];
+    const candidates = [
+      bedrock,
+      `bedrock/${bedrock}`,
+      bedrock.toLowerCase(),
+      `bedrock/${bedrock.toLowerCase()}`,
+    ];
+    for (const c of candidates) if (registry[c]) return registry[c];
   }
 
-  // 6. family heuristic — longest registry key that is a prefix of the id
+  // 6. family heuristic — longest registry key that is a proper prefix of the
+  // id, separated by "-", ".", ":", or "/" so "gpt-4" does NOT match "gpt-4.5"
+  // (RV7b: raw startsWith caused gpt-4.5-preview to silently resolve via a
+  // stale gpt-4 entry with a wrong 8192 window).
+  // Case-insensitive so mixed-case registry keys ("Qwen/…", "meta-llama/…")
+  // still match lowercase ids from providers that normalize model names.
+  const strippedLower = stripped.toLowerCase();
   let best: { key: string; entry: RegistryEntry } | undefined;
   for (const key of Object.keys(registry)) {
-    if (stripped.startsWith(key) && (!best || key.length > best.key.length)) {
+    const keyLower = key.toLowerCase();
+    const isMatch =
+      strippedLower === keyLower ||
+      strippedLower.startsWith(keyLower + "-") ||
+      strippedLower.startsWith(keyLower + ".") ||
+      strippedLower.startsWith(keyLower + ":") ||
+      strippedLower.startsWith(keyLower + "/");
+    if (isMatch && (!best || key.length > best.key.length)) {
       best = { key, entry: registry[key] };
     }
   }
@@ -264,8 +292,14 @@ async function detectViaApi(
 // Resolver (cache + evict)
 // ---------------------------------------------------------------------------
 
+/** RV7d: 5 s hard cap so a hung provider endpoint never blocks turns for ~300 s. */
+const API_DETECT_TIMEOUT_MS = 5000;
+
 const defaultHttpGetJson: HttpGetJson = async (url, headers) => {
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(API_DETECT_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
   return res.json();
 };
@@ -274,6 +308,8 @@ type CacheEntry = { value: ResolvedWindow; expiresAt: number };
 
 export class ContextWindowResolver {
   #cache = new Map<string, CacheEntry>();
+  /** RV7d: single-flight — concurrent callers for the same key share one fetch. */
+  #inflight = new Map<string, Promise<ResolvedWindow>>();
   #loadRegistry: () => Promise<Registry>;
   #registry: Registry | undefined;
   #aliasMap: Record<string, string>;
@@ -293,6 +329,11 @@ export class ContextWindowResolver {
   evict(providerId: string): void {
     for (const key of this.#cache.keys()) {
       if (key.startsWith(`${providerId}:`)) this.#cache.delete(key);
+    }
+    // Also cancel any in-flight fetch for this provider so the next call
+    // re-resolves with the updated modelMeta rather than caching a stale result.
+    for (const key of this.#inflight.keys()) {
+      if (key.startsWith(`${providerId}:`)) this.#inflight.delete(key);
     }
   }
 
@@ -321,9 +362,36 @@ export class ContextWindowResolver {
     const cached = this.#cache.get(cacheKey);
     if (cached && cached.expiresAt > this.#now()) return cached.value;
 
-    const value = await this.#resolveUncached(provider, modelId);
-    this.#cache.set(cacheKey, { value, expiresAt: this.#now() + this.#ttlMs });
-    return value;
+    // RV7d: single-flight — reuse an in-flight promise rather than spawning a
+    // second fetch for the same key (cold-cache stampede protection).
+    const existing = this.#inflight.get(cacheKey);
+    if (existing) return existing;
+
+    const promise = this.#resolveUncached(provider, modelId).then((value) => {
+      // Only write the cache if this promise is still the live in-flight one.
+      // An evict() during the fetch deletes the inflight entry; without this
+      // guard the resolving promise would repopulate the cache with the stale
+      // pre-update value and defeat the eviction for a full TTL (RV7c race).
+      if (this.#inflight.get(cacheKey) === promise) {
+        // RV7d / defect 6: a default-source result (MISS or transient API
+        // failure) gets a short TTL so a blip doesn't pin 8192 for an hour.
+        const ttl =
+          value.source === "default"
+            ? Math.min(DEFAULT_SOURCE_CACHE_TTL_MS, this.#ttlMs)
+            : this.#ttlMs;
+        this.#cache.set(cacheKey, { value, expiresAt: this.#now() + ttl });
+        this.#inflight.delete(cacheKey);
+      }
+      return value;
+    });
+    // Store before awaiting so concurrent callers see the same promise.
+    this.#inflight.set(cacheKey, promise);
+    try {
+      return await promise;
+    } catch (err) {
+      this.#inflight.delete(cacheKey);
+      throw err;
+    }
   }
 
   async #resolveUncached(
@@ -364,6 +432,7 @@ export class ContextWindowResolver {
     } else {
       logger.warn(
         {
+          metric: "litellm.key_miss",
           providerId: provider.id,
           modelId,
           providerType: provider.providerType,
@@ -374,7 +443,12 @@ export class ContextWindowResolver {
 
     // 4. Conservative default
     logger.warn(
-      { providerId: provider.id, modelId, default: DEFAULT_CONTEXT_WINDOW },
+      {
+        metric: "context_window.fell_to_default",
+        providerId: provider.id,
+        modelId,
+        default: DEFAULT_CONTEXT_WINDOW,
+      },
       "context window unresolved — using conservative default (ring neutral)",
     );
     return {
@@ -386,4 +460,7 @@ export class ContextWindowResolver {
 }
 
 /** Process-wide resolver. Routes use this; tests construct their own. */
-export const contextWindowResolver = new ContextWindowResolver();
+import { loadBuiltinRegistry } from "./litellm-registry.ts";
+export const contextWindowResolver = new ContextWindowResolver({
+  loadRegistry: loadBuiltinRegistry,
+});

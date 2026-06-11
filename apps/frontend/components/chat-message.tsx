@@ -35,7 +35,7 @@ import {
   TextUIPart,
   type ChatStatus,
 } from "ai";
-import { Agent } from "@platypus/schemas";
+import { Agent, type MessageStats } from "@platypus/schemas";
 import {
   BotIcon,
   CheckIcon,
@@ -44,10 +44,14 @@ import {
   TrashIcon,
   RefreshCwIcon,
   XIcon,
+  InfoIcon,
 } from "lucide-react";
 import { Textarea } from "./ui/textarea";
 import { LoadSkillTool } from "./load-skill-tool";
 import { SubAgentTool } from "./sub-agent-tool";
+import { Button } from "./ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { formatDurationMs } from "@/lib/utils";
 
 const getToolStartedAt = (part: unknown): string | undefined => {
   const raw = (part as { toolMetadata?: { startedAt?: unknown } })?.toolMetadata
@@ -60,6 +64,56 @@ const getToolCompletedAt = (part: unknown): string | undefined => {
     ?.toolMetadata?.completedAt;
   return typeof raw === "string" ? raw : undefined;
 };
+
+function MessageStatsPopover({ stats }: { stats: MessageStats }) {
+  const ttft = stats.firstTokenAt
+    ? formatDurationMs(
+        new Date(stats.firstTokenAt).getTime() -
+          new Date(stats.startedAt).getTime(),
+      )
+    : undefined;
+  const total = formatDurationMs(
+    new Date(stats.finishedAt).getTime() - new Date(stats.startedAt).getTime(),
+  );
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          type="button"
+          className="cursor-pointer text-muted-foreground"
+        >
+          <InfoIcon className="size-4" />
+          <span className="sr-only">Response stats</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto min-w-44 p-3" align="start">
+        <div className="flex flex-col gap-1 text-sm">
+          <p className="text-xs font-medium text-muted-foreground mb-1">
+            Response stats
+          </p>
+          <p>
+            <span className="text-muted-foreground">In:</span>{" "}
+            {stats.inputTokens.toLocaleString()}{" "}
+            <span className="text-muted-foreground">Out:</span>{" "}
+            {stats.outputTokens.toLocaleString()}
+          </p>
+          {ttft && (
+            <p>
+              <span className="text-muted-foreground">TTFT:</span> {ttft}
+            </p>
+          )}
+          {total && (
+            <p>
+              <span className="text-muted-foreground">Total:</span> {total}
+            </p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface ChatMessageProps {
   /** The message object to render */
@@ -146,6 +200,11 @@ export const ChatMessage = memo(function ChatMessage({
       ?.filter((part): part is TextUIPart => part.type === "text")
       .map((part) => part.text)
       .join("") || "";
+
+  const assistantStats =
+    message.role === "assistant"
+      ? (message.metadata as { stats?: MessageStats } | undefined)?.stats
+      : undefined;
 
   return (
     <Fragment key={message.id}>
@@ -381,6 +440,7 @@ export const ChatMessage = memo(function ChatMessage({
                 <RefreshCwIcon className="size-4" />
               </MessageAction>
             )}
+            {assistantStats && <MessageStatsPopover stats={assistantStats} />}
           </MessageActions>
         ))}
     </Fragment>

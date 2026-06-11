@@ -34,6 +34,7 @@ vi.mock("../logger.ts", () => ({
 }));
 
 import { AgentRunner, withToolTimestamps } from "./agent-runner.ts";
+import { buildTier2PrepareStep } from "./compaction.ts";
 import type { UIMessageChunk } from "ai";
 import { runRegistry, TimeoutError } from "./run-registry.ts";
 import type { ResolvedRunPlan, RunInput, RunSink } from "./types.ts";
@@ -106,6 +107,14 @@ const fakeTurn = (overrides?: { dispose?: () => Promise<void> }) => {
       providerId: "p1",
       modelId: "m1",
     },
+    recovery: {
+      imageProvider: "default" as const,
+      targetTokens: 1000,
+      keepRecentMessages: 10,
+      minPrunableChars: 2000,
+      summarize: async (t: string) => t,
+    },
+    tier2: null,
     dispose,
   };
 };
@@ -362,14 +371,13 @@ describe("withToolTimestamps", () => {
     overrides: Partial<
       Extract<UIMessageChunk, { type: "tool-input-available" }>
     > = {},
-  ): UIMessageChunk =>
-    ({
-      type: "tool-input-available",
-      toolCallId: "t1",
-      toolName: "foo",
-      input: { x: 1 },
-      ...overrides,
-    });
+  ): UIMessageChunk => ({
+    type: "tool-input-available",
+    toolCallId: "t1",
+    toolName: "foo",
+    input: { x: 1 },
+    ...overrides,
+  });
 
   it("injects startedAt on tool-input-available chunks", async () => {
     const { stream } = withToolTimestamps(
@@ -497,5 +505,114 @@ describe("withToolTimestamps", () => {
     expect(toolPart).toBeDefined();
     expect(toolPart.toolCallId).toBe("call_xyz");
     expect(toolPart.toolMetadata).toMatchObject({ startedAt: FIXED_NOW });
+  });
+});
+
+describe("buildTier2PrepareStep", () => {
+  const makeCtx = (triggerTokens = 100) => ({
+    triggerTokens,
+    targetTokens: 50,
+    keepRecentMessages: 4,
+    minPrunableChars: 100,
+    imageProvider: "default" as const,
+    summarize: vi.fn().mockResolvedValue("summary"),
+    summarizerWindow: undefined,
+  });
+
+  // Invoke a PrepareStepFunction supplying only the field under test; the
+  // callback ignores steps/stepNumber/model/experimental_context.
+  const callStep = (
+    fn: ReturnType<typeof buildTier2PrepareStep>,
+    messages: import("ai").ModelMessage[],
+  ) =>
+    fn({
+      messages,
+      steps: [],
+      stepNumber: 0,
+      model: {} as never,
+      experimental_context: undefined,
+    });
+
+  const shortMessages: import("ai").ModelMessage[] = [
+    { role: "user", content: [{ type: "text", text: "hi" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+    },
+  ];
+
+  // 6 assistant/tool pairs where each tool result carries 1200 chars of text
+  // (≈ 300 tokens each via char/4). Total ≈ 1800+ tokens > any reasonable
+  // triggerTokens threshold used in these tests.
+  const longMessages = (): import("ai").ModelMessage[] => {
+    const msgs: import("ai").ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "start" }] },
+    ];
+    for (let i = 0; i < 6; i++) {
+      msgs.push({
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: `tc${i}`,
+            toolName: "tool",
+            input: {},
+          },
+        ],
+      });
+      msgs.push({
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: `tc${i}`,
+            toolName: "tool",
+            // Must use typed output shape so tokenEstimator counts the value.
+            output: { type: "text" as const, value: "x".repeat(1200) },
+          },
+        ],
+      });
+    }
+    return msgs;
+  };
+
+  it("returns undefined when messages are below triggerTokens (drift m3)", async () => {
+    const fn = buildTier2PrepareStep(makeCtx(10_000));
+    const result = await callStep(fn, shortMessages);
+    expect(result).toBeUndefined();
+  });
+
+  it("compacts when messages exceed triggerTokens", async () => {
+    const msgs = longMessages();
+    const ctx = makeCtx(1);
+    const fn = buildTier2PrepareStep(ctx);
+    const result = await callStep(fn, msgs);
+    expect(result?.messages).toBeDefined();
+    const out = result!.messages!;
+    expect(out.length).toBeLessThan(msgs.length);
+    // Stage 2 summarizes the dropped prefix.
+    expect(ctx.summarize).toHaveBeenCalled();
+    // First surviving message is the synthetic summary (role "user"); the one
+    // after it starts the kept tail and must not be an orphaned tool result
+    // (its assistant tool-call would have been dropped into the prefix).
+    expect(out[1]?.role).not.toBe("tool");
+  });
+
+  it("returns undefined when prefix is empty (no-op, drift m3 / RV4)", async () => {
+    // Two messages, keepRecentMessages 4 → no prefix to summarize →
+    // compactModelMessages drops nothing → prepareStep returns undefined so the
+    // SDK proceeds unchanged, and the summarizer is never called.
+    const ctx = makeCtx(1);
+    const fn = buildTier2PrepareStep(ctx);
+    const result = await callStep(fn, shortMessages);
+    expect(result).toBeUndefined();
+    expect(ctx.summarize).not.toHaveBeenCalled();
+  });
+
+  it("does not call summarize when estimate is below triggerTokens", async () => {
+    const ctx = makeCtx(10_000);
+    const fn = buildTier2PrepareStep(ctx);
+    await callStep(fn, shortMessages);
+    expect(ctx.summarize).not.toHaveBeenCalled();
   });
 });

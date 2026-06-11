@@ -8,10 +8,17 @@ import {
   readUIMessageStream,
   stepCountIs,
   streamText,
+  wrapLanguageModel,
   type LanguageModel,
   type UIMessageChunk,
 } from "ai";
 import {
+  contextOverflowRecoveryMiddleware,
+  isContextOverflowError,
+} from "./recovery.ts";
+import { buildTier2PrepareStep } from "./compaction.ts";
+import {
+  loadChatMessages,
   prepareChatTurn,
   type ChatTurn,
   type ToolActivityEvent,
@@ -89,6 +96,44 @@ export function withToolTimestamps<TChunk extends UIMessageChunk>(
     }),
   );
   return { stream: out, completions };
+}
+
+/** Stats stamped on the last assistant message's metadata after each stream (§H/§I). */
+export type MessageStats = {
+  /** Run-wide totals across every step (sum) — §I cost popover. */
+  inputTokens: number;
+  outputTokens: number;
+  /**
+   * Input tokens of the LAST model call = peak context fullness — §H ring.
+   * NOT the run-wide sum (which over-counts on multi-step tool loops).
+   */
+  contextTokens: number;
+  startedAt: string;
+  firstTokenAt?: string;
+  finishedAt: string;
+  contextWindow: number;
+  contextWindowIsDefault: boolean;
+};
+
+/**
+ * Stamps per-run stats (token counts, timing, resolved context window) onto
+ * the last assistant message's `metadata.stats` in place. Applied at the same
+ * point as {@link applyToolCompletions} so both mutations happen before the
+ * sink persists the final state (§H/§I).
+ */
+function applyMessageStats(
+  messages: PlatypusUIMessage[],
+  stats: MessageStats,
+): void {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      const msg = messages[i] as PlatypusUIMessage & {
+        metadata?: Record<string, unknown>;
+      };
+      msg.metadata = { ...msg.metadata, stats };
+      return;
+    }
+  }
 }
 
 /**
@@ -253,6 +298,7 @@ export class AgentRunner {
     origin: string | undefined,
     frontendUrl?: string,
     onActivity?: (event?: ToolActivityEvent) => void,
+    priorMessages?: PlatypusUIMessage[],
   ): Promise<ChatTurn> {
     return prepareChatTurn({
       orgId: scope.orgId,
@@ -264,6 +310,7 @@ export class AgentRunner {
       frontendUrl,
       runMode: scope.principal.kind === "user" ? "interactive" : "headless",
       onActivity,
+      priorMessages,
     });
   }
 
@@ -282,6 +329,20 @@ export class AgentRunner {
     options: StreamOptions;
   }): Promise<Response> {
     const { scope, input, sink, options } = params;
+
+    // RV1: snapshot the DB state BEFORE onStart overwrites it so applyTier1IfNeeded
+    // has the correct C4 baseline. Only needed for interactive chats (request.id).
+    const priorMessages = input.request.id
+      ? await loadChatMessages(input.request.id).catch((err) => {
+          // Falls back to the post-overwrite DB read inside applyTier1IfNeeded,
+          // which cannot detect edits below the watermark — log the degradation.
+          logger.warn(
+            { err, chatId: input.request.id },
+            "RV1: failed to snapshot prior messages; C4 edit-detection degraded this turn",
+          );
+          return undefined;
+        })
+      : undefined;
 
     await sink.onStart({ runId: input.runId, messages: input.messages });
 
@@ -340,6 +401,7 @@ export class AgentRunner {
         options.origin,
         options.frontendUrl,
         onActivity,
+        priorMessages,
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -355,8 +417,14 @@ export class AgentRunner {
       "System prompt for chat",
     );
 
+    const startedAt = new Date().toISOString();
+    let firstTokenAt: string | undefined;
+    // Last step's input tokens = peak context fullness for the §H ring.
+    // lastStats.inputTokens is the run-wide SUM and over-counts tool loops.
+    let lastStepInputTokens = 0;
+
     const result = streamText({
-      model: turn.stream.model,
+      model: withOverflowRecovery(turn),
       messages: await convertToModelMessages(turn.stream.messages),
       stopWhen: [stepCountIs(turn.stream.maxSteps)],
       tools: turn.stream.tools,
@@ -368,9 +436,11 @@ export class AgentRunner {
       frequencyPenalty: turn.stream.frequencyPenalty,
       presencePenalty: turn.stream.presencePenalty,
       seed: turn.stream.seed,
+      prepareStep: turn.tier2 ? buildTier2PrepareStep(turn.tier2) : undefined,
       onStepFinish: (step) => {
         handle.bumpStep();
         accumulateStepStats(lastStats, step);
+        lastStepInputTokens = step.usage?.inputTokens ?? lastStepInputTokens;
         logger.info(
           {
             runId: input.runId,
@@ -422,25 +492,50 @@ export class AgentRunner {
     // finalize is called here (not in toUIMessageStream's onFinish) so that
     // lastMessages reflects the fully-drained stream — including the tool
     // `completedAt` timestamps applied below — before the sink persists it.
+    // RV8: an error chunk (model/tool failure surfaced via formatStreamError) or
+    // an internal stream fault ends the for-await without throwing, because
+    // readUIMessageStream defaults terminateOnError=false. Capture it so the
+    // finally finalizes "failed" instead of silently persisting a partial
+    // message as "succeeded".
+    let streamError: unknown;
     void (async () => {
       try {
         for await (const message of readUIMessageStream<PlatypusUIMessage>({
           stream: forSnapshot,
-          onError: (err) =>
+          onError: (err) => {
+            streamError = err;
             logger.error(
               { err, runId: input.runId },
               "Snapshot stream parse error",
-            ),
+            );
+          },
         })) {
+          if (!firstTokenAt && message.parts?.some((p) => p.type === "text")) {
+            firstTokenAt = new Date().toISOString();
+          }
           lastMessages = [...input.messages, message];
         }
       } catch (err) {
+        streamError = err;
         logger.error(
           { err, runId: input.runId },
           "Server-side UI stream consumer error",
         );
       } finally {
+        const finishedAt = new Date().toISOString();
         applyToolCompletions(lastMessages, completions);
+        if (turn) {
+          applyMessageStats(lastMessages, {
+            inputTokens: lastStats.inputTokens ?? 0,
+            outputTokens: lastStats.outputTokens ?? 0,
+            contextTokens: lastStepInputTokens,
+            startedAt,
+            firstTokenAt,
+            finishedAt,
+            contextWindow: turn.resolved.contextWindow,
+            contextWindowIsDefault: turn.resolved.contextWindowIsDefault,
+          });
+        }
         let status: RunStatus = "succeeded";
         let err: Error | undefined;
         if (handle.signal.aborted) {
@@ -451,6 +546,18 @@ export class AgentRunner {
           } else {
             status = "cancelled";
           }
+        } else if (streamError !== undefined) {
+          // The stream errored (model/tool rejection or internal fault) but did
+          // not abort — record the run as failed rather than succeeded (RV8).
+          status = "failed";
+          err =
+            streamError instanceof Error
+              ? streamError
+              : new Error(
+                  typeof streamError === "string"
+                    ? streamError
+                    : "Server-side UI stream error",
+                );
         }
         await finalize(status, err);
       }
@@ -541,12 +648,13 @@ export class AgentRunner {
     const startTime = Date.now();
     try {
       const result = await generateText({
-        model: turn.stream.model as LanguageModel,
+        model: withOverflowRecovery(turn) as LanguageModel,
         messages: await convertToModelMessages(turn.stream.messages),
         tools: turn.stream.tools,
         system: turn.stream.system,
         stopWhen: [stepCountIs(turn.stream.maxSteps)],
         abortSignal: handle.signal,
+        prepareStep: turn.tier2 ? buildTier2PrepareStep(turn.tier2) : undefined,
         onStepFinish: (step) => {
           handle.bumpStep();
           accumulateStepStats(lastStats, step);
@@ -630,6 +738,18 @@ export class AgentRunner {
 }
 
 /**
+ * Wraps the turn's model with the context-overflow recovery middleware (§E,
+ * P4): every model call — first call and every tool-loop step, stream and
+ * generate alike — gets one trim-and-retry on a provider "context too long"
+ * rejection. Always on; the §G kill switch does not gate it.
+ */
+const withOverflowRecovery = (turn: ChatTurn) =>
+  wrapLanguageModel({
+    model: turn.stream.model,
+    middleware: contextOverflowRecoveryMiddleware(turn.recovery),
+  });
+
+/**
  * Converts AI SDK errors into user-facing strings for the UI message stream.
  * Behaviour-preserving copy of the previous inline `onError` handler.
  */
@@ -637,6 +757,11 @@ const formatStreamError = (error: unknown): string => {
   logger.error({ error }, "Chat stream error");
   if (LoadAPIKeyError.isInstance(error)) {
     return "AI provider API key is missing or not configured.";
+  }
+  // Reaching here means recovery (§E) already trimmed and retried once and the
+  // provider still rejected the prompt — surface the actionable dead end.
+  if (isContextOverflowError(error)) {
+    return "Conversation too large for the model's context window even after trimming — start a new chat or reduce attachments.";
   }
   if (APICallError.isInstance(error)) {
     if (error.statusCode === 401 || error.statusCode === 403) {

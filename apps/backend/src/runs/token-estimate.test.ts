@@ -8,8 +8,10 @@ import {
   imageProviderFor,
   CHARS_PER_TOKEN,
   DEFAULT_NONTEXT_TOKENS,
+  MODEL_BOUND_UI_PART_TYPES,
   type CountUnit,
 } from "./token-estimate.ts";
+import type { ModelMessage } from "ai";
 import type { PlatypusUIMessage } from "../types.ts";
 
 // A 24-byte PNG: 8-byte signature + IHDR length/type + width@16 + height@20.
@@ -178,6 +180,48 @@ describe("MODEL_BOUND filter (drift T1 — UI-only parts excluded)", () => {
     expect(units[0].text).toBe("hello");
     expect(units[0].nonText).toHaveLength(0);
   });
+
+  it("only text/file UI part types are model-bound (RV10 — the documented set)", () => {
+    expect([...MODEL_BOUND_UI_PART_TYPES]).toEqual(["text", "file"]);
+    // The UI-only types the adapter must drop are NOT in the model-bound set.
+    for (const uiOnly of [
+      "reasoning",
+      "source-url",
+      "source-document",
+      "step-start",
+      "data-custom",
+    ]) {
+      expect(MODEL_BOUND_UI_PART_TYPES).not.toContain(uiOnly);
+    }
+  });
+});
+
+describe("tool-result output variants (RV10 — model adapter)", () => {
+  const unit = (output: unknown): CountUnit => {
+    const msg = {
+      role: "tool",
+      content: [
+        { type: "tool-result", toolCallId: "c1", toolName: "t", output },
+      ],
+    } as unknown as ModelMessage;
+    return modelMessagesToCountUnits([msg])[0];
+  };
+
+  it("folds text / json / content value into char/4 text", () => {
+    expect(unit({ type: "text", value: "hello world" }).text).toContain(
+      "hello",
+    );
+    expect(unit({ type: "json", value: { a: 1 } }).text).toContain('"a"');
+    expect(
+      unit({ type: "content", value: [{ type: "text", text: "deep" }] }).text,
+    ).toContain("deep");
+  });
+
+  it("uses the reason (not a value) for execution-denied", () => {
+    expect(
+      unit({ type: "execution-denied", reason: "blocked" }).text,
+    ).toContain("blocked");
+  });
 });
 
 describe("adapter equality (drift T1 — one estimate across both shapes)", () => {
@@ -239,5 +283,89 @@ describe("imageProviderFor", () => {
     expect(imageProviderFor("OpenAI")).toBe("openai");
     expect(imageProviderFor("OpenRouter")).toBe("default");
     expect(imageProviderFor("Google")).toBe("default");
+  });
+});
+
+// --- estimateOverheadTokens (drift C1) -------------------------------------
+
+import { z } from "zod";
+import { tool } from "ai";
+import { estimateOverheadTokens } from "./token-estimate.ts";
+
+describe("estimateOverheadTokens (drift C1)", () => {
+  it("counts the system prompt at char/4", () => {
+    const sys = "S".repeat(400);
+    expect(estimateOverheadTokens(sys, {})).toBe(100);
+  });
+
+  it("handles missing system prompt and tools", () => {
+    expect(estimateOverheadTokens(undefined, undefined)).toBe(0);
+  });
+
+  it("counts tool name, description, and serialized JSON schema", () => {
+    const sys = "system";
+    const base = estimateOverheadTokens(sys, {});
+    const withTool = estimateOverheadTokens(sys, {
+      searchDocuments: tool({
+        description:
+          "Searches the workspace document store and returns ranked matches.",
+        inputSchema: z.object({
+          query: z.string().describe("Full-text query string"),
+          limit: z.number().optional().describe("Maximum results to return"),
+        }),
+      }),
+    });
+    // Name + description alone are ~20 tokens; the serialized schema (with
+    // property names and descriptions) must push it well past that.
+    expect(withTool).toBeGreaterThan(base + 40);
+  });
+
+  it("falls back to a conservative flat cost for unserializable schemas", () => {
+    const tokens = estimateOverheadTokens("", {
+      weird: { description: "", inputSchema: 42 } as never,
+    });
+    // Either the fallback constant fired or some serialization succeeded —
+    // never zero, never a throw.
+    expect(tokens).toBeGreaterThanOrEqual(2); // ≥ name chars / 4
+    expect(Number.isFinite(tokens)).toBe(true);
+  });
+
+  it("scales with a realistic multi-tool agent (the 8888-vs-986 gap)", () => {
+    const sys = "You are a helpful agent.\n".repeat(40); // ~1k chars
+    const tools = Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [
+        `tool_${i}`,
+        tool({
+          description:
+            "A realistically verbose tool description explaining inputs, outputs, constraints, and error behaviour for the model.",
+          inputSchema: z.object({
+            target: z.string().describe("The resource identifier to act on"),
+            options: z
+              .object({
+                recursive: z.boolean().optional(),
+                depth: z.number().optional(),
+                filter: z.string().optional(),
+              })
+              .optional(),
+          }),
+        }),
+      ]),
+    );
+    // The point of C1: this payload is large even with a short history.
+    expect(estimateOverheadTokens(sys, tools)).toBeGreaterThan(500);
+  });
+
+  it("is stable across repeated calls (RV9 schema-cache must not change counts)", () => {
+    const sys = "system prompt";
+    const tools = {
+      lookup: tool({
+        description: "Look something up by id.",
+        inputSchema: z.object({ id: z.string().describe("identifier") }),
+      }),
+    };
+    const first = estimateOverheadTokens(sys, tools);
+    // Same tool objects → WeakMap hit on the second call; the memoized schema
+    // length must reproduce the exact token count, never drift.
+    expect(estimateOverheadTokens(sys, tools)).toBe(first);
   });
 });

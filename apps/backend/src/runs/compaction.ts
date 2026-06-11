@@ -15,13 +15,14 @@
  */
 
 import { and, eq } from "drizzle-orm";
-import type { ModelMessage } from "ai";
+import type { ModelMessage, PrepareStepFunction } from "ai";
 import { db } from "../index.ts";
 import { chat as chatTable } from "../db/schema.ts";
 import { logger } from "../logger.ts";
 import type { PlatypusUIMessage } from "../types.ts";
 import {
   estimateTokens,
+  stableStringify,
   uiMessagesToCountUnits,
   modelMessagesToCountUnits,
   CHARS_PER_TOKEN,
@@ -149,11 +150,16 @@ export async function commitWatermark(
     if (won) return { status: "applied", version: state.version + 1 };
     // Lost the CAS — a concurrent writer moved the version. Loop to re-read and
     // re-decide. The decision compares VERSION (via the re-read), not watermark
-    // values, so a backward watermark reset cannot be misread (R1).
+    // values, so a backward watermark reset cannot be misread (R1). The metric
+    // gates whether the R4 read→summarize→write contention note ever needs a fix.
+    logger.info(
+      { metric: "cas.conflict", chatId, attempt, version: state.version },
+      "cas.conflict",
+    );
   }
 
   logger.warn(
-    { chatId },
+    { metric: "cas.conflict", chatId, contended: true },
     "compaction CAS contended past retry — skipping (safe no-op)",
   );
   return { status: "skipped", reason: "contended" };
@@ -272,6 +278,19 @@ export type UICompactOptions = {
   summarize: Summarize;
   /** Token budget of one summarize call; larger prefixes are map-reduced (M1). */
   summarizerWindow?: number;
+  /**
+   * Bypass the no-op estimate gate and force compaction even when char/4 says
+   * we are within budget. Used for dirty-forced Tier 1 (§E/RV3): recovery sets
+   * the dirty flag AFTER a provider rejection, so the estimator already failed;
+   * re-using it as the no-op gate causes an infinite overflow→dirty→no-op loop.
+   */
+  force?: boolean;
+  /**
+   * Pre-computed estimate of `messages` (RV9). The caller's trigger projection
+   * already ran the char/4 pass over this exact set, so reuse it instead of
+   * re-estimating the full history a second time on the hot path.
+   */
+  knownEstimate?: number;
 };
 
 export type UICompactionResult = {
@@ -332,16 +351,23 @@ export async function compactUIMessages(
   const estimate = (msgs: PlatypusUIMessage[]) =>
     estimateTokens(uiMessagesToCountUnits(msgs, provider));
 
+  // RV9: reuse the caller's already-computed estimate of `messages` rather than
+  // re-running the full char/4 pass on the hot path.
+  const initialEstimate = opts.knownEstimate ?? estimate(messages);
+
   // No-op when already within target (incl. the existing summary). This is what
   // makes a follow-up turn after compaction NOT re-fire (hysteresis, C2).
-  if (estimate(messages) + priorTokens <= opts.targetTokens) {
+  // Bypassed when `force` is set — recovery sets the dirty flag AFTER a provider
+  // rejection, so the estimator already proved wrong; using it as a no-op gate
+  // causes an infinite overflow→dirty→no-op loop (RV3).
+  if (!opts.force && initialEstimate + priorTokens <= opts.targetTokens) {
     return {
       keptMessages: messages,
       summaryText: opts.priorSummary ?? null,
       watermarkId: null,
       messagesDropped: 0,
       usedModelCall: false,
-      estimatedTokens: estimate(messages) + priorTokens,
+      estimatedTokens: initialEstimate + priorTokens,
     };
   }
 
@@ -358,11 +384,30 @@ export async function compactUIMessages(
     (m) => pruneUIMessage(m, opts.minPrunableChars).message,
   );
   const prunedAll = [...prunedPrefix, ...recent];
-  if (estimate(prunedAll) + priorTokens <= opts.targetTokens) {
+  if (!opts.force && estimate(prunedAll) + priorTokens <= opts.targetTokens) {
     return {
       keptMessages: prunedAll,
       summaryText: opts.priorSummary ?? null,
       watermarkId: null, // pruning advances no watermark (no new summary)
+      messagesDropped: 0,
+      usedModelCall: false,
+      estimatedTokens: estimate(prunedAll) + priorTokens,
+    };
+  }
+
+  // RV4: nothing to summarize when the prefix is empty (history fits within
+  // keepRecentMessages). Also bail when the boundary message has no id — we
+  // cannot anchor a watermark there, and committing a watermark:null +
+  // non-null summary would orphan the summary (viewAfterWatermark ignores
+  // contextSummary when the watermark is null, so the previously-summarised
+  // prefix reappears every turn).
+  const watermarkId =
+    prefix.length > 0 ? (prefix[prefix.length - 1].id ?? null) : null;
+  if (prefix.length === 0 || watermarkId === null) {
+    return {
+      keptMessages: prunedAll,
+      summaryText: opts.priorSummary ?? null,
+      watermarkId: null,
       messagesDropped: 0,
       usedModelCall: false,
       estimatedTokens: estimate(prunedAll) + priorTokens,
@@ -376,8 +421,6 @@ export async function compactUIMessages(
     opts.summarize,
     opts.summarizerWindow,
   );
-  const watermarkId =
-    prefix.length > 0 ? (prefix[prefix.length - 1].id ?? null) : null;
 
   return {
     keptMessages: recent,
@@ -420,6 +463,32 @@ function pruneModelMessage(
         };
       }
     }
+    // RV5: @ai-sdk/mcp emits {type:"content"} for essentially every MCP tool
+    // result. Without this branch Stage 1 reclaims zero tokens from the bulkiest
+    // payloads and their text is invisible to the summarizer.
+    if (output.type === "content" && Array.isArray(output.value)) {
+      type ContentItem = { type: string; text?: string };
+      const items = output.value as ContentItem[];
+      const text = items
+        .filter((i) => i.type === "text")
+        .map((i) => i.text ?? "")
+        .join("\n");
+      const mediaCount = items.filter((i) => i.type !== "text").length;
+      const marker = mediaCount > 0 ? `\n[${mediaCount} media item(s)]` : "";
+      // Trim the text BEFORE appending the media marker so a huge text payload
+      // can never truncate the "[N media item(s)]" signal.
+      if (text.length + marker.length > minPrunableChars) {
+        return {
+          ...part,
+          output: {
+            type: "content" as const,
+            value: [
+              { type: "text" as const, text: `${softTrim(text)}${marker}` },
+            ],
+          },
+        };
+      }
+    }
     return part;
   });
   return { ...message, content };
@@ -435,12 +504,21 @@ function renderModelMessages(messages: ModelMessage[]): string {
           if (p.type === "tool-call") return `[tool-call ${p.toolName}]`;
           if (p.type === "tool-result") {
             const o = p.output;
-            const v =
-              o.type === "text" || o.type === "error-text"
-                ? o.value
-                : o.type === "json" || o.type === "error-json"
-                  ? JSON.stringify(o.value)
-                  : "";
+            let v: string;
+            if (o.type === "text" || o.type === "error-text") {
+              v = o.value;
+            } else if (o.type === "json" || o.type === "error-json") {
+              v = JSON.stringify(o.value);
+            } else if (o.type === "content") {
+              // RV5: extract text items from content-type MCP output (RV5).
+              type ContentItem = { type: string; text?: string };
+              v = (o.value as ContentItem[])
+                .filter((i) => i.type === "text")
+                .map((i) => i.text ?? "")
+                .join("\n");
+            } else {
+              v = "";
+            }
             return `[tool-result] ${softTrim(v, 200)}`;
           }
           return "";
@@ -470,6 +548,14 @@ export type ModelCompactOptions = {
   imageProvider?: ImageProvider;
   summarize: Summarize;
   summarizerWindow?: number;
+  /** Bypass the no-op estimate gate (same semantics as UICompactOptions.force). */
+  force?: boolean;
+  /**
+   * Estimate of `messages` the caller already computed (e.g. the Tier 2
+   * prepareStep trigger check). Reuses it for gate 1 instead of re-running a
+   * full estimate pass over the same messages.
+   */
+  knownEstimate?: number;
 };
 
 export type ModelCompactionResult = {
@@ -493,12 +579,13 @@ export async function compactModelMessages(
   const estimate = (msgs: ModelMessage[]) =>
     estimateTokens(modelMessagesToCountUnits(msgs, provider));
 
-  if (estimate(messages) <= opts.targetTokens) {
+  const initialEstimate = opts.knownEstimate ?? estimate(messages);
+  if (!opts.force && initialEstimate <= opts.targetTokens) {
     return {
       messages,
       messagesDropped: 0,
       usedModelCall: false,
-      estimatedTokens: estimate(messages),
+      estimatedTokens: initialEstimate,
     };
   }
 
@@ -517,7 +604,23 @@ export async function compactModelMessages(
     pruneModelMessage(m, opts.minPrunableChars),
   );
   const prunedAll = [...prunedPrefix, ...recent];
-  if (estimate(prunedAll) <= opts.targetTokens) {
+  // Force-guarded like gate 1 (RV3): when recovery forces a trim the provider
+  // already rejected this prompt, so the estimator proved wrong — re-trusting
+  // it here would return a byte-identical prompt and burn the single retry.
+  if (!opts.force && estimate(prunedAll) <= opts.targetTokens) {
+    return {
+      messages: prunedAll,
+      messagesDropped: 0,
+      usedModelCall: false,
+      estimatedTokens: estimate(prunedAll),
+    };
+  }
+
+  // RV4 (model-side): nothing to summarize when the prefix is empty (recent
+  // alone exceeds keepRecentMessages). Summarizing an empty prefix would add a
+  // synthetic message and GROW the prompt — never converges. Surface the
+  // overflow instead (recovery retries once, then propagates).
+  if (prefix.length === 0) {
     return {
       messages: prunedAll,
       messagesDropped: 0,
@@ -590,13 +693,26 @@ export function resolveCompactionConfig(
 ): CompactionConfig {
   const o = overrides ?? {};
   const pick = <T>(v: T | null | undefined, d: T): T => (v == null ? d : v);
+  const triggerRatio = pick(
+    o.triggerRatio,
+    DEFAULT_COMPACTION_CONFIG.triggerRatio,
+  );
+  let targetRatio = pick(o.targetRatio, DEFAULT_COMPACTION_CONFIG.targetRatio);
+  // Hysteresis backstop (drift C2): the post-compaction target must stay below
+  // the trigger or compaction re-fires every turn. The agent create/update zod
+  // schema already rejects an inverted pair, but a pre-existing/legacy row (or a
+  // direct DB write) could still carry one — clamp it here so the runtime can
+  // never thrash.
+  if (targetRatio >= triggerRatio) {
+    targetRatio = triggerRatio * 0.9;
+  }
   return {
     compactionEnabled: pick(
       o.compactionEnabled,
       DEFAULT_COMPACTION_CONFIG.compactionEnabled,
     ),
-    triggerRatio: pick(o.triggerRatio, DEFAULT_COMPACTION_CONFIG.triggerRatio),
-    targetRatio: pick(o.targetRatio, DEFAULT_COMPACTION_CONFIG.targetRatio),
+    triggerRatio,
+    targetRatio,
     reserveRatio: pick(o.reserveRatio, DEFAULT_COMPACTION_CONFIG.reserveRatio),
     keepRecentMessages: pick(
       o.keepRecentMessages,
@@ -639,6 +755,44 @@ export function computeBudget(
   };
 }
 
+/**
+ * First-turn safety margin on the char/4 projection (drift M2): char/4
+ * under-counts CJK, dense JSON, and tool chatter, and on a cold start there is
+ * no provider-reported `usage.inputTokens` to correct it.
+ */
+export const COLD_START_MARGIN = 1.15;
+
+/**
+ * The Tier 1 trigger projection (drift C1): what THIS turn is about to put on
+ * the wire, not just the stored messages. `overheadTokens` carries the
+ * estimated system prompt + tool schemas + skill payload — invisible to a
+ * message-only estimate but sent to the model on every turn (the observed
+ * live-test gap: provider reported 8888 input tokens vs ~986 message-only).
+ * `lastInputTokens` is the provider-reported count from the prior turn — the
+ * corrective baseline for turns ≥ 2 (threaded in the §H usage-metadata chunk).
+ * When it is absent the whole char/4 projection is inflated by
+ * {@link COLD_START_MARGIN} (M2).
+ */
+export function projectTier1Tokens(args: {
+  messageTokens: number;
+  priorSummaryTokens: number;
+  overheadTokens?: number;
+  lastInputTokens?: number;
+}): number {
+  const charBased =
+    args.messageTokens + args.priorSummaryTokens + (args.overheadTokens ?? 0);
+  if (args.lastInputTokens == null) {
+    return Math.ceil(charBased * COLD_START_MARGIN);
+  }
+  // Two independent estimates of this turn's payload: `charBased` is a fresh
+  // char/4 pass over the whole unsummarized view (+ summary + overhead);
+  // `lastInputTokens` is the provider's accurate count from the prior turn but
+  // stale (missing messages appended since). Take the larger — char/4 chronically
+  // under-counts, so this is usually `lastInputTokens`; over-counting only
+  // triggers compaction earlier, never an overflow.
+  return Math.max(Math.ceil(charBased), args.lastInputTokens);
+}
+
 /** Synthetic UIMessage carrying the persisted summary, injected into the view. */
 export function summaryUIMessage(text: string): PlatypusUIMessage {
   return {
@@ -669,6 +823,15 @@ export type Tier1Input = {
   summarize: Summarize;
   store: CompactionStore;
   summarizerWindow?: number;
+  /**
+   * Estimated tokens of the per-turn payload that is NOT in `messages` —
+   * system prompt, tool schemas, skill list (drift C1). Counted toward the
+   * trigger and subtracted from the compaction target (compaction cannot
+   * shrink it, so hysteresis must leave room for it — C2).
+   */
+  overheadTokens?: number;
+  /** Provider-reported `usage.inputTokens` from the prior turn (C1, via §H). */
+  lastInputTokens?: number;
   onEvent?: (event: CompactionEvent) => void;
 };
 
@@ -716,7 +879,16 @@ export async function applyTier1Compaction(
 
   // The view that would be sent if we did nothing more this turn.
   const baseView = inject(priorSummary, afterWatermark);
-  const projected = estimate(afterWatermark) + priorSummaryTokens;
+  const overheadTokens = input.overheadTokens ?? 0;
+  // RV9: compute the char/4 pass over the unsummarized view once and reuse it
+  // for both the trigger projection and compactUIMessages' no-op gate.
+  const messageTokens = estimate(afterWatermark);
+  const projected = projectTier1Tokens({
+    messageTokens,
+    priorSummaryTokens,
+    overheadTokens,
+    lastInputTokens: input.lastInputTokens,
+  });
 
   const forceCompact = state.compactionDirty;
   const triggered =
@@ -727,36 +899,65 @@ export async function applyTier1Compaction(
     return { messages: baseView, compacted: false };
   }
 
+  // Compaction can only shrink the messages, never the per-turn overhead, so
+  // the target the messages must fit in is reduced by it (C1/C2). When the
+  // overhead alone exhausts the target, hysteresis is impossible — warn loudly
+  // (compaction will re-fire every turn) but still compact: recovery is the
+  // only other net.
+  const effectiveTarget = Math.max(0, budget.targetTokens - overheadTokens);
+  if (overheadTokens >= budget.targetTokens) {
+    logger.warn(
+      { chatId: input.chatId, overheadTokens, target: budget.targetTokens },
+      "system/tool overhead alone exceeds the compaction target — compaction will re-fire each turn",
+    );
+  }
+
   const result = await compactUIMessages(afterWatermark, {
-    targetTokens: budget.targetTokens,
+    targetTokens: effectiveTarget,
     keepRecentMessages: config.keepRecentMessages,
     minPrunableChars: config.minPrunableChars,
     imageProvider,
     priorSummary,
     summarize: input.summarize,
     summarizerWindow: input.summarizerWindow,
+    // When dirty-forced the estimator already proved wrong (RV3): bypass the
+    // no-op gate so recovery's dirty flag actually shrinks the history.
+    force: forceCompact,
+    // RV9: the no-op gate estimates this exact set; reuse the value above.
+    knownEstimate: messageTokens,
   });
 
   const view = inject(result.summaryText ?? priorSummary, result.keptMessages);
 
   // Persist through the single CAS writer (P3). The decision is gated on the
   // version we read; if a concurrent writer advanced it, we skip rather than
-  // recompute (R4 — the wasted summarize is bounded, never corrupting).
+  // recompute (R4 — the wasted summarize is bounded, never corrupting). The
+  // version-pinning gate is shared so both write paths decide identically.
   const capturedVersion = state.version;
+  const pinnedWrite = (patch: WatermarkPatch) =>
+    commitWatermark(input.store, input.chatId, (latest) =>
+      latest.version === capturedVersion
+        ? { kind: "write", patch }
+        : { kind: "skip", reason: "covered" },
+    );
   let commit: CommitResult | undefined;
 
   if (result.usedModelCall) {
-    commit = await commitWatermark(input.store, input.chatId, (latest) =>
-      latest.version === capturedVersion
-        ? {
-            kind: "write",
-            patch: {
-              summary: result.summaryText,
-              watermark: result.watermarkId,
-              dirty: false,
-            },
-          }
-        : { kind: "skip", reason: "covered" },
+    commit = await pinnedWrite({
+      summary: result.summaryText,
+      watermark: result.watermarkId,
+      dirty: false,
+    });
+    logger.info(
+      {
+        metric: "compaction.fired",
+        tier: 1,
+        chatId: input.chatId,
+        tokensBefore: projected,
+        tokensAfter: result.estimatedTokens,
+        messagesDropped: result.messagesDropped,
+      },
+      "compaction.fired",
     );
     input.onEvent?.({
       type: "context-compacted",
@@ -766,26 +967,12 @@ export async function applyTier1Compaction(
     });
   } else if (state.compactionDirty) {
     // Forced by recovery but pruning/within-target sufficed: just clear the flag.
-    commit = await commitWatermark(input.store, input.chatId, (latest) =>
-      latest.version === capturedVersion
-        ? { kind: "write", patch: { dirty: false } }
-        : { kind: "skip", reason: "covered" },
-    );
+    commit = await pinnedWrite({ dirty: false });
   }
 
   return { messages: view, compacted: result.usedModelCall, commit };
 }
 
-/**
- * Invalidates a stale summary when a message at/below the watermark is edited,
- * deleted, or regenerated (drift C4). Clears the summary and resets the
- * watermark to null (re-summarize from scratch on the next trigger) through the
- * single CAS writer, so a racing compaction loses the CAS and re-reads the reset
- * state (R1). No-op when the edit is entirely above the watermark.
- *
- * @param affectedIds  ids of messages being changed/removed
- * @param orderedIds   current full ordering of message ids (to locate watermark)
- */
 /**
  * Detects which summarized messages (at/below the watermark) the freshly
  * submitted history changed or dropped — the C4 trigger. Because the client
@@ -808,11 +995,29 @@ export function affectedBelowWatermark(
     const p = persisted[i];
     if (!p.id) continue;
     const inc = incomingById.get(p.id);
-    if (!inc || JSON.stringify(inc.parts) !== JSON.stringify(p.parts)) {
+    if (!inc || stableStringify(inc.parts) !== stableStringify(p.parts)) {
       affected.push(p.id);
     }
   }
   return affected;
+}
+
+/**
+ * Persists `compactionDirty = true` after a context-overflow recovery (§E,
+ * drift T3). Recovery never writes summary/watermark — it only flags; the next
+ * `prepareChatTurn` sees the flag, forces Tier 1, and clears it inside the same
+ * CAS write that advances the watermark. Goes through the single writer (P3);
+ * already-dirty is a no-op.
+ */
+export async function setCompactionDirty(
+  store: CompactionStore,
+  chatId: string,
+): Promise<CommitResult> {
+  return commitWatermark(store, chatId, (state) =>
+    state.compactionDirty
+      ? { kind: "skip", reason: "no-op" }
+      : { kind: "write", patch: { dirty: true } },
+  );
 }
 
 export async function invalidateCompaction(
@@ -836,4 +1041,62 @@ export async function invalidateCompaction(
     if (!affectsSummarized) return { kind: "skip", reason: "no-op" };
     return { kind: "write", patch: { summary: null, watermark: null } };
   });
+}
+
+// --- Tier 2 in-turn compaction (§D, ADR-0009) ---
+
+/**
+ * Per-turn Tier 2 compaction context (§D). Null when the §G kill switch or
+ * agent config disables proactive compaction. Sub-agents also receive Tier 2
+ * (drift M3 — they have no durable history for Tier 1, but their tool loop
+ * can bloat intra-turn).
+ */
+export type Tier2Context = {
+  triggerTokens: number;
+  targetTokens: number;
+  keepRecentMessages: number;
+  minPrunableChars: number;
+  imageProvider: ImageProvider;
+  summarize: Summarize;
+  summarizerWindow?: number;
+};
+
+/**
+ * Builds the Tier 2 in-turn compaction `prepareStep` callback (§D). Fires
+ * before each step of a tool loop when the accumulated model messages exceed
+ * `triggerTokens` — compacts via `compactModelMessages` and returns the
+ * trimmed messages. Returns `undefined` when below the threshold so the SDK
+ * proceeds unchanged (drift m3: no per-step overhead when the loop is small).
+ */
+export function buildTier2PrepareStep(ctx: Tier2Context): PrepareStepFunction {
+  return async ({ messages }) => {
+    const estimate = estimateTokens(
+      modelMessagesToCountUnits(messages, ctx.imageProvider),
+    );
+    if (estimate < ctx.triggerTokens) return undefined;
+
+    const result = await compactModelMessages(messages, {
+      targetTokens: ctx.targetTokens,
+      keepRecentMessages: ctx.keepRecentMessages,
+      minPrunableChars: ctx.minPrunableChars,
+      imageProvider: ctx.imageProvider,
+      summarize: ctx.summarize,
+      summarizerWindow: ctx.summarizerWindow,
+      // Reuse the trigger-check estimate; skips a redundant full pass (RV9).
+      knownEstimate: estimate,
+    });
+
+    if (result.messagesDropped === 0) return undefined;
+
+    logger.info(
+      {
+        messagesDropped: result.messagesDropped,
+        estimatedTokensBefore: estimate,
+        estimatedTokensAfter: result.estimatedTokens,
+      },
+      "Tier 2 in-turn compaction fired",
+    );
+
+    return { messages: result.messages };
+  };
 }
