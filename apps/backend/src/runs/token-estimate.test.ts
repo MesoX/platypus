@@ -8,8 +8,10 @@ import {
   imageProviderFor,
   CHARS_PER_TOKEN,
   DEFAULT_NONTEXT_TOKENS,
+  MODEL_BOUND_UI_PART_TYPES,
   type CountUnit,
 } from "./token-estimate.ts";
+import type { ModelMessage } from "ai";
 import type { PlatypusUIMessage } from "../types.ts";
 
 // A 24-byte PNG: 8-byte signature + IHDR length/type + width@16 + height@20.
@@ -178,6 +180,48 @@ describe("MODEL_BOUND filter (drift T1 — UI-only parts excluded)", () => {
     expect(units[0].text).toBe("hello");
     expect(units[0].nonText).toHaveLength(0);
   });
+
+  it("only text/file UI part types are model-bound (RV10 — the documented set)", () => {
+    expect([...MODEL_BOUND_UI_PART_TYPES]).toEqual(["text", "file"]);
+    // The UI-only types the adapter must drop are NOT in the model-bound set.
+    for (const uiOnly of [
+      "reasoning",
+      "source-url",
+      "source-document",
+      "step-start",
+      "data-custom",
+    ]) {
+      expect(MODEL_BOUND_UI_PART_TYPES).not.toContain(uiOnly);
+    }
+  });
+});
+
+describe("tool-result output variants (RV10 — model adapter)", () => {
+  const unit = (output: unknown): CountUnit => {
+    const msg = {
+      role: "tool",
+      content: [
+        { type: "tool-result", toolCallId: "c1", toolName: "t", output },
+      ],
+    } as unknown as ModelMessage;
+    return modelMessagesToCountUnits([msg])[0];
+  };
+
+  it("folds text / json / content value into char/4 text", () => {
+    expect(unit({ type: "text", value: "hello world" }).text).toContain(
+      "hello",
+    );
+    expect(unit({ type: "json", value: { a: 1 } }).text).toContain('"a"');
+    expect(
+      unit({ type: "content", value: [{ type: "text", text: "deep" }] }).text,
+    ).toContain("deep");
+  });
+
+  it("uses the reason (not a value) for execution-denied", () => {
+    expect(
+      unit({ type: "execution-denied", reason: "blocked" }).text,
+    ).toContain("blocked");
+  });
 });
 
 describe("adapter equality (drift T1 — one estimate across both shapes)", () => {
@@ -309,5 +353,19 @@ describe("estimateOverheadTokens (drift C1)", () => {
     );
     // The point of C1: this payload is large even with a short history.
     expect(estimateOverheadTokens(sys, tools)).toBeGreaterThan(500);
+  });
+
+  it("is stable across repeated calls (RV9 schema-cache must not change counts)", () => {
+    const sys = "system prompt";
+    const tools = {
+      lookup: tool({
+        description: "Look something up by id.",
+        inputSchema: z.object({ id: z.string().describe("identifier") }),
+      }),
+    };
+    const first = estimateOverheadTokens(sys, tools);
+    // Same tool objects → WeakMap hit on the second call; the memoized schema
+    // length must reproduce the exact token count, never drift.
+    expect(estimateOverheadTokens(sys, tools)).toBe(first);
   });
 });

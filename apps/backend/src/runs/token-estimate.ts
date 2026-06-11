@@ -226,6 +226,17 @@ export function parseImageDimensions(
         continue;
       }
       const marker = bytes[offset + 1];
+      // 0xFF fill bytes pad before a real marker; consume one and re-read so a
+      // run of fill bytes doesn't get mistaken for a segment (RV10).
+      if (marker === 0xff) {
+        offset++;
+        continue;
+      }
+      // 0xFF00 is a stuffed data byte inside entropy-coded data, not a marker.
+      if (marker === 0x00) {
+        offset += 2;
+        continue;
+      }
       // SOF0..SOF15 carry frame dimensions, excluding DHT(C4)/JPG(C8)/DAC(CC).
       const isSof =
         marker >= 0xc0 &&
@@ -243,10 +254,12 @@ export function parseImageDimensions(
         const width = view.getUint16(offset + 7);
         return { width, height };
       }
-      // Standalone markers (RST, SOI, EOI) have no length; skip 2 bytes.
+      // Standalone markers with no length payload: SOI(D8), EOI(D9),
+      // RSTn(D0-D7), TEM(01) (RV10). Skip the 2-byte marker.
       if (
         marker === 0xd8 ||
         marker === 0xd9 ||
+        marker === 0x01 ||
         (marker >= 0xd0 && marker <= 0xd7)
       ) {
         offset += 2;
@@ -262,15 +275,27 @@ export function parseImageDimensions(
 }
 
 /**
+ * Upper bound on bytes decoded from a data URL for header parsing (RV9). PNG
+ * dimensions live in the first 24 bytes; a JPEG SOF marker is almost always
+ * within the first few KB. Decoding only a 64 KB prefix avoids materializing a
+ * multi-MB image on every estimation pass — we never need the pixel data, only
+ * the header. base64 packs 3 bytes per 4 chars, so cap the input accordingly.
+ */
+const HEADER_DECODE_MAX_BYTES = 64 * 1024;
+const HEADER_DECODE_MAX_B64_CHARS = Math.ceil(HEADER_DECODE_MAX_BYTES / 3) * 4;
+
+/**
  * Decodes the bytes behind a UIMessage file URL when it is a base64 data URL.
  * Hosted (http/https) URLs return undefined — we have no bytes in hand, so the
- * caller falls to the conservative constant.
+ * caller falls to the conservative constant. Only a bounded prefix is decoded
+ * (RV9) since the caller only reads image headers.
  */
 function bytesFromUrl(url: string): Uint8Array | undefined {
   const match = /^data:[^;,]*;base64,(.*)$/s.exec(url);
   if (!match) return undefined;
   try {
-    return new Uint8Array(Buffer.from(match[1], "base64"));
+    const b64 = match[1].slice(0, HEADER_DECODE_MAX_B64_CHARS);
+    return new Uint8Array(Buffer.from(b64, "base64"));
   } catch {
     return undefined;
   }
@@ -346,24 +371,18 @@ export function uiMessagesToCountUnits(
 // Tier 2 adapter — ModelMessage → CountUnit (one unit per message)
 // ---------------------------------------------------------------------------
 
-/** Extracts the model-visible string from a tool-result output wrapper. */
+/**
+ * Extracts the model-visible string from a tool-result output wrapper. Only two
+ * behaviours exist: `execution-denied` carries a `reason`; every other variant
+ * (`text` / `error-text` / `json` / `error-json` / `content`) carries a `value`
+ * that is char/4'd via `stableStringify` — mirroring the UI adapter, which folds
+ * the raw output the same way (RV10: the old per-label switch collapsed to these
+ * two and carried an unreachable `default`).
+ */
 function toolResultOutputText(output: ToolResultPart["output"]): string {
-  switch (output.type) {
-    case "text":
-    case "error-text":
-      // Mirrors the UI side, which folds the raw string output via
-      // stableStringify (JSON.stringify of a string == the quoted string).
-      return stableStringify(output.value);
-    case "json":
-    case "error-json":
-      return stableStringify(output.value);
-    case "content":
-      return stableStringify(output.value);
-    case "execution-denied":
-      return stableStringify(output.reason ?? "");
-    default:
-      return "";
-  }
+  return output.type === "execution-denied"
+    ? stableStringify(output.reason ?? "")
+    : stableStringify(output.value);
 }
 
 function modelMessageToCountUnit(
@@ -433,6 +452,14 @@ export function modelMessagesToCountUnits(
 export const TOOL_SCHEMA_FALLBACK_TOKENS = 200;
 
 /**
+ * Serialized-schema char length cached per input-schema object (RV9). The
+ * `asSchema(...) → stableStringify` conversion is the expensive part of overhead
+ * estimation and a tool's schema object is stable across turns, so memoize it.
+ * A WeakMap keyed by the schema object never pins a tool that goes out of scope.
+ */
+const schemaLenCache = new WeakMap<object, number>();
+
+/**
  * Estimates the tokens of the per-turn payload that is NOT in the message
  * history: the rendered system prompt plus every tool's name, description, and
  * JSON input schema — all sent to the model on every turn, and the dominant
@@ -447,16 +474,28 @@ export function estimateOverheadTokens(
   let tokens = Math.ceil((systemPrompt ?? "").length / CHARS_PER_TOKEN);
   for (const [name, tool] of Object.entries(tools ?? {})) {
     const t = tool as { description?: string; inputSchema?: unknown };
-    let text = name + (t.description ?? "");
+    let schemaLen = 0;
     if (t.inputSchema != null) {
-      try {
-        // asSchema is the SDK's own conversion to the wire-format JSON schema.
-        text += stableStringify(asSchema(t.inputSchema as never).jsonSchema);
-      } catch {
-        tokens += TOOL_SCHEMA_FALLBACK_TOKENS;
+      const key = typeof t.inputSchema === "object" ? t.inputSchema : undefined;
+      const cached = key ? schemaLenCache.get(key) : undefined;
+      if (cached !== undefined) {
+        schemaLen = cached;
+      } else {
+        try {
+          // asSchema is the SDK's own conversion to the wire-format JSON schema.
+          schemaLen = stableStringify(
+            asSchema(t.inputSchema as never).jsonSchema,
+          ).length;
+          if (key) schemaLenCache.set(key, schemaLen);
+        } catch {
+          tokens += TOOL_SCHEMA_FALLBACK_TOKENS;
+        }
       }
     }
-    tokens += Math.ceil(text.length / CHARS_PER_TOKEN);
+    // Concatenated length == sum of lengths, so this stays numerically identical
+    // to folding the schema string into `text` before the single char/4 divide.
+    const baseLen = (name + (t.description ?? "")).length + schemaLen;
+    tokens += Math.ceil(baseLen / CHARS_PER_TOKEN);
   }
   return tokens;
 }

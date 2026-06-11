@@ -30,6 +30,14 @@ export const DEFAULT_CONTEXT_WINDOW = 8192;
 /** Default cache TTL: API-detected windows can drift, the override path evicts. */
 export const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+/**
+ * Short TTL for `source: "default"` resolutions (defect 6 / RV7d). A registry
+ * MISS or a transient API failure falls to 8192; caching that for the full hour
+ * pins a wrong window long after the blip clears. A 60 s TTL lets the next turn
+ * re-probe while still collapsing a burst of same-turn lookups.
+ */
+export const DEFAULT_SOURCE_CACHE_TTL_MS = 60 * 1000; // 1 minute
+
 /** Where a resolved window came from — drives ring neutrality (T6). */
 export type WindowSource = "override" | "api" | "registry" | "default";
 
@@ -114,11 +122,18 @@ export function lookupRegistry(
   const alias = aliasMap[modelId];
   if (alias && registry[alias]) return registry[alias];
 
-  // 5. Bedrock ARN → vendor.model, tried bare and under the "bedrock/" prefix
+  // 5. Bedrock ARN → vendor.model, tried bare and under the "bedrock/" prefix,
+  // each also lowercased (registry keys for Bedrock are lowercase; ARNs are not
+  // guaranteed to be — defect 11).
   const bedrock = bedrockModelFromArn(modelId);
   if (bedrock) {
-    if (registry[bedrock]) return registry[bedrock];
-    if (registry[`bedrock/${bedrock}`]) return registry[`bedrock/${bedrock}`];
+    const candidates = [
+      bedrock,
+      `bedrock/${bedrock}`,
+      bedrock.toLowerCase(),
+      `bedrock/${bedrock.toLowerCase()}`,
+    ];
+    for (const c of candidates) if (registry[c]) return registry[c];
   }
 
   // 6. family heuristic — longest registry key that is a proper prefix of the
@@ -358,10 +373,13 @@ export class ContextWindowResolver {
       // guard the resolving promise would repopulate the cache with the stale
       // pre-update value and defeat the eviction for a full TTL (RV7c race).
       if (this.#inflight.get(cacheKey) === promise) {
-        this.#cache.set(cacheKey, {
-          value,
-          expiresAt: this.#now() + this.#ttlMs,
-        });
+        // RV7d / defect 6: a default-source result (MISS or transient API
+        // failure) gets a short TTL so a blip doesn't pin 8192 for an hour.
+        const ttl =
+          value.source === "default"
+            ? Math.min(DEFAULT_SOURCE_CACHE_TTL_MS, this.#ttlMs)
+            : this.#ttlMs;
+        this.#cache.set(cacheKey, { value, expiresAt: this.#now() + ttl });
         this.#inflight.delete(cacheKey);
       }
       return value;
@@ -414,6 +432,7 @@ export class ContextWindowResolver {
     } else {
       logger.warn(
         {
+          metric: "litellm.key_miss",
           providerId: provider.id,
           modelId,
           providerType: provider.providerType,
@@ -424,7 +443,12 @@ export class ContextWindowResolver {
 
     // 4. Conservative default
     logger.warn(
-      { providerId: provider.id, modelId, default: DEFAULT_CONTEXT_WINDOW },
+      {
+        metric: "context_window.fell_to_default",
+        providerId: provider.id,
+        modelId,
+        default: DEFAULT_CONTEXT_WINDOW,
+      },
       "context window unresolved — using conservative default (ring neutral)",
     );
     return {

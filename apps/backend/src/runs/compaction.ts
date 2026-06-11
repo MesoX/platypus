@@ -150,11 +150,16 @@ export async function commitWatermark(
     if (won) return { status: "applied", version: state.version + 1 };
     // Lost the CAS — a concurrent writer moved the version. Loop to re-read and
     // re-decide. The decision compares VERSION (via the re-read), not watermark
-    // values, so a backward watermark reset cannot be misread (R1).
+    // values, so a backward watermark reset cannot be misread (R1). The metric
+    // gates whether the R4 read→summarize→write contention note ever needs a fix.
+    logger.info(
+      { metric: "cas.conflict", chatId, attempt, version: state.version },
+      "cas.conflict",
+    );
   }
 
   logger.warn(
-    { chatId },
+    { metric: "cas.conflict", chatId, contended: true },
     "compaction CAS contended past retry — skipping (safe no-op)",
   );
   return { status: "skipped", reason: "contended" };
@@ -280,6 +285,12 @@ export type UICompactOptions = {
    * re-using it as the no-op gate causes an infinite overflow→dirty→no-op loop.
    */
   force?: boolean;
+  /**
+   * Pre-computed estimate of `messages` (RV9). The caller's trigger projection
+   * already ran the char/4 pass over this exact set, so reuse it instead of
+   * re-estimating the full history a second time on the hot path.
+   */
+  knownEstimate?: number;
 };
 
 export type UICompactionResult = {
@@ -340,19 +351,23 @@ export async function compactUIMessages(
   const estimate = (msgs: PlatypusUIMessage[]) =>
     estimateTokens(uiMessagesToCountUnits(msgs, provider));
 
+  // RV9: reuse the caller's already-computed estimate of `messages` rather than
+  // re-running the full char/4 pass on the hot path.
+  const initialEstimate = opts.knownEstimate ?? estimate(messages);
+
   // No-op when already within target (incl. the existing summary). This is what
   // makes a follow-up turn after compaction NOT re-fire (hysteresis, C2).
   // Bypassed when `force` is set — recovery sets the dirty flag AFTER a provider
   // rejection, so the estimator already proved wrong; using it as a no-op gate
   // causes an infinite overflow→dirty→no-op loop (RV3).
-  if (!opts.force && estimate(messages) + priorTokens <= opts.targetTokens) {
+  if (!opts.force && initialEstimate + priorTokens <= opts.targetTokens) {
     return {
       keptMessages: messages,
       summaryText: opts.priorSummary ?? null,
       watermarkId: null,
       messagesDropped: 0,
       usedModelCall: false,
-      estimatedTokens: estimate(messages) + priorTokens,
+      estimatedTokens: initialEstimate + priorTokens,
     };
   }
 
@@ -865,8 +880,11 @@ export async function applyTier1Compaction(
   // The view that would be sent if we did nothing more this turn.
   const baseView = inject(priorSummary, afterWatermark);
   const overheadTokens = input.overheadTokens ?? 0;
+  // RV9: compute the char/4 pass over the unsummarized view once and reuse it
+  // for both the trigger projection and compactUIMessages' no-op gate.
+  const messageTokens = estimate(afterWatermark);
   const projected = projectTier1Tokens({
-    messageTokens: estimate(afterWatermark),
+    messageTokens,
     priorSummaryTokens,
     overheadTokens,
     lastInputTokens: input.lastInputTokens,
@@ -905,28 +923,41 @@ export async function applyTier1Compaction(
     // When dirty-forced the estimator already proved wrong (RV3): bypass the
     // no-op gate so recovery's dirty flag actually shrinks the history.
     force: forceCompact,
+    // RV9: the no-op gate estimates this exact set; reuse the value above.
+    knownEstimate: messageTokens,
   });
 
   const view = inject(result.summaryText ?? priorSummary, result.keptMessages);
 
   // Persist through the single CAS writer (P3). The decision is gated on the
   // version we read; if a concurrent writer advanced it, we skip rather than
-  // recompute (R4 — the wasted summarize is bounded, never corrupting).
+  // recompute (R4 — the wasted summarize is bounded, never corrupting). The
+  // version-pinning gate is shared so both write paths decide identically.
   const capturedVersion = state.version;
+  const pinnedWrite = (patch: WatermarkPatch) =>
+    commitWatermark(input.store, input.chatId, (latest) =>
+      latest.version === capturedVersion
+        ? { kind: "write", patch }
+        : { kind: "skip", reason: "covered" },
+    );
   let commit: CommitResult | undefined;
 
   if (result.usedModelCall) {
-    commit = await commitWatermark(input.store, input.chatId, (latest) =>
-      latest.version === capturedVersion
-        ? {
-            kind: "write",
-            patch: {
-              summary: result.summaryText,
-              watermark: result.watermarkId,
-              dirty: false,
-            },
-          }
-        : { kind: "skip", reason: "covered" },
+    commit = await pinnedWrite({
+      summary: result.summaryText,
+      watermark: result.watermarkId,
+      dirty: false,
+    });
+    logger.info(
+      {
+        metric: "compaction.fired",
+        tier: 1,
+        chatId: input.chatId,
+        tokensBefore: projected,
+        tokensAfter: result.estimatedTokens,
+        messagesDropped: result.messagesDropped,
+      },
+      "compaction.fired",
     );
     input.onEvent?.({
       type: "context-compacted",
@@ -936,26 +967,12 @@ export async function applyTier1Compaction(
     });
   } else if (state.compactionDirty) {
     // Forced by recovery but pruning/within-target sufficed: just clear the flag.
-    commit = await commitWatermark(input.store, input.chatId, (latest) =>
-      latest.version === capturedVersion
-        ? { kind: "write", patch: { dirty: false } }
-        : { kind: "skip", reason: "covered" },
-    );
+    commit = await pinnedWrite({ dirty: false });
   }
 
   return { messages: view, compacted: result.usedModelCall, commit };
 }
 
-/**
- * Invalidates a stale summary when a message at/below the watermark is edited,
- * deleted, or regenerated (drift C4). Clears the summary and resets the
- * watermark to null (re-summarize from scratch on the next trigger) through the
- * single CAS writer, so a racing compaction loses the CAS and re-reads the reset
- * state (R1). No-op when the edit is entirely above the watermark.
- *
- * @param affectedIds  ids of messages being changed/removed
- * @param orderedIds   current full ordering of message ids (to locate watermark)
- */
 /**
  * Detects which summarized messages (at/below the watermark) the freshly
  * submitted history changed or dropped — the C4 trigger. Because the client

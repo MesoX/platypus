@@ -565,13 +565,23 @@ async function buildCompactionRuntime(args: {
   // Summarizer uses the provider's task model, falling back to the main model
   // when unset (drift T7). generateText is one-shot, no tools.
   const summarize = async (text: string): Promise<string> => {
+    const startedAt = Date.now();
     const { text: summary, usage } = await generateText({
       model: opened.languageModel(taskModelId),
       system:
         "You compress conversation history for context reuse. Produce a dense summary capturing decisions made, facts established, files/tools touched, open questions, and the user's intent. Drop pleasantries and redundancy. Output only the summary.",
       prompt: text,
     });
-    logger.info({ chatId, taskModelId, usage }, "context compaction summarize");
+    logger.info(
+      {
+        metric: "summarize.latency_ms",
+        latencyMs: Date.now() - startedAt,
+        chatId,
+        taskModelId,
+        usage,
+      },
+      "context compaction summarize",
+    );
     return summary;
   };
 

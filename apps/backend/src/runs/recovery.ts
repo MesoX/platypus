@@ -147,7 +147,11 @@ export function contextOverflowRecoveryMiddleware(
     if (!isContextOverflowError(error)) throw error;
 
     logger.warn(
-      { chatId: ctx.chatId, error: String(error) },
+      {
+        metric: "recovery.overflow_detected",
+        chatId: ctx.chatId,
+        error: String(error),
+      },
       "context overflow detected; trimming and retrying once",
     );
 
@@ -170,7 +174,7 @@ export function contextOverflowRecoveryMiddleware(
         ctx,
       );
       logger.info(
-        { chatId: ctx.chatId, messagesDropped },
+        { metric: "recovery.retry", chatId: ctx.chatId, messagesDropped },
         "overflow recovery trim complete; retrying model call",
       );
       return { ...params, prompt };
@@ -185,20 +189,40 @@ export function contextOverflowRecoveryMiddleware(
     }
   };
 
+  // Runs the single retry and logs recovery.failed if the provider rejects the
+  // trimmed prompt too (the dead end formatStreamError then surfaces to the user).
+  const retry = async <R>(op: () => PromiseLike<R>): Promise<R> => {
+    try {
+      return await op();
+    } catch (retryError) {
+      logger.error(
+        {
+          metric: "recovery.failed",
+          chatId: ctx.chatId,
+          error: String(retryError),
+        },
+        "overflow recovery retry still rejected by provider",
+      );
+      throw retryError;
+    }
+  };
+
   return {
     specificationVersion: "v3",
     wrapGenerate: async ({ doGenerate, params, model }) => {
       try {
         return await doGenerate();
       } catch (error) {
-        return model.doGenerate(await recoverParams(error, params));
+        const next = await recoverParams(error, params);
+        return retry(() => model.doGenerate(next));
       }
     },
     wrapStream: async ({ doStream, params, model }) => {
       try {
         return await doStream();
       } catch (error) {
-        return model.doStream(await recoverParams(error, params));
+        const next = await recoverParams(error, params);
+        return retry(() => model.doStream(next));
       }
     },
   };

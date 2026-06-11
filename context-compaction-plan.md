@@ -220,38 +220,40 @@ CONFIRMED unless marked otherwise. **RV1-RV4 were blocking** and are now fixed.
   (c) ~~`evict` called by zero routes~~ **FIXED:** `contextWindowResolver.evict(providerId)`
   wired in `routes/provider.ts` PUT handler;
   (d) ~~no timeout / no single-flight~~ **FIXED:** `AbortSignal.timeout(5000)` +
-  `#inflight` Map + `Promise.all` the two resolve calls. (default-source full-TTL
-  cache = old defect 6, MED, still open).
+  `#inflight` Map + `Promise.all` the two resolve calls.
+  (e) ~~default-source full-TTL cache (old defect 6, MED)~~ **FIXED 2026-06-11:**
+  `source:"default"` results get `DEFAULT_SOURCE_CACHE_TTL_MS` (60 s) instead of
+  the hour, so a registry MISS / transient API blip no longer pins 8192.
 
-### Medium / low
+### Medium / low (RV8-RV10 — FIXED 2026-06-11, chunk 10)
 
-- **RV8 (PLAUSIBLE) — `finalize` in the snapshot-consumer's `finally` can mark
-  a broken run "succeeded".** (`agent-runner.ts`) Introduced by the
-  tool-timestamps commits (`3851da6`/`b97312f`), **not** the compaction chunks
-  — note for the upstream-PR exclusion list. An internal stream-machinery fault
-  ends the for-await loop early (readUIMessageStream swallows errors,
-  `terminateOnError` defaults false) → `finalize("succeeded")` persists a
-  partial message, disposes MCP clients under a live tool loop, unregisters the
-  run (cancel becomes no-op). Rare trigger; fix when touching the timestamps
-  feature.
-- **RV9 — hot-path waste.** 3-4 full-history estimation passes per triggered
-  turn (each re-running sorted-key `stableStringify` over all tool I/O,
-  event-loop-blocking tens-to-hundreds of ms on big histories); image data-URLs
-  fully base64-decoded per pass to read a ~30-byte header; tool JSON schemas
-  re-serialized every turn (`estimateOverheadTokens`); once a watermark exists,
-  C4 reads the full `messages` JSONB row + stringify-compares the whole prefix
-  every turn. _Fix:_ compute each estimate once and reuse; decode only a base64
-  prefix for header parsing; cache per-tool overhead in a WeakMap; digest-based
-  C4 check (folds into RV1's rework).
-- **RV10 — cleanup minors.** Dead `MODEL_BOUND_UI_PART_TYPES` export whose
-  comment promises a test that doesn't exist; `toolResultOutputText` 5-label
-  switch collapses to 2 behaviors; two near-identical `commitWatermark`
-  closures in `applyTier1Compaction` (the version-pinning gate lives in two
-  copies); orphaned jsdoc block above `affectedBelowWatermark` (describes
-  `invalidateCompaction`); JPEG walker mishandles 0xFF fill bytes / TEM marker
-  (safe 1200-token fallback in practice — hardening only: skip `0xFF` fill
-  bytes, add `0x01` to the standalone set); `bytesFromUrl` duplicates
-  storage/utils' private `parseDataUrl` with a diverging regex.
+- **RV8 — `finalize` in the snapshot-consumer's `finally` could mark a broken
+  run "succeeded".** ~~(`agent-runner.ts`)~~ **FIXED:** the snapshot loop now
+  captures the stream error (both the `readUIMessageStream` `onError` callback
+  and the surrounding `catch` set `streamError`); the `finally` finalizes
+  `"failed"` with that error unless the run was aborted/cancelled. (Origin note
+  retained for the upstream-PR exclusion list: introduced by the tool-timestamps
+  commits `3851da6`/`b97312f`, not the compaction chunks.)
+- **RV9 — hot-path waste.** ~~3-4 full-history estimation passes; full base64
+  decode per image; tool schemas re-serialized every turn~~ **FIXED (partial):**
+  Tier 1 computes the unsummarized-view estimate **once** and threads it as
+  `knownEstimate` into `compactUIMessages` (mirrors the Tier 2 `knownEstimate`
+  from chunk 4); `bytesFromUrl` decodes only a 64 KB prefix for header parsing;
+  `estimateOverheadTokens` memoizes each tool's serialized-schema length in a
+  `WeakMap` keyed by the schema object. **Deliberately deferred:** the digest-based
+  C4 check — the full-prefix compare is already correct (RV1 landed), so this is
+  pure optimization of a correct path; revisit only if the per-turn JSONB
+  read+stringify shows up in profiling.
+- **RV10 — cleanup minors. FIXED:** `MODEL_BOUND_UI_PART_TYPES` now has the
+  promised test (membership assertion); `toolResultOutputText` collapsed to the
+  two real behaviours (`execution-denied` reason vs `value`), removing the dead
+  `default`; the two `commitWatermark` closures in `applyTier1Compaction` share
+  one `pinnedWrite` helper; the orphaned `invalidateCompaction` jsdoc above
+  `affectedBelowWatermark` removed; JPEG walker skips `0xFF` fill bytes + `0xFF00`
+  stuffing and treats TEM (`0x01`) as standalone. **Not done (cosmetic):**
+  `bytesFromUrl` still duplicates storage/utils' private `parseDataUrl` — left as
+  is; merging them couples the estimator to the storage layer for no behaviour
+  change.
 
 ### Re-affirmed solid by this review
 
@@ -295,25 +297,29 @@ recovery hand-off still summarizes).
 5. **T5 evict not wired (MED).** `routes/provider.ts:126` updates a provider
    (incl. `modelMeta`) without `contextWindowResolver.evict(providerId)`; window
    cache serves stale values until TTL.
-6. **Window cache pins transient failures (MED).** `context-window.ts:324` caches
-   `source:"default"`/MISS results for the full TTL (1h); one API blip pins 8192.
-   Don't cache default-source results (or use a short TTL).
-7. **Latent T2 violation (LOW).** `token-estimate.ts:352` `case "content"`
+6. **Window cache pins transient failures (MED). _FIXED 2026-06-11 (RV7e)._**
+   default/MISS results now get a 60 s `DEFAULT_SOURCE_CACHE_TTL_MS`, not the hour.
+7. **Latent T2 violation (LOW).** `token-estimate.ts` `case "content"`
    `stableStringify`s tool-output base64 image bytes into char/4 text. No current
    tool emits this shape; fix before any tool returns `content`-type media.
-8. **Latent T1 divergence (LOW).** `token-estimate.ts:318` the UI adapter folds the
-   full tool output, but a tool with custom `toModelOutput` (e.g. the sub-agent
-   tool) is collapsed on the model side → UI vs Model counts differ. Untested; add
-   a `toModelOutput` fixture.
+   _Still open — see note below._
+8. **Latent T1 divergence (LOW). _Test added 2026-06-11._** The model adapter now
+   has explicit per-variant tool-result-output coverage (text/json/content/
+   execution-denied), which is the shape a custom `toModelOutput` emits. The
+   exact UI-vs-Model equality (T1) holds for SDK-converted messages; a tool whose
+   `toModelOutput` reshapes the payload remains a bounded, documented divergence.
 9. **Doc bug. _FIXED 2026-06-10._** `token-estimate.ts` header claims "every later turn uses the real
    provider count" — false; char/4 is used every turn (ties to C1). Fix the comment
    when C1 is plumbed.
-10. **Observability metrics absent (across both chunks).** No `cas.conflict` (gates
-    whether R4 ever needs fixing), `context_window.fell_to_default`,
-    `litellm.key_miss`, `compaction.fired`, `summarize.latency_ms`, etc. Logs only.
-11. **Low:** litellm family heuristic lacks a key-boundary check
-    (`context-window.ts:126`); Bedrock-ARN path not lowercased (`:118`); dead
-    `default: return ""` in the output switch (`token-estimate.ts:357`).
+10. **Observability metrics absent. _FIXED 2026-06-11._** No metrics infra exists
+    (pino only), so emitted as structured `metric:`-tagged log lines, greppable /
+    dashboardable: `cas.conflict` (commitWatermark), `context_window.fell_to_default`
+    - `litellm.key_miss` (context-window), `compaction.fired` (Tier 1),
+      `summarize.latency_ms` (summarize wrapper), `recovery.overflow_detected` /
+      `recovery.retry` / `recovery.failed` (recovery middleware).
+11. **Low. _FIXED 2026-06-11 (partial):_** key-boundary heuristic done (RV7b);
+    Bedrock-ARN path now also tries lowercased candidates (`context-window.ts`);
+    dead `default: return ""` in the output switch removed (switch collapsed).
 
 ### Drift-checklist deltas (vs the table at the bottom)
 
@@ -849,15 +855,21 @@ Migration:
 
 ## Observability (item 4 — the design is only as good as the prod signal)
 
-Emit metrics (not just logs):
+**Landed 2026-06-11.** No metrics infra exists in the backend (pino logging
+only), so each signal is emitted as a structured `metric:`-tagged log line —
+greppable today, trivially shipped to a counter later. Emitted:
 
-- `compaction.fired{tier}`, `tokens_before` / `tokens_after`
-- `summarize.latency_ms`, `summarize.model`
-- `recovery.overflow_detected`, `recovery.retry`, `recovery.failed`
-- `estimate_vs_real.divergence` (drift T2 feedback loop)
-- `context_window.fell_to_default` + `litellm.key_miss` (drift T4/T6)
-- `cas.conflict` — **decides whether the R4 efficiency note ever needs fixing**.
-  Without this counter, contention is a guess.
+- `compaction.fired` (Tier 1) with `tier` / `tokensBefore` / `tokensAfter` /
+  `messagesDropped`. ✅
+- `summarize.latency_ms` with `latencyMs` + `taskModelId` + `usage` (the model
+  is in the same line). ✅
+- `recovery.overflow_detected`, `recovery.retry`, `recovery.failed`. ✅
+- `context_window.fell_to_default` + `litellm.key_miss` (drift T4/T6). ✅
+- `cas.conflict` (per lost CAS + on contended-skip) — **decides whether the R4
+  efficiency note ever needs fixing**. ✅
+
+Still log-only (no dedicated metric): `estimate_vs_real.divergence` (drift T2
+feedback loop) — deferred with the T2 image-constant tuning work.
 
 ---
 

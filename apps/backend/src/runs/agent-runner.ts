@@ -492,15 +492,23 @@ export class AgentRunner {
     // finalize is called here (not in toUIMessageStream's onFinish) so that
     // lastMessages reflects the fully-drained stream — including the tool
     // `completedAt` timestamps applied below — before the sink persists it.
+    // RV8: an error chunk (model/tool failure surfaced via formatStreamError) or
+    // an internal stream fault ends the for-await without throwing, because
+    // readUIMessageStream defaults terminateOnError=false. Capture it so the
+    // finally finalizes "failed" instead of silently persisting a partial
+    // message as "succeeded".
+    let streamError: unknown;
     void (async () => {
       try {
         for await (const message of readUIMessageStream<PlatypusUIMessage>({
           stream: forSnapshot,
-          onError: (err) =>
+          onError: (err) => {
+            streamError = err;
             logger.error(
               { err, runId: input.runId },
               "Snapshot stream parse error",
-            ),
+            );
+          },
         })) {
           if (!firstTokenAt && message.parts?.some((p) => p.type === "text")) {
             firstTokenAt = new Date().toISOString();
@@ -508,6 +516,7 @@ export class AgentRunner {
           lastMessages = [...input.messages, message];
         }
       } catch (err) {
+        streamError = err;
         logger.error(
           { err, runId: input.runId },
           "Server-side UI stream consumer error",
@@ -537,6 +546,18 @@ export class AgentRunner {
           } else {
             status = "cancelled";
           }
+        } else if (streamError !== undefined) {
+          // The stream errored (model/tool rejection or internal fault) but did
+          // not abort — record the run as failed rather than succeeded (RV8).
+          status = "failed";
+          err =
+            streamError instanceof Error
+              ? streamError
+              : new Error(
+                  typeof streamError === "string"
+                    ? streamError
+                    : "Server-side UI stream error",
+                );
         }
         await finalize(status, err);
       }
