@@ -769,9 +769,12 @@ export function projectTier1Tokens(args: {
   if (args.lastInputTokens == null) {
     return Math.ceil(charBased * COLD_START_MARGIN);
   }
-  // The provider count already includes overhead + the full prior history;
-  // the char-based projection covers what was added since. Take the larger —
-  // over-counting only triggers compaction earlier, never an overflow.
+  // Two independent estimates of this turn's payload: `charBased` is a fresh
+  // char/4 pass over the whole unsummarized view (+ summary + overhead);
+  // `lastInputTokens` is the provider's accurate count from the prior turn but
+  // stale (missing messages appended since). Take the larger — char/4 chronically
+  // under-counts, so this is usually `lastInputTokens`; over-counting only
+  // triggers compaction earlier, never an overflow.
   return Math.max(Math.ceil(charBased), args.lastInputTokens);
 }
 

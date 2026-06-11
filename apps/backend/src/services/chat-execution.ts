@@ -605,6 +605,8 @@ type ApplyTier1Args = {
   priorMessages?: PlatypusUIMessage[];
   /** Estimated system-prompt + tool-schema payload for this turn (drift C1). */
   overheadTokens: number;
+  /** Provider-reported `usage.inputTokens` from the prior turn (C1, §H). */
+  lastInputTokens?: number;
 };
 
 /**
@@ -654,6 +656,7 @@ async function applyTier1IfNeeded(
       summarize: runtime.summarize,
       summarizerWindow: runtime.summarizerWindow,
       overheadTokens: args.overheadTokens,
+      lastInputTokens: args.lastInputTokens,
       store,
       onEvent: (event) =>
         logger.info({ chatId, ...event }, "context-compacted"),
@@ -840,6 +843,15 @@ export const prepareChatTurn = async (
         // Pre-overwrite baseline threaded from agent-runner (RV1).
         priorMessages: input.priorMessages,
         overheadTokens,
+        // Prior turn's provider-reported input token count (C1 / §H): the last
+        // assistant message carries metadata.stats.contextTokens (stamped by
+        // applyMessageStats) — the corrective baseline for the Tier 1 trigger
+        // projection on turns ≥ 2. Absent on turn 1 → cold-start margin applies.
+        lastInputTokens: (
+          messages.findLast((m) => m.role === "assistant")?.metadata as
+            | { stats?: { contextTokens?: number } }
+            | undefined
+        )?.stats?.contextTokens,
       })
     : inlinedMessages;
 
