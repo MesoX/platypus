@@ -419,9 +419,27 @@ export class AgentRunner {
 
     const startedAt = new Date().toISOString();
     let firstTokenAt: string | undefined;
+    // Set when the §H/§I stats are first emitted (messageMetadata `finish`), so
+    // the post-stream persist stamp reuses the same value rather than a slightly
+    // later one — streamed and reloaded stats then match.
+    let finishedAt: string | undefined;
     // Last step's input tokens = peak context fullness for the §H ring.
     // lastStats.inputTokens is the run-wide SUM and over-counts tool loops.
     let lastStepInputTokens = 0;
+
+    // Single source of truth for the per-message stats, so the live-streamed
+    // copy (messageMetadata, below) and the persisted copy (applyMessageStats in
+    // the finally) are identical. Reads the mutable closures at call time.
+    const buildMessageStats = (finishedAtValue: string): MessageStats => ({
+      inputTokens: lastStats.inputTokens ?? 0,
+      outputTokens: lastStats.outputTokens ?? 0,
+      contextTokens: lastStepInputTokens,
+      startedAt,
+      firstTokenAt,
+      finishedAt: finishedAtValue,
+      contextWindow: turn.resolved.contextWindow,
+      contextWindowIsDefault: turn.resolved.contextWindowIsDefault,
+    });
 
     const result = streamText({
       model: withOverflowRecovery(turn),
@@ -437,6 +455,13 @@ export class AgentRunner {
       presencePenalty: turn.stream.presencePenalty,
       seed: turn.stream.seed,
       prepareStep: turn.tier2 ? buildTier2PrepareStep(turn.tier2) : undefined,
+      // TTFT: stamp the first text token here (fires before the `finish` event),
+      // so the stats are complete by the time messageMetadata emits them.
+      onChunk: ({ chunk }) => {
+        if (!firstTokenAt && chunk.type === "text-delta") {
+          firstTokenAt = new Date().toISOString();
+        }
+      },
       onStepFinish: (step) => {
         handle.bumpStep();
         accumulateStepStats(lastStats, step);
@@ -475,8 +500,21 @@ export class AgentRunner {
     const uiStream = result.toUIMessageStream<PlatypusUIMessage>({
       originalMessages: input.messages,
       generateMessageId: createIdGenerator({ prefix: "msg", size: 16 }),
-      messageMetadata: () =>
-        turn.resolved.agentId ? { agentId: turn.resolved.agentId } : undefined,
+      // Emit the §H/§I stats with the `finish` event so the client gets them on
+      // the final stream chunk — the (i) stats action then appears the instant
+      // the answer completes, not a DB-refetch round-trip later. `start` carries
+      // only agentId (timing/usage don't exist yet). The post-stream stamp in
+      // the finally still writes them to the persisted message for reload.
+      messageMetadata: ({ part }) => {
+        const agentId = turn.resolved.agentId
+          ? { agentId: turn.resolved.agentId }
+          : undefined;
+        if (part.type === "finish") {
+          finishedAt = new Date().toISOString();
+          return { ...agentId, stats: buildMessageStats(finishedAt) };
+        }
+        return agentId;
+      },
       onError: (error) => formatStreamError(error),
     });
 
@@ -510,9 +548,6 @@ export class AgentRunner {
             );
           },
         })) {
-          if (!firstTokenAt && message.parts?.some((p) => p.type === "text")) {
-            firstTokenAt = new Date().toISOString();
-          }
           lastMessages = [...input.messages, message];
         }
       } catch (err) {
@@ -522,19 +557,12 @@ export class AgentRunner {
           "Server-side UI stream consumer error",
         );
       } finally {
-        const finishedAt = new Date().toISOString();
+        // Reuse the finish-event timestamp when present so the persisted stats
+        // match what was streamed; fall back if the stream ended without one.
+        const finishedAtFinal = finishedAt ?? new Date().toISOString();
         applyToolCompletions(lastMessages, completions);
         if (turn) {
-          applyMessageStats(lastMessages, {
-            inputTokens: lastStats.inputTokens ?? 0,
-            outputTokens: lastStats.outputTokens ?? 0,
-            contextTokens: lastStepInputTokens,
-            startedAt,
-            firstTokenAt,
-            finishedAt,
-            contextWindow: turn.resolved.contextWindow,
-            contextWindowIsDefault: turn.resolved.contextWindowIsDefault,
-          });
+          applyMessageStats(lastMessages, buildMessageStats(finishedAtFinal));
         }
         let status: RunStatus = "succeeded";
         let err: Error | undefined;
