@@ -420,20 +420,6 @@ export const Chat = ({
     return null;
   }, [messages]);
 
-  // TODO: Ideally show a loading indicator here
-  if (isLoading || !providersData) return null;
-
-  // Show alert if no providers are configured
-  if (providers.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full p-8">
-        <div className="w-full xl:w-4/5 max-w-4xl">
-          <NoProvidersEmptyState orgId={orgId} workspaceId={workspaceId} />
-        </div>
-      </div>
-    );
-  }
-
   const selectedAgent = agentId ? agents.find((a) => a.id === agentId) : null;
   // Resolve the provider backing the current selection, whether that's a raw
   // model (providerId) or an agent (which carries its own providerId). Used to
@@ -457,6 +443,105 @@ export const Chat = ({
   const isReconnectedToRunningRun =
     chatData?.status === "running" && status === "ready";
   const effectiveStatus = isReconnectedToRunningRun ? "streaming" : status;
+
+  // §J: compact on demand — state for pending (deferred while streaming),
+  // in-flight compaction spinner, and the post-compact token estimate that
+  // refreshes the ring immediately (before the next completed message).
+  const [compactPending, setCompactPending] = useState(false);
+  const [isCompacting, setIsCompacting] = useState(false);
+  // Post-compact estimate, tagged with the message count at compaction time so
+  // it auto-expires once a new message arrives (the next provider count is
+  // authoritative). Tagging avoids a set-state-in-effect reset.
+  const [compacted, setCompacted] = useState<{
+    atMessageCount: number;
+    tokens: number;
+  } | null>(null);
+
+  const runCompact = useCallback(async () => {
+    if (!backendUrl) return;
+    setIsCompacting(true);
+    try {
+      const res = await fetch(
+        joinUrl(
+          backendUrl,
+          `/organizations/${orgId}/workspaces/${workspaceId}/chat/${chatId}/compact`,
+        ),
+        { method: "POST", credentials: "include" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error((body as { error?: string }).error ?? "Compact failed");
+        return;
+      }
+      // Refresh the ring immediately from the post-compact estimate (§J). This
+      // is a message-only char/4 estimate (no per-turn system/tool overhead),
+      // so it reads slightly low until the next real response replaces it with
+      // the provider's authoritative count.
+      const body = (await res.json().catch(() => ({}))) as {
+        inputTokens?: number;
+      };
+      if (typeof body.inputTokens === "number") {
+        setCompacted({
+          atMessageCount: messages.length,
+          tokens: body.inputTokens,
+        });
+      }
+      toast.success("Context compacted");
+    } catch {
+      toast.error("Compact request failed");
+    } finally {
+      setIsCompacting(false);
+    }
+  }, [backendUrl, orgId, workspaceId, chatId, messages.length]);
+
+  const handleCompact = useCallback(() => {
+    // Confirm at click time (not after the deferred run fires) so the prompt
+    // never surprises the user mid-stream. Per P1 this is a view change, not
+    // data loss — the full history is preserved.
+    if (
+      !window.confirm(
+        "This will summarize older messages to reduce context usage. The full conversation history is preserved. Continue?",
+      )
+    )
+      return;
+    if (effectiveStatus === "streaming" || effectiveStatus === "submitted") {
+      setCompactPending(true);
+    } else {
+      void runCompact();
+    }
+  }, [effectiveStatus, runCompact]);
+
+  // Fire deferred compact once streaming finishes (drift U4). Already confirmed
+  // at click time, so this just runs.
+  useEffect(() => {
+    if (
+      compactPending &&
+      effectiveStatus !== "streaming" &&
+      effectiveStatus !== "submitted"
+    ) {
+      // Reacting to a streaming→idle transition to fire a queued action is the
+      // intended use of an effect here; clearing the flag prevents a re-fire.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCompactPending(false);
+      void runCompact();
+    }
+  }, [compactPending, effectiveStatus, runCompact]);
+
+  // Early returns live below ALL hooks so hook order stays unconditional
+  // (react-hooks/rules-of-hooks). The §H/§J ring hooks above must always run.
+  // TODO: Ideally show a loading indicator here
+  if (isLoading || !providersData) return null;
+
+  // Show alert if no providers are configured
+  if (providers.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full p-8">
+        <div className="w-full xl:w-4/5 max-w-4xl">
+          <NoProvidersEmptyState orgId={orgId} workspaceId={workspaceId} />
+        </div>
+      </div>
+    );
+  }
 
   const handleSubmit = async (message: PromptInputMessage) => {
     // Stop the stream if currently streaming or submitted
@@ -619,8 +704,19 @@ export const Chat = ({
                       </Tooltip>
                     )}
                     <ContextUsageRing
-                      usedTokens={lastAssistantStats?.contextTokens}
+                      usedTokens={
+                        compacted?.atMessageCount === messages.length
+                          ? compacted.tokens
+                          : lastAssistantStats?.contextTokens
+                      }
                       contextWindow={contextWindowData?.contextWindow}
+                      onClick={chatId ? handleCompact : undefined}
+                      isStreaming={
+                        effectiveStatus === "streaming" ||
+                        effectiveStatus === "submitted"
+                      }
+                      isPending={compactPending}
+                      isCompacting={isCompacting}
                     />
                     <ModelSelectorDialog
                       agents={agents}

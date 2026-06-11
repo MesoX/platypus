@@ -9,7 +9,6 @@ import {
   provider as providerTable,
   workspace as workspaceTable,
 } from "../db/schema.ts";
-import { NotFoundError, ValidationError } from "../services/chat-execution.ts";
 import { resolveRunTimeouts } from "../services/agent-run-settings.ts";
 import { openProvider } from "../services/provider.ts";
 import {
@@ -30,6 +29,12 @@ import { type PlatypusUIMessage } from "../types.ts";
 import { rewriteStorageUrls, deleteFiles } from "../storage/utils.ts";
 import { getOrigin } from "../utils/get-origin.ts";
 import { agentRunner } from "../runs/agent-runner.ts";
+import { runRegistry } from "../runs/run-registry.ts";
+import {
+  forceCompactChat,
+  NotFoundError,
+  ValidationError,
+} from "../services/chat-execution.ts";
 import { ChatSink } from "../runs/sinks/chat-sink.ts";
 import type { RunInput } from "../runs/types.ts";
 
@@ -435,6 +440,46 @@ chat.post(
       .returning();
 
     return c.json(updateResult[0]);
+  },
+);
+
+chat.post(
+  "/:chatId/compact",
+  requireAuth,
+  requireOrgAccess(),
+  requireWorkspaceAccess,
+  requireWorkspaceOwner,
+  async (c) => {
+    const orgId = c.req.param("orgId")!;
+    const chatId = c.req.param("chatId");
+    const workspaceId = c.req.param("workspaceId")!;
+
+    // Reject if a run is currently in flight — the frontend defers the click
+    // until streaming finishes (drift U4), but guard here as a belt-and-suspenders
+    // check to avoid CAS races with an in-progress writer.
+    if (runRegistry.has(chatId)) {
+      return c.json(
+        { error: "Run in progress; retry after the response finishes" },
+        409,
+      );
+    }
+
+    try {
+      const result = await forceCompactChat(chatId, workspaceId, orgId);
+      return c.json({
+        inputTokens: result.estimatedTokens,
+        contextWindow: result.contextWindow,
+        contextWindowIsDefault: result.contextWindowIsDefault,
+      });
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return c.json({ error: error.message }, 404);
+      }
+      if (error instanceof ValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
   },
 );
 

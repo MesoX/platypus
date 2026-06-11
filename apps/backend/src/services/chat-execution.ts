@@ -35,8 +35,10 @@ import {
   DEFAULT_CONTEXT_WINDOW,
 } from "../runs/context-window.ts";
 import {
+  estimateTokens,
   estimateOverheadTokens,
   imageProviderFor,
+  uiMessagesToCountUnits,
   type ImageProvider,
 } from "../runs/token-estimate.ts";
 import {
@@ -1327,3 +1329,115 @@ const loadSubAgents = async (
 
   return { subAgents, subAgentTools, subAgentMcpClients };
 };
+
+// --- Force-compact endpoint (§J) ---
+
+/**
+ * Runs Tier 1 compaction unconditionally for a chat (§J: clickable ring).
+ * Forces the compaction regardless of the token threshold by injecting
+ * compactionDirty=true so the RV3 force path bypasses the estimate gate.
+ * Called from `POST /chats/:id/compact`; the route guards against concurrent
+ * runs before calling here.
+ */
+export async function forceCompactChat(
+  chatId: string,
+  workspaceId: string,
+  orgId: string,
+): Promise<{
+  estimatedTokens: number;
+  contextWindow: number;
+  contextWindowIsDefault: boolean;
+}> {
+  // Load the chat record (workspace-scoped).
+  const chatRows = await db
+    .select({
+      agentId: chatTable.agentId,
+      providerId: chatTable.providerId,
+      modelId: chatTable.modelId,
+    })
+    .from(chatTable)
+    .where(
+      and(eq(chatTable.id, chatId), eq(chatTable.workspaceId, workspaceId)),
+    )
+    .limit(1);
+  if (chatRows.length === 0) throw new NotFoundError("Chat not found");
+  const chatRow = chatRows[0];
+
+  // Resolve provider + model via the shared query layer (respects org-scoped
+  // Shared resources and the ADR-0007 attachment gate).
+  let provider: Provider;
+  let resolvedModelId: string;
+  let agent: AgentRow | null = null;
+
+  if (chatRow.agentId) {
+    const agentRow = await drizzleChatTurnQueries.getAgent(
+      chatRow.agentId,
+      orgId,
+      workspaceId,
+    );
+    if (!agentRow) throw new NotFoundError("Agent not found");
+    agent = agentRow;
+    resolvedModelId = agent.modelId;
+    const providerRow = await drizzleChatTurnQueries.getProvider(
+      agent.providerId,
+      orgId,
+      workspaceId,
+    );
+    if (!providerRow) throw new NotFoundError("Provider not found");
+    provider = providerRow;
+  } else if (chatRow.providerId && chatRow.modelId) {
+    const providerRow = await drizzleChatTurnQueries.getProvider(
+      chatRow.providerId,
+      orgId,
+      workspaceId,
+    );
+    if (!providerRow) throw new NotFoundError("Provider not found");
+    provider = providerRow;
+    resolvedModelId = chatRow.modelId;
+  } else {
+    throw new ValidationError("Chat has no provider/model configured");
+  }
+
+  const opened = openProvider(provider);
+  const runtime = await buildCompactionRuntime({
+    chatId,
+    provider,
+    resolvedModelId,
+    agent,
+    opened,
+  });
+
+  const messages = await loadChatMessages(chatId);
+  const rawState =
+    (await drizzleCompactionStore.readState(chatId)) ?? EMPTY_COMPACTION_STATE;
+
+  // Force-trigger by marking dirty in the in-memory copy (RV3: bypass the
+  // estimate gate so the compaction actually shrinks the history).
+  const forcedState: CompactionState = { ...rawState, compactionDirty: true };
+
+  const result = await applyTier1Compaction({
+    chatId,
+    messages,
+    state: forcedState,
+    budget: runtime.budget,
+    config: runtime.config,
+    imageProvider: runtime.imageProvider,
+    summarize: runtime.summarize,
+    store: drizzleCompactionStore,
+    summarizerWindow: runtime.summarizerWindow,
+  });
+
+  // Message-only estimate (no per-turn system/tool overhead): the ring uses it
+  // as a transient post-compact value that the next response's provider count
+  // supersedes. It therefore reads slightly low vs the live ring numerator
+  // (which includes overhead) — acceptable for an immediate visual refresh.
+  const estimatedTokens = estimateTokens(
+    uiMessagesToCountUnits(result.messages, runtime.imageProvider),
+  );
+
+  return {
+    estimatedTokens,
+    contextWindow: runtime.contextWindow,
+    contextWindowIsDefault: runtime.contextWindowIsDefault,
+  };
+}
