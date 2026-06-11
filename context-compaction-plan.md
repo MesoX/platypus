@@ -986,9 +986,33 @@ enhancement. Each step independently testable.
 - **CAS contention optimization (drift R4)** — under a contended chat, the
   version is read → summarize (seconds) → CAS write, so the version can be stale
   by write time → wasted summarize (not corruption; loser skips safely). Bounded
-  by one-retry-then-skip. **Do NOT fix now.** Gated on the `cas.conflict` metric;
-  if it shows repeated waste, move the version read to just-before-write or take a
-  short advisory lock for the summarize window.
+  by one-retry-then-skip. **Do NOT fix now.** Gated on the `cas.conflict` metric
+  (now emitted, chunk 10); if it shows repeated waste, move the version read to
+  just-before-write or take a short advisory lock for the summarize window.
+
+### Deliberately NOT done in chunk 10 (2026-06-11) — with reasons
+
+The RV7e-RV10 + observability sweep closed the review backlog; these four were
+left undone **on purpose**, not missed:
+
+- **RV9 digest-based C4 check** — once a watermark exists, C4 reads the full
+  `messages` JSONB row and `stableStringify`-compares the whole prefix every
+  turn. The compare is already **correct** (RV1 landed); a content digest would
+  only make it cheaper. Pure optimization of a correct path → revisit only if the
+  per-turn read+stringify shows up in profiling, and fold it into any future
+  C4 rework rather than touching the correctness path now.
+- **defect 7 — `content`-type tool output base64 → char/4** (`token-estimate.ts`).
+  The `content` tool-result variant `stableStringify`s media bytes into the
+  char/4 blob. Fixing it **symmetrically** (so estimate(UI) === estimate(Model)
+  still holds — the load-bearing P2/T1 invariant) requires extracting media into
+  `nonText` on BOTH adapters, where the UI side stores `output` as untyped
+  `unknown`. The risk to the tested invariant outweighs the benefit: **no current
+  tool emits `content`-type media**. Fix before the first tool that does.
+- **`bytesFromUrl` vs storage/utils `parseDataUrl` duplication** — merging them
+  couples the estimator to the storage layer for zero behaviour change. Left as
+  two small private regexes.
+- **`estimate_vs_real.divergence` metric** (drift T2 feedback loop) — deferred
+  with the image-constant tuning work it feeds; still log-only.
 - **Trigger estimator scope — FIXED (drift C1).** Originally flagged from live
   test 2026-06-03; confirmed unfixed in chunk 2 by the 2026-06-09 review. **Both
   prescribed paths now landed:**
