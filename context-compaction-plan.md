@@ -62,9 +62,13 @@ tools)` in token-estimate.ts (char/4 of system prompt + each tool's name,
   (`projectTier1Tokens`) now counts it, and the compaction target is reduced by
   it (`targetTokens − overhead`) so hysteresis (C2) still holds. `log.warn` when
   overhead alone ≥ target (compaction would re-fire each turn).
-  **Remaining C1 half:** `Tier1Input.lastInputTokens` exists and acts as a floor
-  on the projection, but no call site supplies it yet — thread the provider
-  `usage.inputTokens` from the prior turn in the §H usage-metadata chunk.
+  **C1 second half — DONE 2026-06-11.** `prepareChatTurn` now threads
+  `lastInputTokens` from the last assistant message's
+  `metadata.stats.contextTokens` (stamped by `applyMessageStats`, §H) into
+  `applyTier1IfNeeded`. `projectTier1Tokens` takes
+  `max(charBased, lastInputTokens)` (not additive — `charBased` is the whole
+  unsummarized view, so adding would double-count history); cold-start margin
+  applies only when it is absent (turn 1). C1 fully closed.
 - **M2 fixed** — `COLD_START_MARGIN = 1.15` applied to the whole char-based
   projection whenever no provider baseline exists; dropped when
   `lastInputTokens` is present.
@@ -266,7 +270,7 @@ recovery hand-off still summarizes).
 > 2026-06-10 list — defect 2 → RV7(a), 5 → RV7(c), 6 → RV7(d), 7 → RV5,
 > 11's heuristic item → RV7(b). Track them there.
 
-1. **C1 — trigger under-counts (HIGH). _FIXED (overhead half) 2026-06-10; `lastInputTokens` half → §H chunk._** `compaction.ts:719`
+1. **C1 — trigger under-counts (HIGH). _FIXED: overhead half 2026-06-10; `lastInputTokens` half 2026-06-11 — threaded from last assistant message `metadata.stats.contextTokens` in `chat-execution.ts`._** `compaction.ts:719`
    `projected = estimate(afterWatermark) + priorSummaryTokens` — omits the prior
    turn's provider `usage.inputTokens` AND the system prompt / tool schemas / skill
    payload sent every turn. `Tier1Input` has no `lastInputTokens` field; the call
@@ -313,8 +317,7 @@ recovery hand-off still summarizes).
 
 ### Drift-checklist deltas (vs the table at the bottom)
 
-`C1` → **PARTIAL** (overhead + margin landed 2026-06-10; `lastInputTokens`
-plumbing waits on §H). `M2` → **VERIFIED**. `T3` → **VERIFIED** (producer landed
+`C1` → **VERIFIED** (overhead + margin 2026-06-10; `lastInputTokens` threaded 2026-06-11). `M2` → **VERIFIED**. `T3` → **VERIFIED** (producer landed
 in chunk 3). `T9` → **VERIFIED**. `R4` → **PARTIAL** (window present & correctly
 unfixed, but the gating `cas.conflict` metric is missing). `C4` → **BROKEN**
 (2026-06-10 review, RV1 — baseline overwritten + byte-equality false
@@ -974,31 +977,21 @@ enhancement. Each step independently testable.
   by one-retry-then-skip. **Do NOT fix now.** Gated on the `cas.conflict` metric;
   if it shows repeated waste, move the version read to just-before-write or take a
   short advisory lock for the summarize window.
-- **Trigger estimator scope — CONFIRMED bug (drift C1), see Review § defect 1.**
-  Originally flagged from live test 2026-06-03; the 2026-06-09 code review confirmed
-  it is unfixed in chunk 2 (`compaction.ts:719`, no `lastInputTokens` plumbing).
-  Promote from "possible" to a chunk-3 must-fix.
-  Tier 1's projection in `compaction.ts` only estimates `messages` (char/4 over
-  the stored UIMessages). System prompt, tool schemas, skill prompts, and
-  sub-agent context — all sent to the model on every turn — are invisible to the
-  trigger. Observed gap on Qwen3.6 / vLLM with a tool-bearing agent: provider
-  reported 8888 `inputTokens` while the local estimate was ~986 (≈ 3× under).
-  Trigger never fired against the 8192 fallback; only fired after forcing
-  `model_meta.contextWindow = 4096` to drop the threshold below the
-  under-counted estimate. Two paths to consider, not mutually exclusive:
-  1. Extend the estimator (or the projection at the call site) to include the
-     system + tool-schema + skill payload that `chat-execution` actually puts on
-     the wire — same `CountUnit[]` shape, just more inputs.
-  2. Wire the ADR-prescribed "use provider `usage.inputTokens` from the prior
-     turn as the corrective baseline for turns ≥2" (ADR §"Char/4 estimate, not
-     a real tokenizer"). Chunks 1-2 left this half-implemented — the design
-     calls for it; the code uses char/4 every turn.
+- **Trigger estimator scope — FIXED (drift C1).** Originally flagged from live
+  test 2026-06-03; confirmed unfixed in chunk 2 by the 2026-06-09 review. **Both
+  prescribed paths now landed:**
+  1. **DONE 2026-06-10** — `estimateOverheadTokens` adds the system prompt + tool
+     schemas to the projection (`projectTier1Tokens`) and subtracts them from the
+     compaction target (the ~986-vs-8888 gap was dominated by tool schemas).
+  2. **DONE 2026-06-11** — the ADR-prescribed prior-turn provider baseline is
+     wired: `prepareChatTurn` threads `lastInputTokens` from the last assistant
+     message's `metadata.stats.contextTokens`; `projectTier1Tokens` returns
+     `max(charBased, lastInputTokens)` so turns ≥ 2 are floored by the real
+     provider count instead of trusting char/4.
 
-  Re-verify: a unit test with an agent carrying realistic tool schemas + a
-  short message history should show the projection ≥ the provider's reported
-  `inputTokens` (within margin), and the trigger should fire **before** the
-  provider's count crosses the budget. Currently the asymmetry lets real input
-  blow past the trigger silently.
+  The Qwen3.6 / vLLM under-count (provider 8888 vs estimate ~986) is closed: the
+  projection now sees both the tool-schema overhead and the prior-turn provider
+  count, so it no longer blows past the trigger silently.
 
 ---
 
