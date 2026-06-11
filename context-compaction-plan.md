@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-5 implemented** (1-2 reviewed 2026-06-09; chunk 3 + C1/M2 fixes landed 2026-06-10; chunk 3a RV1-RV4 fixes landed 2026-06-10; chunk 3b RV5-RV7 fixes landed 2026-06-10; **chunk 5 sub-agent Tier 2 wiring landed 2026-06-10**; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
+Status: **chunks 1-9 implemented (ALL DONE)** (1-2 reviewed 2026-06-09; chunks 3-5 landed 2026-06-10; chunks 6-8 landed 2026-06-11; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -937,8 +937,21 @@ Emit metrics (not just logs):
 6. Frontend usage metadata + ring (§H). **✅ DONE 2026-06-10** `CompactionRuntime` + `ChatTurn.resolved` carry `contextWindow` + `contextWindowIsDefault` (from resolved window source). `applyMessageStats` stamps `metadata.stats = { inputTokens, outputTokens, contextTokens, startedAt, firstTokenAt, finishedAt, contextWindow, contextWindowIsDefault }` on last assistant message at `applyToolCompletions` point. New `GET /:providerId/context-window?modelId=X` endpoint returns resolved window (null when source = "default", drift T6). `MessageStats` schema in `@platypus/schemas`. New `ContextUsageRing` component (SVG donut, green/amber/red ramp, neutral when unknown, required tooltip, drift T6/U2). Ring placed in `PromptInputTools` between search and model selector; `contextWindowData` SWR-fetched per selected model (drift U1). Tests: 1077 pass; source tsc clean.
    - **✅ Code review for chunk 6 (2026-06-11).** One critical bug fixed: `inputTokens`/`outputTokens` from `accumulateStepStats` are the run-wide SUM across steps; feeding the summed input into the ring over-counts on multi-step tool loops (5-step loop → reported ≈ sum-of-all-prompts, pegging the ring red >100% when real fill ~37%). **Fix:** added `contextTokens` = last step's `usage.inputTokens` (peak context fullness, tracked in `streamText.onStepFinish`); the ring uses `contextTokens`, the §I cost popover keeps the summed `inputTokens`/`outputTokens`. Also: `ContextUsageRing` prop `inputTokens`→`usedTokens`; frontend `as any` casts replaced with typed `MessageStats`; removed dead `Tier2Context` import in `agent-runner.ts`. Documented trade-offs left as-is: numerator (last response's model) vs denominator (selected model) mismatch after a model switch is intentional (drift U1); `generate()` headless path stamps no stats (no UI); TTFT = first text part, excludes leading reasoning (matches §I wording).
 7. Per-message stats popover (§I). **✅ DONE 2026-06-11** `MessageStatsPopover` in `chat-message.tsx`: info icon (lucide `InfoIcon`) in `MessageActions` for all assistant messages with `metadata.stats`; popover shows In/Out token counts (run-wide sums), TTFT (when `firstTokenAt` present), Total elapsed. Uses `formatDurationMs` from `lib/utils`. tsc clean; 1077 tests pass.
-8. Clickable ring → compact endpoint (§J) — depends on Tier 1 (step 2).
-9. Per-agent config surface + `COMPACTION_ENABLED` kill switch.
+8. Clickable ring → compact endpoint (§J). **✅ DONE 2026-06-11** `POST /chats/:id/compact` runs force-Tier-1 via new `forceCompactChat` helper in `chat-execution.ts`; returns token estimate + context window so ring refreshes immediately. Frontend: `onClick` with defer-while-streaming + pending badge (drift U4); confirm dialog above threshold (drift U3); ring keyboard-accessible; hooks hoisted above early returns (rules-of-hooks fix). Tests: 1081 pass; tsc clean.
+9. Per-agent config surface + `COMPACTION_ENABLED` kill switch. **✅ DONE 2026-06-11** DB + Zod schemas already had per-agent fields (`compactionEnabled`, `triggerRatio`, `targetRatio`, `reserveRatio`, `keepRecentMessages`, `minPrunableChars`); `resolveCompactionConfig` + `buildCompactionRuntime` already wired them; global `COMPACTION_ENABLED=false` kill switch in `chat-execution.ts`. Added compaction fields to `agentCreateSchema` / `agentUpdateSchema` (so routes pass through) and "Context compaction" section in `agent-form.tsx` Advanced settings. Backend 1081 pass; tsc clean.
+   - **✅ Code review for chunk 9 (2026-06-11).** One MEDIUM + minors fixed. The
+     editable surface newly exposed the C2 thrash hole (a user/API could set
+     `targetRatio >= triggerRatio` → compaction re-fires every turn). **Fix:**
+     (1) `agentCreateSchema`/`agentUpdateSchema` gained a zod `.refine` rejecting
+     an inverted pair (checked only when both supplied; error on `targetRatio`);
+     (2) `resolveCompactionConfig` clamps `targetRatio → triggerRatio * 0.9` as a
+     runtime backstop for legacy/direct-write rows. Minors: `keepRecentMessages`
+     base schema tightened `.nonnegative()`→`.min(1)` (0 keep-recent breaks
+     pairing; form already enforced min=1); form description now states the
+     target<trigger rule + that the global `COMPACTION_ENABLED` kill switch
+     overrides the per-agent switch; lone `minPrunableChars` grid cell spans both
+     columns (cosmetic). Backend 1081 pass; backend/schemas/frontend tsc clean on
+     touched files (pre-existing unrelated test-type errors untouched).
 
 Steps 1–3 deliver the core "no more hard fails" value; 4–9 are progressive
 enhancement. Each step independently testable.

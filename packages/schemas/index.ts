@@ -229,7 +229,7 @@ const agentBaseSchema = z.object({
   triggerRatio: z.number().min(0).max(1).optional(),
   targetRatio: z.number().min(0).max(1).optional(),
   reserveRatio: z.number().min(0).max(1).optional(),
-  keepRecentMessages: z.number().int().nonnegative().optional(),
+  keepRecentMessages: z.number().int().min(1).optional(),
   minPrunableChars: z.number().int().nonnegative().optional(),
   toolSetIds: z.array(z.string()).optional(),
   skillIds: z.array(z.string()).optional(),
@@ -255,44 +255,78 @@ export const agentSchema = agentBaseSchema.refine(
 
 export type Agent = z.infer<typeof agentSchema>;
 
-export const agentCreateSchema = agentBaseSchema.pick({
-  workspaceId: true,
-  providerId: true,
-  name: true,
-  description: true,
-  systemPrompt: true,
-  modelId: true,
-  maxSteps: true,
-  temperature: true,
-  topP: true,
-  topK: true,
-  seed: true,
-  presencePenalty: true,
-  frequencyPenalty: true,
-  toolSetIds: true,
-  skillIds: true,
-  subAgentIds: true,
-  inputPlaceholder: true,
-});
+// Hysteresis guard (context-compaction-plan §C2 / drift C2): the post-compaction
+// target must sit BELOW the trigger, otherwise compaction re-fires every turn
+// (the Cline #5616 thrash). Per-field bounds are 0..1; this enforces the
+// relationship. Only checked when BOTH are supplied (either may be omitted to
+// fall back to the runtime default).
+const compactionRatioOrder = (data: {
+  triggerRatio?: number;
+  targetRatio?: number;
+}) =>
+  data.triggerRatio == null ||
+  data.targetRatio == null ||
+  data.targetRatio < data.triggerRatio;
 
-export const agentUpdateSchema = agentBaseSchema.pick({
-  providerId: true,
-  name: true,
-  description: true,
-  systemPrompt: true,
-  modelId: true,
-  maxSteps: true,
-  temperature: true,
-  topP: true,
-  topK: true,
-  seed: true,
-  presencePenalty: true,
-  frequencyPenalty: true,
-  toolSetIds: true,
-  skillIds: true,
-  subAgentIds: true,
-  inputPlaceholder: true,
-});
+const compactionRatioOrderIssue = {
+  message: "targetRatio must be less than triggerRatio",
+  path: ["targetRatio"],
+};
+
+export const agentCreateSchema = agentBaseSchema
+  .pick({
+    workspaceId: true,
+    providerId: true,
+    name: true,
+    description: true,
+    systemPrompt: true,
+    modelId: true,
+    maxSteps: true,
+    temperature: true,
+    topP: true,
+    topK: true,
+    seed: true,
+    presencePenalty: true,
+    frequencyPenalty: true,
+    toolSetIds: true,
+    skillIds: true,
+    subAgentIds: true,
+    inputPlaceholder: true,
+    compactionEnabled: true,
+    triggerRatio: true,
+    targetRatio: true,
+    reserveRatio: true,
+    keepRecentMessages: true,
+    minPrunableChars: true,
+  })
+  .refine(compactionRatioOrder, compactionRatioOrderIssue);
+
+export const agentUpdateSchema = agentBaseSchema
+  .pick({
+    providerId: true,
+    name: true,
+    description: true,
+    systemPrompt: true,
+    modelId: true,
+    maxSteps: true,
+    temperature: true,
+    topP: true,
+    topK: true,
+    seed: true,
+    presencePenalty: true,
+    frequencyPenalty: true,
+    toolSetIds: true,
+    skillIds: true,
+    subAgentIds: true,
+    inputPlaceholder: true,
+    compactionEnabled: true,
+    triggerRatio: true,
+    targetRatio: true,
+    reserveRatio: true,
+    keepRecentMessages: true,
+    minPrunableChars: true,
+  })
+  .refine(compactionRatioOrder, compactionRatioOrderIssue);
 
 // Skill
 

@@ -678,13 +678,26 @@ export function resolveCompactionConfig(
 ): CompactionConfig {
   const o = overrides ?? {};
   const pick = <T>(v: T | null | undefined, d: T): T => (v == null ? d : v);
+  const triggerRatio = pick(
+    o.triggerRatio,
+    DEFAULT_COMPACTION_CONFIG.triggerRatio,
+  );
+  let targetRatio = pick(o.targetRatio, DEFAULT_COMPACTION_CONFIG.targetRatio);
+  // Hysteresis backstop (drift C2): the post-compaction target must stay below
+  // the trigger or compaction re-fires every turn. The agent create/update zod
+  // schema already rejects an inverted pair, but a pre-existing/legacy row (or a
+  // direct DB write) could still carry one — clamp it here so the runtime can
+  // never thrash.
+  if (targetRatio >= triggerRatio) {
+    targetRatio = triggerRatio * 0.9;
+  }
   return {
     compactionEnabled: pick(
       o.compactionEnabled,
       DEFAULT_COMPACTION_CONFIG.compactionEnabled,
     ),
-    triggerRatio: pick(o.triggerRatio, DEFAULT_COMPACTION_CONFIG.triggerRatio),
-    targetRatio: pick(o.targetRatio, DEFAULT_COMPACTION_CONFIG.targetRatio),
+    triggerRatio,
+    targetRatio,
     reserveRatio: pick(o.reserveRatio, DEFAULT_COMPACTION_CONFIG.reserveRatio),
     keepRecentMessages: pick(
       o.keepRecentMessages,
