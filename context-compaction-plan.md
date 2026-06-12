@@ -1,6 +1,6 @@
 # Plan: Chat Context Compaction & Usage Indicator
 
-Status: **chunks 1-9 implemented (ALL DONE)** (1-2 reviewed 2026-06-09; chunks 3-5 landed 2026-06-10; chunks 6-8 landed 2026-06-11; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
+Status: **chunks 1-11 implemented (ALL DONE)** (1-2 reviewed 2026-06-09; chunks 3-5 landed 2026-06-10; chunks 6-8 landed 2026-06-11; chunk 11 landed 2026-06-12; see §Code review 2026-06-10) · Branch target: `feature/context-compaction`
 
 > This doc is the spec to implement against, not a proposal. Sections A–J are the
 > design. The **Drift log & code-review checklist** at the bottom records every
@@ -970,6 +970,247 @@ feedback loop) — deferred with the T2 image-constant tuning work.
 
 Steps 1–3 deliver the core "no more hard fails" value; 4–9 are progressive
 enhancement. Each step independently testable.
+
+### Chunk 11 — UI polish + bug fixes (planned)
+
+Three items discovered 2026-06-12. None block correctness; all are frontend-only
+except the backend `context-compacted` stream event.
+
+#### 11a. Bug U5 — ring jumps to pre-compaction value on user message send
+
+**Root cause.** `compacted.atMessageCount` is compared against `messages.length`
+(`chat.tsx:708`). When the user sends a new message the optimistic UI pushes a
+user message immediately → `messages.length` increments by 1 → expiry condition
+fires → ring falls back to `lastAssistantStats?.contextTokens` which still holds
+the old (70 k) value from before compaction. After the assistant response arrives
+`lastAssistantStats` is updated with the real post-compaction count (~20 k) and
+the ring corrects. **Visible symptom:** ring briefly snaps back to 70 k the moment
+the user hits Send, then returns to the correct ~20 k once the response lands.
+
+**Fix.** Count only assistant messages for expiry:
+
+```ts
+// derive once; stable across user-message additions
+const assistantMessageCount = useMemo(
+  () => messages.filter((m) => m.role === "assistant").length,
+  [messages],
+);
+
+const [compacted, setCompacted] = useState<{
+  atAssistantMessageCount: number;
+  tokens: number;
+} | null>(null);
+
+// at compact time:
+setCompacted({
+  atAssistantMessageCount: assistantMessageCount,
+  tokens: body.inputTokens,
+});
+
+// ring usedTokens expression:
+compacted?.atAssistantMessageCount === assistantMessageCount
+  ? compacted.tokens
+  : lastAssistantStats?.contextTokens;
+```
+
+A new user message does NOT change `assistantMessageCount` → compacted stays
+valid. When the next assistant response lands, `assistantMessageCount` increments
+→ compacted expires → ring reads the fresh `lastAssistantStats.contextTokens`.
+
+**Files:** `apps/frontend/components/chat.tsx` only (3 small edits).
+
+#### 11b. (i) icon: add mouseover tooltip
+
+**Current state.** The `Info` button at `chat.tsx:741-743` is a bare
+`DialogTrigger` — no tooltip, click-only. The user has to click to discover what
+it does.
+
+**Fix.** Wrap the existing `DialogTrigger`/`PromptInputButton` in a `Tooltip`
+so hover shows a label without opening the dialog. Click still opens the dialog
+(unchanged). Use the same `delayDuration={500}` as the ring. Tooltip text:
+`"Agent info"` (or a one-line agent description if `selectedAgent.description`
+is non-empty). Pattern:
+
+```tsx
+<Dialog open={isAgentInfoDialogOpen} onOpenChange={setIsAgentInfoDialogOpen}>
+  <Tooltip delayDuration={500}>
+    <TooltipTrigger asChild>
+      <DialogTrigger asChild>
+        <PromptInputButton aria-label="Agent info">
+          <Info />
+        </PromptInputButton>
+      </DialogTrigger>
+    </TooltipTrigger>
+    <TooltipContent side="top">
+      {selectedAgent.description?.trim() || "Agent info"}
+    </TooltipContent>
+  </Tooltip>
+  <AgentInfoDialog … />
+</Dialog>
+```
+
+Note: `TooltipTrigger asChild` wrapping `DialogTrigger asChild` is a safe
+Radix composition — Radix merges event handlers via slot; the `onClick` from
+`DialogTrigger` and the hover callbacks from `TooltipTrigger` coexist on the
+same underlying `PromptInputButton` element.
+
+**Files:** `apps/frontend/components/chat.tsx` only (reshape the existing JSX
+block, no new imports needed — `Tooltip`/`TooltipTrigger`/`TooltipContent`
+already imported).
+
+#### 11c. Compaction chat trace (new §K)
+
+**Goal.** Make compaction visible inside the chat timeline — not just via the
+ring. Two states:
+
+1. **Active / in-flight** — "compaction is happening right now" (between the
+   user hitting Send and the first response token arriving).
+2. **Historical** — "compaction happened here" (visible in the scrollback,
+   including the LLM-generated summary since that IS a model call).
+
+**Mental model.** Compaction is a model call forced by the system on the
+user's behalf — structurally equivalent to a tool call initiated by the
+assistant. It therefore maps naturally to the **existing tool-call UI**:
+emit it as a synthetic `compact_context` tool-call + tool-result pair in the
+stream before the actual response. No new rendering component needed — the
+existing tool-call expander handles both active ("in flight") and historical
+states for free. No fake user message injected; no custom banner.
+
+**Why the backend needs to emit an event.** Tier 1 runs inside
+`prepareChatTurn` (server-side, before streaming). The frontend has no other
+channel to distinguish "compaction ran before this response" from normal
+response latency. §C already prescribes `context-compacted` as a fail-loud
+stream event; this chunk wires that emission as a tool-call pair.
+
+**Backend change.** After a successful Tier 1 compaction in
+`applyTier1Compaction`, emit a synthetic tool-call + tool-result into the
+AI-SDK `dataStream` before the first assistant text part. Use the SDK's
+`writeData` / `writeTool*` primitives (exact API depends on AI SDK version —
+check `dataStream` surface in `chat-execution.ts`). Logical shape:
+
+```ts
+// tool-call part
+{ toolCallId: "<uuid>", toolName: "compact_context", args: { messagesSummarized: N } }
+
+// tool-result part
+{
+  toolCallId: "<uuid>",
+  toolName: "compact_context",
+  result: {
+    messagesDropped: N,
+    summaryExcerpt: string | undefined,  // first ~120 chars of LLM summary; absent for Stage-1-only (prune, no model call)
+  }
+}
+```
+
+`summaryExcerpt` carries the first ~120 chars of the LLM-generated summary.
+This IS the model's own words — not a risk, and it gives users transparency
+into what was retained. Omit when compaction ran Stage 1 only (prune, no
+model call).
+
+**Frontend — no new component.** The existing tool-call renderer in
+`chat-message.tsx` already handles `tool-call` + `tool-result` parts. The
+`compact_context` call will render like any other tool invocation:
+
+- While streaming: shows "compact_context" with a spinner (active indicator).
+- After complete: collapses to the tool-call expander showing args +
+  result (including `summaryExcerpt` when present).
+
+The result persists in `UIMessage.parts` (AI SDK durable storage) → appears
+in scrollback automatically.
+
+**What the user sees:**
+
+```
+▶ compact_context                              [expandable]
+  ↳ messagesDropped: 34
+    summary: "The user has been working on the Platypus
+              monorepo, specifically the context-compaction
+              feature…"
+──────────────────────────────────────────────
+[actual assistant response to user's question]
+```
+
+**Forced compaction (§J, ring click).** The `POST /chats/:id/compact`
+endpoint runs outside of a normal streaming turn — no `dataStream` available.
+Instead, after compaction succeeds the backend **persists a synthetic
+assistant message** directly into the chat's message list (same DB write path
+as real messages). Shape: role `assistant`, parts = `[tool-call, tool-result]`
+for `compact_context`, no text content. The frontend refreshes the message
+list after the POST resolves (SWR revalidation or optimistic append from the
+response body) — the new message appears in the scrollback exactly like any
+other tool-call exchange. The existing ring spinner + toast remain; the
+synthetic message is the persistent trace.
+
+**C4 / watermark safety — two paths:**
+
+- **Tier 1 trace** — emitted parts live in `UIMessage.parts` of the following
+  assistant message (stream data only, not a separate DB row). Do NOT affect
+  message IDs, watermark comparisons, or C4 logic.
+- **§J trace** — IS a real DB message row. Must be written with a message ID
+  that is **above** the current `summaryWatermark` so it is never itself
+  summarized. The existing `writeWatermark` CAS is not involved (the
+  watermark already advanced during the compaction); just insert with a
+  timestamp after the last real message. C4 invalidation only triggers on
+  edits/deletes at/below the watermark — this new row is always above it, so
+  no risk.
+
+**Files:**
+
+- `apps/backend/src/runs/compaction.ts` — return compaction result metadata
+  (`messagesDropped`, `summaryExcerpt`) from `applyTier1Compaction` (or add
+  an optional `dataStream` param to emit directly).
+- `apps/backend/src/services/chat-execution.ts` — after
+  `applyTier1IfNeeded`, if compaction ran, emit the tool-call + tool-result
+  pair into `dataStream`.
+- `packages/schemas/index.ts` — no change needed (tool-call parts already
+  in the union).
+- `apps/frontend/components/chat-message.tsx` — no change needed (existing
+  tool-call renderer handles `compact_context` automatically). Optionally:
+  add a display-name entry so it shows "Context compaction" instead of the
+  raw function name.
+
+**Tests:**
+
+- Backend: `applyTier1Compaction` returns `{ messagesDropped, summaryExcerpt? }`;
+  no emission when compaction does not fire (below trigger).
+- Integration: stream from a compacted turn contains a `tool-call` part with
+  `toolName: "compact_context"` before any `text` part.
+
+**Sequencing.** 11a and 11b are trivial — do them first (one commit each).
+11c has a backend+frontend surface; implement backend emission first (easy
+to verify via the stream in DevTools), then verify existing tool-call UI
+renders it without frontend changes.
+
+#### Chunk 11 — code review fixes (landed 2026-06-12)
+
+Review of the first 11c cut surfaced one correctness defect + three gaps; all fixed.
+
+- **RV11 (HIGH) — synthetic trace was replayed to the provider.** The
+  `compact_context` tool part is persisted into the assistant message (for
+  scrollback) and was therefore re-converted by `convertToModelMessages` and
+  sent to the model on every later turn — a phantom tool call for a tool not in
+  `tools` (provider-rejection / model-confusion risk). **Fix:**
+  `stripCompactionTraceParts` removes the part at both `convertToModelMessages`
+  call sites (`agent-runner.ts` stream + generate); a trace-only message (§J) is
+  dropped entirely so no empty assistant message is sent. The part still
+  persists for the timeline; it just never reaches the model.
+- **RV12 (MED) — trace emitted for no-op turns.** `compactionTrace` was built
+  whenever `triggered`, but `messagesDropped` is 0 with no excerpt on prune-only
+  and force-dirty-within-target runs → empty timeline entry. **Fix:**
+  `compactionTrace` is now `undefined` unless an actual model summary ran
+  (`usedModelCall && summaryText`).
+- **RV13 (MED) — §J forced-compaction trace was unimplemented.** Ring-click
+  compaction produced no timeline trace (only the auto path did). **Fix:**
+  `forceCompactChat` persists a standalone synthetic assistant message via
+  `buildCompactionTraceMessage` (above the watermark; stripped from the model
+  payload like the Tier-1 trace), returns it from `POST /chats/:id/compact`, and
+  the frontend appends it (id-dedup so SWR revalidation reconciles, no
+  duplicate).
+- **RV14 (LOW) — tests + display name.** Added `prependCompactionChunks`,
+  `stripCompactionTraceParts`, `buildCompactionTraceMessage`, and trace-gating
+  tests (backend suite 1096 pass). `humanizeToolType` maps `compact_context` →
+  "Context compaction".
 
 ---
 
