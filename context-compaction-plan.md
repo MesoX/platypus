@@ -703,18 +703,25 @@ tool loop bloats. Recovery (§E) covers them too since `agent-runner` is shared.
 
 ### G. Config surface + kill switch
 
-Per-agent (and/or per-workspace) optional fields, with sane defaults:
+**SUPERSEDED 2026-06-12 — going global+per-model (see Chunk 12).** The per-agent
+fields below shipped in chunk 10 but are being removed: no surveyed tool
+(Hermes/Codex/Claude/Cline) exposes per-agent compaction tuning, and the ratios
+self-normalize to the model window so per-agent variance buys nothing measurable.
 
-- `compactionEnabled` (default true)
-- `triggerRatio` (default 0.8), `targetRatio` (default 0.5),
+~~Per-agent optional fields, with sane defaults:~~
+
+- ~~`compactionEnabled` (default true)~~
+- ~~`triggerRatio` (default 0.8), `targetRatio` (default 0.5),
   `reserveRatio` (default 0.05), `keepRecentMessages` (default 10),
-  `minPrunableChars` (default ~2000)
+  `minPrunableChars` (default ~2000)~~
 
-Add to agent schema (`packages/schemas`, agent table) — optional, defaulted.
+The runtime now uses `DEFAULT_COMPACTION_CONFIG` for all agents; window/output
+size stays per-model via the §A resolver (`provider.modelMeta` override).
 
 **Global kill switch:** env `COMPACTION_ENABLED` (default true) disables all
 proactive compaction (Tier 1 + Tier 2) in prod without a deploy. **Recovery (§E)
-ignores this flag** — it is the safety net (P4).
+ignores this flag** — it is the safety net (P4). After Chunk 12 this env flag is
+the ONLY compaction toggle (the per-agent `compactionEnabled` is gone).
 
 ### H. Frontend context-usage indicator (the ring)
 
@@ -1211,6 +1218,50 @@ Review of the first 11c cut surfaced one correctness defect + three gaps; all fi
   `stripCompactionTraceParts`, `buildCompactionTraceMessage`, and trace-gating
   tests (backend suite 1096 pass). `humanizeToolType` maps `compact_context` →
   "Context compaction".
+
+---
+
+## Chunk 12 — remove per-agent compaction config, go global+per-model (planned, decided 2026-06-12)
+
+**Decision.** Drop ALL per-agent compaction tuning shipped in chunk 10. Compaction
+behavior becomes global (`DEFAULT_COMPACTION_CONFIG` + the `COMPACTION_ENABLED`
+env kill switch); only window/output **size** stays per-model via the §A resolver.
+
+**Why.** The 2026-06-12 field re-survey: no surveyed agent (Hermes, Codex CLI,
+Claude Code, Cline) exposes per-agent compaction knobs — all use global config +
+per-model window. Trigger/target are fractions of an already model-normalized
+`inputBudget`, so per-agent variance is speculative generality. The agent-edit
+form clutter is real cost for a feature ~100% of agents leave at default (every
+agent on the test server has all six columns NULL).
+
+**Trade-off (accepted).** Removing per-agent `compactionEnabled` loses the ability
+to disable compaction for a single agent (e.g. an exact-recall code/legal agent
+where lossy summarization corrupts output). Mitigation: the global
+`COMPACTION_ENABLED` env still exists, and recovery (§E, P4) keeps such an agent
+from hard-failing on overflow regardless. If a real need for single-agent opt-out
+appears, revisit as a **per-model or per-workspace** flag — NOT per-agent.
+
+**Change list.**
+
+- `packages/schemas/index.ts` — remove `compactionEnabled`, `triggerRatio`,
+  `targetRatio`, `reserveRatio`, `keepRecentMessages`, `minPrunableChars` from
+  `agentSchema` + the `agentCreate`/`agentUpdate` picks; delete the
+  `compactionRatioOrder` refinement (+ its `index.test.ts` cases).
+- `apps/backend/src/db/schema.ts` — drop the six `agent` columns.
+- New migration — `ALTER TABLE "agent" DROP COLUMN IF EXISTS ...` ×6. `IF EXISTS`
+  because divergent-lineage server DBs (see deploy notes) may not have all six;
+  destructive but safe — the columns hold only tuning overrides, NULL in practice.
+- `apps/backend/src/runs/compaction.ts` — `resolveCompactionConfig` returns
+  `DEFAULT_COMPACTION_CONFIG` unconditionally; delete `CompactionConfigOverrides`
+  and the per-agent merge. Keep `DEFAULT_COMPACTION_CONFIG` + `computeBudget`.
+- `apps/backend/src/services/chat-execution.ts` — drop the `agent` argument to
+  `resolveCompactionConfig`; keep the `COMPACTION_ENABLED` env override.
+- `apps/frontend` — remove the six compaction fields from the agent-edit form.
+
+**Verify.** Agent create/update no longer accepts the six fields; chat still
+compacts using defaults; `COMPACTION_ENABLED=false` still disables proactively;
+recovery still fires when proactive is off; migrate is idempotent on a DB missing
+some columns.
 
 ---
 
