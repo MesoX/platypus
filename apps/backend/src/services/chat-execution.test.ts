@@ -660,7 +660,7 @@ describe("chat-execution", () => {
     });
   });
 
-  describe("buildCompactionRuntime summarize (Chunk 13 / review Fix B)", () => {
+  describe("buildCompactionRuntime summarize (ADR-0012 §Summarizer hardening / review Fix B)", () => {
     const buildRuntime = (signal?: AbortSignal, onActivity?: () => void) =>
       buildCompactionRuntime({
         chatId: "chat-1",
