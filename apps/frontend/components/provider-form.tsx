@@ -43,7 +43,7 @@ import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { type Provider } from "@platypus/schemas";
+import { type Provider, SECURITY_GUARD_CATALOG } from "@platypus/schemas";
 import useSWR from "swr";
 import { fetcher, parseValidationErrors, joinUrl } from "@/lib/utils";
 import { toast } from "sonner";
@@ -96,6 +96,7 @@ const ProviderForm = ({
     project: "",
     apiMode: "responses",
     nativeSearchEnabled: true,
+    guardrails: [],
     modelIds: [],
     taskModelId: "",
     memoryExtractionModelId: "",
@@ -155,6 +156,7 @@ const ProviderForm = ({
         project: provider.project || "",
         apiMode: provider.apiMode ?? "responses",
         nativeSearchEnabled: provider.nativeSearchEnabled ?? true,
+        guardrails: provider.guardrails ?? [],
         modelIds: provider.modelIds || [],
         taskModelId: provider.taskModelId,
         memoryExtractionModelId: provider.memoryExtractionModelId,
@@ -277,6 +279,7 @@ const ProviderForm = ({
         project: formData.project || undefined,
         apiMode: formData.apiMode,
         nativeSearchEnabled: formData.nativeSearchEnabled,
+        guardrails: formData.guardrails,
         modelIds: formData.modelIds,
         taskModelId: formData.taskModelId,
         memoryExtractionModelId: formData.memoryExtractionModelId,
@@ -788,6 +791,43 @@ const ProviderForm = ({
                   />
                 </Field>
               )}
+
+              <Field>
+                <FieldLabel>Security guards</FieldLabel>
+                <FieldDescription>
+                  System-prompt mitigations applied to every run on this
+                  provider. Recommended for self-hosted or open models, which
+                  are more susceptible to prompt injection. These reduce risk
+                  but are not guarantees.
+                </FieldDescription>
+              </Field>
+              {SECURITY_GUARD_CATALOG.map((guard) => (
+                <Field
+                  key={guard.id}
+                  orientation="horizontal"
+                  className="items-center justify-between"
+                >
+                  <div>
+                    <FieldLabel htmlFor={`guard-${guard.id}`}>
+                      {guard.label}
+                    </FieldLabel>
+                    <FieldDescription>{guard.description}</FieldDescription>
+                  </div>
+                  <Switch
+                    id={`guard-${guard.id}`}
+                    checked={formData.guardrails.includes(guard.id)}
+                    disabled={isSubmitting || isReadOnly}
+                    onCheckedChange={(checked) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        guardrails: checked
+                          ? [...prev.guardrails, guard.id]
+                          : prev.guardrails.filter((g) => g !== guard.id),
+                      }))
+                    }
+                  />
+                </Field>
+              ))}
             </FieldGroup>
           </CollapsibleContent>
         </Collapsible>

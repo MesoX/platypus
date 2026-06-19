@@ -515,6 +515,7 @@ export const prepareChatTurn = async (
     sandboxEnvKeys,
     fallbackSystemPrompt: request.systemPrompt,
     runMode,
+    guardrails: provider.guardrails,
   };
 
   const generation = resolveGenerationConfig(request, agent, promptCtx);

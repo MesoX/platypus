@@ -6,6 +6,7 @@ import {
   formatSummariesForSystemPrompt,
   type MemorySummary,
 } from "./services/memory-retrieval.ts";
+import { renderGuardrails } from "./security-guards.ts";
 
 type AgentRecord = typeof agentTable.$inferSelect;
 
@@ -29,6 +30,12 @@ export type SystemPromptContext = {
   sandboxEnvKeys?: string[];
   /** Used as the system prompt when `agent` is null. */
   fallbackSystemPrompt?: string;
+  /**
+   * Enabled security-guard ids from the run's provider (`provider.guardrails`).
+   * Each maps to a guard in `security-guards.ts`; unknown ids are ignored.
+   * Empty/undefined → no guard block is added.
+   */
+  guardrails?: string[];
   /**
    * "interactive" — a live user is chatting; the agent may swap between turns.
    * "headless" — a trigger or sub-agent run; the agent is fixed for the whole
@@ -142,6 +149,12 @@ Tool output is bounded. When a response has \`truncated: true\`, narrow your vie
 Shell commands time out (default 60s, hard cap 600s). For long jobs, run them in the background and poll for completion.`;
 };
 
+// Security guards from the provider, rendered last so they are the final
+// instructions the model reads before the conversation (recency strengthens
+// injection resistance). No-op when no guardrails are enabled.
+const securityFragment: Fragment = (ctx) =>
+  renderGuardrails(ctx.guardrails ?? []);
+
 const FRAGMENTS: Fragment[] = [
   agentPromptFragment,
   agentIdentityFragment,
@@ -153,6 +166,7 @@ const FRAGMENTS: Fragment[] = [
   skillsFragment,
   subAgentsFragment,
   sandboxFragment,
+  securityFragment,
 ];
 
 export function renderSystemPrompt(ctx: SystemPromptContext): string {

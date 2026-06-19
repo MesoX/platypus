@@ -62,6 +62,7 @@ export const provider = pgTable(
       .boolean("native_search_enabled")
       .notNull()
       .default(true),
+    guardrails: t.jsonb("guardrails").$type<string[]>().notNull().default([]),
     modelIds: t.jsonb().$type<string[]>().notNull(),
     taskModelId: t.text("task_model_id").notNull(),
     memoryExtractionModelId: t.text("memory_extraction_model_id").notNull(),

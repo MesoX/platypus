@@ -85,6 +85,39 @@ describe("renderSystemPrompt — agent prompt", () => {
   });
 });
 
+describe("renderSystemPrompt — security guardrails", () => {
+  it("adds no security block when guardrails are absent or empty", () => {
+    expect(renderSystemPrompt(baseCtx())).not.toMatch(/Security and trust/);
+    const ctx = baseCtx();
+    ctx.guardrails = [];
+    expect(renderSystemPrompt(ctx)).not.toMatch(/Security and trust/);
+  });
+
+  it("renders the guard block for enabled guard ids", () => {
+    const ctx = baseCtx();
+    ctx.guardrails = ["untrusted-data"];
+    const out = renderSystemPrompt(ctx);
+    expect(out).toMatch(/## Security and trust/);
+    expect(out).toMatch(/UNTRUSTED DATA/);
+  });
+
+  it("ignores unknown guard ids", () => {
+    const ctx = baseCtx();
+    ctx.guardrails = ["does-not-exist"];
+    expect(renderSystemPrompt(ctx)).not.toMatch(/Security and trust/);
+  });
+
+  it("renders guards last, after the agent prompt", () => {
+    const ctx = baseCtx();
+    ctx.agent = agentRecord({ systemPrompt: "You are a researcher." });
+    ctx.guardrails = ["exfiltration"];
+    const out = renderSystemPrompt(ctx);
+    expect(out.indexOf("You are a researcher.")).toBeLessThan(
+      out.indexOf("## Security and trust"),
+    );
+  });
+});
+
 describe("renderSystemPrompt — workspace", () => {
   it("renders the preamble alone when no workspace context is set", () => {
     const out = renderSystemPrompt(baseCtx());
