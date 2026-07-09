@@ -2,4 +2,7 @@ ALTER TABLE "chat" ADD COLUMN "context_summary" text;--> statement-breakpoint
 ALTER TABLE "chat" ADD COLUMN "summary_watermark" text;--> statement-breakpoint
 ALTER TABLE "chat" ADD COLUMN "compaction_dirty" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "chat" ADD COLUMN "version" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "organization" ADD COLUMN "agent_run_settings" jsonb;--> statement-breakpoint
+ALTER TABLE "organization" ADD COLUMN "identity_context" text;--> statement-breakpoint
+ALTER TABLE "provider" ADD COLUMN "security_guardrails" text;--> statement-breakpoint
 ALTER TABLE "provider" ADD COLUMN "model_meta" jsonb;

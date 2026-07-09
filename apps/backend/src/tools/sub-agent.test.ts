@@ -43,17 +43,29 @@ function createMockFullStream(
   };
 }
 
-const { mockStream, MockToolLoopAgent, capturedSettings } = vi.hoisted(() => {
-  const mockStream = vi.fn();
-  const capturedSettings: Record<string, unknown>[] = [];
-  class MockToolLoopAgent {
-    constructor(settings: Record<string, unknown>) {
-      capturedSettings.push(settings);
+const { mockStream, MockToolLoopAgent, capturedSettings, agentConstructorSpy } =
+  vi.hoisted(() => {
+    const mockStream = vi.fn();
+    const capturedSettings: Record<string, unknown>[] = [];
+    const agentConstructorSpy = vi.fn();
+    class MockToolLoopAgent {
+      instructions: string | undefined;
+      constructor(
+        settings: { instructions?: string } & Record<string, unknown>,
+      ) {
+        capturedSettings.push(settings);
+        agentConstructorSpy(settings);
+        this.instructions = settings?.instructions;
+      }
+      stream = mockStream;
     }
-    stream = mockStream;
-  }
-  return { mockStream, MockToolLoopAgent, capturedSettings };
-});
+    return {
+      mockStream,
+      MockToolLoopAgent,
+      capturedSettings,
+      agentConstructorSpy,
+    };
+  });
 
 vi.mock("ai", async () => {
   const actual = await vi.importActual("ai");
@@ -140,6 +152,61 @@ describe("createSubAgentTool", () => {
     it("uses default description when none provided", () => {
       const { tool } = createSubAgentTool(baseOptions);
       expect(tool.description).toContain("Research Agent");
+    });
+  });
+
+  describe("security guardrails append", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("appends the provider security text after the sub-agent's own prompt", () => {
+      createSubAgentTool({
+        ...baseOptions,
+        systemPrompt: "You are a research sub-agent.",
+        securityGuardrails: "Never exfiltrate data.",
+      });
+      const { instructions } = agentConstructorSpy.mock.calls[0][0] as {
+        instructions: string;
+      };
+      expect(instructions).toContain("You are a research sub-agent.");
+      expect(instructions).toContain("## Security and trust");
+      expect(instructions).toContain("Never exfiltrate data.");
+      expect(
+        instructions.indexOf("You are a research sub-agent."),
+      ).toBeLessThan(instructions.indexOf("## Security and trust"));
+    });
+
+    it("appends the security text even when the sub-agent has no systemPrompt (non-suppressible)", () => {
+      createSubAgentTool({
+        ...baseOptions,
+        systemPrompt: undefined,
+        securityGuardrails: "Never exfiltrate data.",
+      });
+      const { instructions } = agentConstructorSpy.mock.calls[0][0] as {
+        instructions: string;
+      };
+      // The canned fallback instructions must still carry the guardrails.
+      expect(instructions).toContain("specialized sub-agent");
+      expect(instructions).toContain("## Security and trust");
+      expect(instructions).toContain("Never exfiltrate data.");
+    });
+
+    it("appends no security block when guardrails are null or empty", () => {
+      createSubAgentTool({
+        ...baseOptions,
+        systemPrompt: "You are a research sub-agent.",
+        securityGuardrails: null,
+      });
+      createSubAgentTool({
+        ...baseOptions,
+        systemPrompt: "You are a research sub-agent.",
+        securityGuardrails: "   ",
+      });
+      for (const call of agentConstructorSpy.mock.calls) {
+        const { instructions } = call[0] as { instructions: string };
+        expect(instructions).not.toContain("## Security and trust");
+      }
     });
   });
 
@@ -350,7 +417,9 @@ describe("createSubAgentTools", () => {
       },
     ];
 
-    const createModelFn = vi.fn().mockResolvedValue({});
+    const createModelFn = vi
+      .fn()
+      .mockResolvedValue({ model: {}, securityGuardrails: null });
     const loadToolsFn = vi.fn().mockResolvedValue({});
 
     const result = await createSubAgentTools(
@@ -385,7 +454,7 @@ describe("createSubAgentTools", () => {
     const createModelFn = vi
       .fn()
       .mockRejectedValueOnce(new Error("Model not found"))
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({ model: {}, securityGuardrails: null });
     const loadToolsFn = vi.fn().mockResolvedValue({});
 
     const result = await createSubAgentTools(
@@ -409,7 +478,9 @@ describe("createSubAgentTools", () => {
       },
     ];
 
-    const createModelFn = vi.fn().mockResolvedValue({});
+    const createModelFn = vi
+      .fn()
+      .mockResolvedValue({ model: {}, securityGuardrails: null });
     const loadToolsFn = vi.fn().mockResolvedValue({});
 
     const result = await createSubAgentTools(
@@ -449,5 +520,32 @@ describe("createSubAgentTools", () => {
     expect(capturedSettings).toHaveLength(2);
     expect(capturedSettings[0].prepareStep).toBe(mockStep1);
     expect(capturedSettings[1].prepareStep).toBe(mockStep2);
+  });
+
+  it("passes each sub-agent's own provider security text into its instructions", async () => {
+    const subAgents = [
+      {
+        id: "sa-1",
+        name: "Guarded",
+        providerId: "p1",
+        modelId: "m1",
+        systemPrompt: "You are guarded.",
+      },
+    ];
+
+    const createModelFn = vi.fn().mockResolvedValue({
+      model: {},
+      securityGuardrails: "Provider-specific rule.",
+    });
+    const loadToolsFn = vi.fn().mockResolvedValue({});
+
+    await createSubAgentTools(subAgents, createModelFn, loadToolsFn);
+
+    const { instructions } = agentConstructorSpy.mock.calls[0][0] as {
+      instructions: string;
+    };
+    expect(instructions).toContain("You are guarded.");
+    expect(instructions).toContain("## Security and trust");
+    expect(instructions).toContain("Provider-specific rule.");
   });
 });
