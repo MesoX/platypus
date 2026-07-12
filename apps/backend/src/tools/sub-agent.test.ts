@@ -51,7 +51,7 @@ const { mockStream, MockToolLoopAgent, capturedSettings, agentConstructorSpy } =
     class MockToolLoopAgent {
       instructions: string | undefined;
       constructor(
-        settings: { instructions?: string } & Record<string, unknown>,
+        settings: Record<string, unknown> & { instructions?: string },
       ) {
         capturedSettings.push(settings);
         agentConstructorSpy(settings);
@@ -234,9 +234,9 @@ describe("createSubAgentTool", () => {
       });
 
       const { tool } = createSubAgentTool(baseOptions);
-      const gen = tool.execute!(
+      const gen = tool.execute(
         { task: "Do something" },
-        {} as ToolExecutionOptions,
+        {} as ToolExecutionOptions<Record<string, unknown>>,
       ) as AsyncGenerator<SubAgentActivity>;
 
       const { yielded } = await consumeGenerator(gen);
@@ -295,9 +295,9 @@ describe("createSubAgentTool", () => {
       });
 
       const { tool } = createSubAgentTool(baseOptions);
-      const gen = tool.execute!(
+      const gen = tool.execute(
         { task: "Do something" },
-        {} as ToolExecutionOptions,
+        {} as ToolExecutionOptions<Record<string, unknown>>,
       ) as AsyncGenerator<SubAgentActivity>;
 
       const { yielded } = await consumeGenerator(gen);
@@ -319,9 +319,11 @@ describe("createSubAgentTool", () => {
 
       const { tool } = createSubAgentTool(baseOptions);
       const abortController = new AbortController();
-      const gen = tool.execute!({ task: "Do something" }, {
+      const gen = tool.execute({ task: "Do something" }, {
         abortSignal: abortController.signal,
-      } as ToolExecutionOptions) as AsyncGenerator<SubAgentActivity>;
+      } as ToolExecutionOptions<
+        Record<string, unknown>
+      >) as AsyncGenerator<SubAgentActivity>;
 
       await consumeGenerator(gen);
 
@@ -343,9 +345,9 @@ describe("createSubAgentTool", () => {
       });
 
       const { tool } = createSubAgentTool(baseOptions);
-      const gen = tool.execute!(
+      const gen = tool.execute(
         { task: "Do something" },
-        {} as ToolExecutionOptions,
+        {} as ToolExecutionOptions<Record<string, unknown>>,
       ) as AsyncGenerator<SubAgentActivity>;
 
       const { yielded } = await consumeGenerator(gen);
