@@ -82,6 +82,8 @@ import {
   ValidationError,
   createToolHeartbeat,
   shouldInjectNativeSearch,
+  wrapToolsWithBump,
+  normalizeToolResult,
 } from "./chat-execution.ts";
 import { createInMemoryChatTurnQueries } from "./chat-execution.test-fixtures.ts";
 import { logger } from "../logger.ts";
@@ -783,6 +785,102 @@ describe("chat-execution", () => {
       onActivity.mockClear();
       await vi.advanceTimersByTimeAsync(30_000);
       expect(onActivity).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("normalizeToolResult", () => {
+    it("converts Date fields to ISO-8601 strings", () => {
+      const createdAt = new Date("2026-07-13T10:20:30.000Z");
+      const result = normalizeToolResult({ id: "b1", createdAt }) as {
+        id: string;
+        createdAt: string;
+      };
+      expect(result.createdAt).toBe("2026-07-13T10:20:30.000Z");
+      expect(result.id).toBe("b1");
+    });
+
+    it("leaves already-JSON-safe values structurally unchanged", () => {
+      const value = { a: 1, b: "x", c: [true, null], d: { nested: 2 } };
+      expect(normalizeToolResult(value)).toEqual(value);
+    });
+
+    it("passes a top-level undefined return through unchanged", () => {
+      expect(normalizeToolResult(undefined)).toBeUndefined();
+    });
+  });
+
+  describe("wrapToolsWithBump", () => {
+    const noop = () => {};
+
+    const wrapSingle = (execute: unknown) => {
+      const wrapped = wrapToolsWithBump(
+        {
+          t: { execute } as unknown as Parameters<
+            typeof wrapToolsWithBump
+          >[0]["t"],
+        },
+        noop,
+        noop,
+        noop,
+      );
+      return (wrapped.t as { execute: (a: unknown, o: unknown) => unknown })
+        .execute;
+    };
+
+    it("normalizes a Date-containing result on the promise-resolved path", async () => {
+      const execute = wrapSingle(() =>
+        Promise.resolve({
+          createdAt: new Date("2026-07-13T10:20:30.000Z"),
+        }),
+      );
+      const result = (await execute({}, {})) as { createdAt: string };
+      expect(result.createdAt).toBe("2026-07-13T10:20:30.000Z");
+    });
+
+    it("normalizes a Date-containing result on the synchronous path", () => {
+      const execute = wrapSingle(() => ({
+        createdAt: new Date("2026-07-13T10:20:30.000Z"),
+      }));
+      const result = execute({}, {}) as { createdAt: string };
+      expect(result.createdAt).toBe("2026-07-13T10:20:30.000Z");
+    });
+
+    it("leaves the async-iterable path intact (yields pass through untouched)", async () => {
+      const date = new Date("2026-07-13T10:20:30.000Z");
+      const execute = wrapSingle(async function* () {
+        await Promise.resolve();
+        yield { part: 1, date };
+        yield { part: 2 };
+      });
+      const iterable = execute({}, {}) as AsyncIterable<{
+        part: number;
+        date?: Date;
+      }>;
+      const parts: Array<{ part: number; date?: Date }> = [];
+      for await (const part of iterable) parts.push(part);
+      expect(parts).toEqual([{ part: 1, date }, { part: 2 }]);
+      // The Date is yielded verbatim, not serialized to a string.
+      expect(parts[0].date).toBeInstanceOf(Date);
+    });
+
+    it("runs the tool lifecycle callbacks around a normalized result", async () => {
+      const onStart = vi.fn();
+      const onEnd = vi.fn();
+      const wrapped = wrapToolsWithBump(
+        {
+          t: {
+            execute: () => Promise.resolve({ createdAt: new Date() }),
+          } as unknown as Parameters<typeof wrapToolsWithBump>[0]["t"],
+        },
+        noop,
+        onStart,
+        onEnd,
+      );
+      await (
+        wrapped.t as { execute: (a: unknown, o: unknown) => Promise<unknown> }
+      ).execute({}, {});
+      expect(onStart).toHaveBeenCalledTimes(1);
+      expect(onEnd).toHaveBeenCalledTimes(1);
     });
   });
 });

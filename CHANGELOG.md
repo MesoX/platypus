@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.1.3](https://github.com/willdady/platypus/compare/v2.1.2...v2.1.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* **frontend:** populate edit forms from SWR warm cache ([#337](https://github.com/willdady/platypus/issues/337)) ([afd6c1a](https://github.com/willdady/platypus/commit/afd6c1a62ae826c5fe2609f97ddb780f64c0b22e))
+* **frontend:** surface agent form validation errors ([#331](https://github.com/willdady/platypus/issues/331)) ([#338](https://github.com/willdady/platypus/issues/338)) ([94233a4](https://github.com/willdady/platypus/commit/94233a4b1159cadc1554462516533134f65b588b))
+
+## [2.1.2](https://github.com/willdady/platypus/compare/v2.1.1...v2.1.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **backend:** relay sub-agent text across all steps ([#324](https://github.com/willdady/platypus/issues/324)) ([#325](https://github.com/willdady/platypus/issues/325)) ([8a1711d](https://github.com/willdady/platypus/commit/8a1711d3e09c1c97032e79afd87a11d66a1172d8))
+
+## [2.1.1](https://github.com/willdady/platypus/compare/v2.1.0...v2.1.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **backend:** normalize tool results to JSON at the wrapper choke point ([#322](https://github.com/willdady/platypus/issues/322)) ([32cd152](https://github.com/willdady/platypus/commit/32cd15244ca821bc66d881833b87c2911012fee0))
+
 ## [2.1.0](https://github.com/willdady/platypus/compare/v2.0.0...v2.1.0) (2026-07-12)
 
 
