@@ -32,7 +32,6 @@
     "@hono/standard-validator": "^0.2.3",
     "@mozilla/readability": "^0.6.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
-    "@platypus-local/searx": "workspace:*",
     "@platypus/schemas": "workspace:*",
     "@platypuschat/plugin-sdk": "workspace:*",
     "ai": "^7.0.48",
