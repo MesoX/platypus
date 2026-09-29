@@ -1,14 +1,8 @@
 ---
-status: accepted-pending-implementation
-implemented-by: "#1114"
+status: accepted
 ---
 
 # Inbound Triggers are fired by a per-Trigger bearer token on a separately exposable path
-
-> State of the code today: Triggers are Cron or Event only, and every backend
-> route authenticates a browser session. No Inbound Trigger, `/hooks/*` path,
-> Trigger token or Organization gate exists. This ADR records the decision only.
-> It moves to `accepted` in the pull request that builds it.
 
 An external system (an issue tracker, a CI pipeline, an automation tool) can start an Agent run by calling an **Inbound Trigger**: a third Trigger type beside Cron and Event, fired by `POST /hooks/triggers/:triggerId` with `Authorization: Bearer <token>`. This is the backend's first ingress that is not a browser session, and it is deliberately narrow. The credential is one token per Trigger that grants exactly "run this Agent with this Instruction", never access to the API. The run acts as the Workspace Owner like every Trigger run, so the token is only as safe as the Agent's tools are narrow. The path lives outside `/organizations/...` so an Operator can expose `/hooks/*` alone through a proxy or tunnel, which is how a deployment on a private network takes calls at all. The call is asynchronous: a `202` hands back a run id, and the outcome lands in run history like any other Trigger run. Originates from [#1114](https://github.com/willdady/platypus/issues/1114).
 

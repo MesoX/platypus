@@ -36,6 +36,7 @@ export function orgRoutes(orgId: string) {
       blueprintDetail: (blueprintId: string) =>
         `${settings}/blueprints/${blueprintId}`,
       plugins: `${settings}/plugins`,
+      inboundTriggers: `${settings}/inbound-triggers`,
     },
   };
 }

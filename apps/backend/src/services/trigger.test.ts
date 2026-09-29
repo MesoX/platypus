@@ -762,6 +762,43 @@ describe("trigger module", () => {
       );
     });
 
+    it("answers a malformed stored config with a ValidationError, not a crash", async () => {
+      world({
+        trigger: [
+          triggerRow({
+            type: "inbound",
+            config: { inputs: "not a list" },
+            tokenHash: "old-hash",
+          }),
+        ],
+      });
+
+      await expect(regenerateTriggerToken(ctx, "trig-1")).rejects.toThrow(
+        ValidationError,
+      );
+    });
+
+    it("refuses another type's config for an Inbound Trigger rather than reading it as no inputs", async () => {
+      world({
+        trigger: [
+          triggerRow({
+            type: "inbound",
+            config: { inputs: [], tokenExpiryDays: 90 },
+            tokenHash: "h",
+          }),
+        ],
+      });
+
+      await expect(
+        updateTrigger(
+          ctx,
+          "trig-1",
+          { config: { cronExpression: "* * * * *" } },
+          { allowInbound: true },
+        ),
+      ).rejects.toThrow(ValidationError);
+    });
+
     it("never exposes the hash through the public projection", () => {
       const row = {
         ...triggerRow(),

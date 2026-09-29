@@ -8,6 +8,8 @@ import {
   FieldDescription,
 } from "@/components/ui/field";
 import { FormTextField } from "@/components/form-text-field";
+import { FormSelectField } from "@/components/form-select-field";
+import { SelectItem } from "@/components/ui/select";
 import { ExpandableTextarea } from "@/components/expandable-textarea";
 import { EntityDeleteDialog } from "@/components/entity-delete-dialog";
 import { FormFooterButtons } from "@/components/form-footer-buttons";
@@ -21,7 +23,7 @@ import {
 } from "@/components/form-skeleton";
 import { useEntityDelete, useEntityForm } from "@/hooks/use-entity-form";
 import { useRouter } from "next/navigation";
-import { type Organization } from "@platypus/schemas";
+import { type InboundTriggerGate, type Organization } from "@platypus/schemas";
 import { ORGANIZATION_IDENTITY_CONTEXT_MAX_LENGTH } from "@platypus/schemas";
 import { toast } from "sonner";
 import { orgRoutes } from "@/lib/routes";
@@ -31,12 +33,23 @@ interface OrganizationFormProps {
   orgId?: string;
 }
 
-const RETRACTABLE_FIELDS = ["name", "identityContext"] as const;
+const RETRACTABLE_FIELDS = [
+  "name",
+  "identityContext",
+  "inboundTriggerGate",
+] as const;
 
 const INITIAL_DATA = {
   name: "",
   identityContext: "",
+  inboundTriggerGate: "off" as InboundTriggerGate,
 };
+
+const GATE_OPTIONS: { value: InboundTriggerGate; label: string }[] = [
+  { value: "off", label: "Off" },
+  { value: "all", label: "All workspaces" },
+  { value: "selected", label: "Selected workspaces" },
+];
 
 const OrganizationForm = ({ classNames, orgId }: OrganizationFormProps) => {
   const router = useRouter();
@@ -49,6 +62,7 @@ const OrganizationForm = ({ classNames, orgId }: OrganizationFormProps) => {
     canSubmit,
     handleChange,
     toFieldChange,
+    setField,
     submit,
   } = useEntityForm<typeof INITIAL_DATA, Organization, Organization>({
     initialData: INITIAL_DATA,
@@ -58,12 +72,18 @@ const OrganizationForm = ({ classNames, orgId }: OrganizationFormProps) => {
     fromRecord: (organization) => ({
       name: organization.name,
       identityContext: organization.identityContext ?? "",
+      inboundTriggerGate: organization.inboundTriggerGate ?? "off",
     }),
     retractableFields: RETRACTABLE_FIELDS,
-    // identityContext is update-only (the create schema accepts name only).
+    // identityContext and the gate are update-only (the create schema accepts
+    // name only).
     buildPayload: (data) =>
       orgId
-        ? { name: data.name, identityContext: data.identityContext || null }
+        ? {
+            name: data.name,
+            identityContext: data.identityContext || null,
+            inboundTriggerGate: data.inboundTriggerGate,
+          }
         : { name: data.name },
     onSuccess: (data) => {
       if (orgId) {
@@ -113,6 +133,7 @@ const OrganizationForm = ({ classNames, orgId }: OrganizationFormProps) => {
             <FormSkeletonGroup>
               <FieldSkeleton />
               {orgId && <TextareaSkeleton counter description={3} />}
+              {orgId && <FieldSkeleton description={2} />}
             </FormSkeletonGroup>
           </FormSkeletonSet>
           <FooterSkeleton buttons={orgId ? 2 : 1} />
@@ -158,6 +179,34 @@ const OrganizationForm = ({ classNames, orgId }: OrganizationFormProps) => {
                   <FieldError>{validationErrors.identityContext}</FieldError>
                 )}
               </Field>
+            )}
+
+            {orgId && (
+              <FormSelectField
+                label="Inbound Triggers"
+                name="inboundTriggerGate"
+                value={formData.inboundTriggerGate}
+                onValueChange={(value) =>
+                  setField("inboundTriggerGate", value as InboundTriggerGate)
+                }
+                disabled={isSubmitting}
+                error={validationErrors.inboundTriggerGate}
+                description={
+                  <>
+                    Which workspaces accept calls from outside Platypus on their
+                    Inbound Triggers. With Selected workspaces, allow each one
+                    in its workspace settings. Checked on every call, so turning
+                    it off stops calls straight away without deleting any
+                    trigger.
+                  </>
+                }
+              >
+                {GATE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </FormSelectField>
             )}
           </FieldGroup>
         </FieldSet>

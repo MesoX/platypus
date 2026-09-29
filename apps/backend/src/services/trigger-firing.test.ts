@@ -798,5 +798,13 @@ describe("fireTrigger", () => {
         composeInboundInputs({}, [{ name: "note", required: false }]),
       ).toContain("(none)");
     });
+
+    it("lists only inputs the call sent, never one found on Object.prototype", () => {
+      const block = composeInboundInputs({}, [
+        { name: "constructor", required: false },
+      ]);
+      expect(block).toContain("(none)");
+      expect(block).not.toContain("constructor");
+    });
   });
 });

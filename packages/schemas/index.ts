@@ -2159,8 +2159,11 @@ export const inboundTriggerInputSchema = z.object({
 
 export type InboundTriggerInput = z.infer<typeof inboundTriggerInputSchema>;
 
+// Strict, unlike the cron and event configs: every field here has a default,
+// so a non-strict schema would read any other shape — a cron config sent for
+// an Inbound Trigger — as a valid config with no inputs.
 export const inboundTriggerConfigSchema = z
-  .object({
+  .strictObject({
     inputs: z
       .array(inboundTriggerInputSchema)
       .max(INBOUND_TRIGGER_MAX_INPUTS)
@@ -2237,8 +2240,8 @@ export const triggerSchema = z.object({
   // headless run should not have a system prompt that drifts with the
   // Workspace User's unrelated interactive-chat activity.
   includeMemories: z.boolean().default(false),
-  // Inbound last: its every field has a default, so it would also accept a
-  // cron or event config that a union tried against it first.
+  // The stored shape, for reading. Writes are validated against the schema
+  // their `type` selects (see `triggerCreateSchema`), never by this union.
   config: z.union([
     cronTriggerConfigSchema,
     eventTriggerConfigSchema,
@@ -2259,10 +2262,9 @@ export const triggerSchema = z.object({
 
 export type Trigger = z.infer<typeof triggerSchema>;
 
-export const triggerCreateSchema = triggerSchema.pick({
+const triggerCreateBaseSchema = triggerSchema.pick({
   workspaceId: true,
   agentId: true,
-  type: true,
   name: true,
   description: true,
   instruction: true,
@@ -2270,8 +2272,27 @@ export const triggerCreateSchema = triggerSchema.pick({
   maxRunsToKeep: true,
   search: true,
   includeMemories: true,
-  config: true,
 });
+
+/**
+ * A create names its type, and its config is validated against that type's
+ * schema alone — never against whichever member of a union happens to accept
+ * it first.
+ */
+export const triggerCreateSchema = z.discriminatedUnion("type", [
+  triggerCreateBaseSchema.extend({
+    type: z.literal("cron"),
+    config: cronTriggerConfigSchema,
+  }),
+  triggerCreateBaseSchema.extend({
+    type: z.literal("event"),
+    config: eventTriggerConfigSchema,
+  }),
+  triggerCreateBaseSchema.extend({
+    type: z.literal("inbound"),
+    config: inboundTriggerConfigSchema,
+  }),
+]);
 
 export const triggerUpdateSchema = triggerSchema
   .pick({
@@ -2284,9 +2305,13 @@ export const triggerUpdateSchema = triggerSchema
     search: true,
     includeMemories: true,
     type: true,
-    config: true,
   })
-  .partial();
+  .partial()
+  .extend({
+    // An update may omit `type`, so only the stored Trigger settles which
+    // schema its config must meet: the backend validates it against that.
+    config: z.record(z.string(), z.unknown()).optional(),
+  });
 
 // Trigger Run
 

@@ -184,3 +184,45 @@ describe("TriggerList list states", () => {
     ).toHaveAttribute("aria-busy", "true");
   });
 });
+
+describe("TriggerList inbound triggers", () => {
+  const inboundTrigger = (over: Record<string, unknown> = {}): Trigger =>
+    ({
+      id: "t2",
+      name: "Ready for AI",
+      type: "inbound",
+      enabled: true,
+      agentId: "agent1",
+      config: {
+        inputs: [{ name: "issueKey", required: true }],
+        recordKey: "issueKey",
+        tokenExpiryDays: 90,
+      },
+      hasToken: true,
+      tokenExpiresAt: new Date(Date.now() + 80 * 24 * 60 * 60 * 1000),
+      ...over,
+    }) as unknown as Trigger;
+
+  it("renders an Inbound Trigger with its own badge and its inputs, not as an Event Trigger", () => {
+    renderTriggers([inboundTrigger()]);
+
+    expect(screen.getByText("Inbound")).toBeInTheDocument();
+    expect(screen.queryByText("Event")).toBeNull();
+    expect(screen.getByText("issueKey")).toBeInTheDocument();
+    expect(screen.getByText(/Called from outside/)).toBeInTheDocument();
+  });
+
+  it("flags a trigger whose token was revoked or has expired", () => {
+    renderTriggers([
+      inboundTrigger({ id: "t3", name: "Revoked", hasToken: false }),
+      inboundTrigger({
+        id: "t4",
+        name: "Old",
+        tokenExpiresAt: new Date(Date.now() - 1000),
+      }),
+    ]);
+
+    expect(screen.getByText("No token")).toBeInTheDocument();
+    expect(screen.getByText("Expired")).toBeInTheDocument();
+  });
+});

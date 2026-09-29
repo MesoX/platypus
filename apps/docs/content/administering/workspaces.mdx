@@ -51,8 +51,8 @@ service is called, which team owns it, house terminology.
   settings → Contexts**, even though both land in the prompt. This field is the
   Workspace's and reaches everyone in it; theirs is private to them. Personal
   preferences ("answer terse, no preamble") belong in theirs — putting them here
-  imposes them on every Chat in the Workspace. See
-  [Memory & context](/concepts/memory-and-context#three-different-things-are-called-context).
+  imposes them on every Chat in the Workspace. See [Memory &
+  context](/concepts/memory-and-context#three-different-things-are-called-context).
 </Callout>
 
 ## The three Provider dropdowns
@@ -108,6 +108,14 @@ only Org Admins may configure that resource in this Workspace.
 The switches only cover **Workspace-scoped** resources. An owner can never edit a
 Shared one, and never touch the Sandbox — that stays admin-only whatever these
 say.
+
+## Allow Inbound Triggers
+
+Visible only to an Org Admin, and **off** by default. It lets this Workspace's
+[Inbound Triggers](/building-with-platypus/triggers#inbound-triggers) take
+calls, and it only matters while the Organization's **Inbound Triggers** setting
+is **Selected workspaces** — see [Inbound Triggers](/administering#inbound-triggers).
+Under **Off** or **All workspaces** it is ignored.
 
 ## Deleting a Workspace
 

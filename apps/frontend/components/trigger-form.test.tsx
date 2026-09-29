@@ -10,6 +10,7 @@ import {
   resetFormHarness,
   stubAcceptedSave,
   savedBody,
+  push,
 } from "@/lib/form-test-harness";
 import { selectOption } from "@/lib/test-utils";
 
@@ -274,5 +275,171 @@ describe("TriggerForm loading gate", () => {
 
     expect(screen.getByLabelText("Loading trigger")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+});
+
+describe("TriggerForm — Inbound Triggers", () => {
+  async function renderInboundTriggerForm() {
+    render(<TriggerForm orgId="org1" workspaceId="ws1" />);
+    await waitFor(() => expect(screen.getByText("Agent")).toBeInTheDocument());
+    await selectOption("Cron", "Inbound");
+  }
+
+  const fillBasics = () => {
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Ready for AI" },
+    });
+    fireEvent.change(screen.getByLabelText("Instruction"), {
+      target: { value: "Work the issue" },
+    });
+  };
+
+  it("saves declared inputs and a record key, then shows the token once before leaving", async () => {
+    const fetchMock = stubAcceptedSave({
+      id: "trigger-9",
+      token: "pit_shown-once",
+      tokenExpiresAt: "2026-12-28T12:00:00.000Z",
+    });
+    await renderInboundTriggerForm();
+    fillBasics();
+
+    fireEvent.click(screen.getByRole("button", { name: /add input/i }));
+    fireEvent.change(screen.getByLabelText("Input 1 name"), {
+      target: { value: "issueKey" },
+    });
+    fireEvent.change(screen.getByLabelText("Input 1 description"), {
+      target: { value: "The tracker's issue key" },
+    });
+    await selectOption("None", "issueKey");
+    await selectOption("90 days", "30 days");
+
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(savedBody(fetchMock)).toMatchObject({
+      type: "inbound",
+      config: {
+        inputs: [
+          {
+            name: "issueKey",
+            required: true,
+            description: "The tracker's issue key",
+          },
+        ],
+        recordKey: "issueKey",
+        tokenExpiryDays: 30,
+      },
+    });
+    expect(await screen.findByDisplayValue("pit_shown-once")).toBeVisible();
+    expect(
+      screen.getByDisplayValue("http://test/hooks/triggers/trigger-9"),
+    ).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /copied it/i }));
+    expect(push).toHaveBeenCalledWith("/org1/workspace/ws1");
+  });
+
+  it("unmarks the record key when its input stops being required", async () => {
+    const fetchMock = stubAcceptedSave({ id: "trigger-9" });
+    await renderInboundTriggerForm();
+    fillBasics();
+
+    fireEvent.click(screen.getByRole("button", { name: /add input/i }));
+    fireEvent.change(screen.getByLabelText("Input 1 name"), {
+      target: { value: "issueKey" },
+    });
+    await selectOption("None", "issueKey");
+    fireEvent.click(screen.getByLabelText("Required"));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(savedConfig(fetchMock)).not.toHaveProperty("recordKey");
+  });
+
+  it("holds the save back while an input name is invalid", async () => {
+    await renderInboundTriggerForm();
+    fillBasics();
+
+    fireEvent.click(screen.getByRole("button", { name: /add input/i }));
+    fireEvent.change(screen.getByLabelText("Input 1 name"), {
+      target: { value: "issue-key" },
+    });
+
+    expect(screen.getByText(/is not a valid input name/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+  });
+
+  it("sends an edited Inbound Trigger back as inbound, not as an event trigger", async () => {
+    setDataFor("/triggers/trigger-1", {
+      id: "trigger-1",
+      workspaceId: "ws1",
+      agentId: "agent-1",
+      name: "Ready for AI",
+      instruction: "Work the issue",
+      type: "inbound",
+      config: {
+        inputs: [{ name: "issueKey", required: true }],
+        recordKey: "issueKey",
+        tokenExpiryDays: 90,
+      },
+      enabled: true,
+      maxRunsToKeep: 10,
+      hasToken: true,
+      tokenExpiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const fetchMock = stubAcceptedSave({ id: "trigger-1" });
+    render(
+      <TriggerForm orgId="org1" workspaceId="ws1" triggerId="trigger-1" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(savedBody(fetchMock)).toMatchObject({
+      type: "inbound",
+      config: {
+        inputs: [{ name: "issueKey", required: true }],
+        recordKey: "issueKey",
+        tokenExpiryDays: 90,
+      },
+    });
+  });
+
+  it("regenerates the token and shows the new one once", async () => {
+    setDataFor("/triggers/trigger-1", {
+      id: "trigger-1",
+      workspaceId: "ws1",
+      agentId: "agent-1",
+      name: "Ready for AI",
+      instruction: "Work the issue",
+      type: "inbound",
+      config: { inputs: [], tokenExpiryDays: 90 },
+      enabled: true,
+      maxRunsToKeep: 10,
+      hasToken: true,
+      tokenExpiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const fetchMock = stubAcceptedSave({
+      token: "pit_regenerated",
+      tokenExpiresAt: "2099-04-01T00:00:00.000Z",
+    });
+    render(
+      <TriggerForm orgId="org1" workspaceId="ws1" triggerId="trigger-1" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    const confirm = await screen.findAllByRole("button", {
+      name: "Regenerate",
+    });
+    fireEvent.click(confirm[confirm.length - 1]);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://test/organizations/org1/workspaces/ws1/triggers/trigger-1/token",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(await screen.findByDisplayValue("pit_regenerated")).toBeVisible();
   });
 });

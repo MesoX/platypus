@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { resetMockDb, seedDb, type Row } from "../test-utils.ts";
+import { mockDb, resetMockDb, seedDb, type Row } from "../test-utils.ts";
 import { mockLogger, mockNanoid } from "../test-setup.ts";
 
 vi.mock("../services/trigger-firing.ts", () => ({
@@ -252,6 +252,76 @@ describe("/hooks/triggers", () => {
           triggerId: "trig-1",
         }),
       ]);
+    });
+
+    it("still writes the 413's log line when the Trigger lookup fails", async () => {
+      process.env.INBOUND_TRIGGER_MAX_BODY_BYTES = "64";
+      mockDb.limit.mockImplementationOnce(() => {
+        throw new Error("database unreachable");
+      });
+
+      const res = await fire("trig-1", {
+        body: JSON.stringify({ inputs: { issueKey: "x".repeat(100) } }),
+      });
+
+      expect(res.status).toBe(413);
+      expect(callLogLines()).toEqual([
+        expect.objectContaining({
+          outcome: "rejected",
+          reason: "body_too_large",
+          triggerId: "trig-1",
+          organizationId: null,
+        }),
+      ]);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: "database unreachable" }),
+        "Failed to look up the inbound trigger an oversized call named",
+      );
+    });
+
+    it("does not count a suppressed call as use", async () => {
+      process.env.TRIGGER_BREAKER_MAX_RUNS = "1";
+      try {
+        const fake = seed({
+          runs: [
+            {
+              id: "run-done",
+              triggerId: "trig-1",
+              entityId: "PLAT-42",
+              status: "success",
+              startedAt: new Date(Date.now() - 60_000),
+            },
+          ],
+        });
+        mockNanoid.mockReturnValueOnce("run-suppressed");
+
+        const res = await fire("trig-1");
+
+        expect(res.status).toBe(202);
+        expect(await res.json()).toEqual({
+          runId: "run-suppressed",
+          deduplicated: false,
+        });
+        expect(fake.tables.trigger[0].lastUsedAt).toBeNull();
+        expect(callLogLines().at(-1)).toMatchObject({ outcome: "suppressed" });
+      } finally {
+        delete process.env.TRIGGER_BREAKER_MAX_RUNS;
+      }
+    });
+
+    it("returns a record's active run with 202 even at the concurrency cap", async () => {
+      process.env.INBOUND_TRIGGER_MAX_CONCURRENT_RUNS = "1";
+      vi.mocked(fireTrigger).mockImplementationOnce(
+        () => new Promise(() => {}),
+      );
+      mockNanoid.mockReturnValueOnce("run-1");
+      seed();
+
+      expect((await fire("trig-1")).status).toBe(202);
+      const res = await fire("trig-1");
+
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ runId: "run-1", deduplicated: true });
     });
 
     it.each([

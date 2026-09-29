@@ -32,27 +32,28 @@ Provider reference, and this section doesn't repeat it.
 
 <Callout type="warning">
   A Provider is not visible to a Workspace merely because you created it at
-  Organization scope. It has to be **attached** — see
-  [Shared resources](/administering/shared-resources). A Workspace Owner
-  reporting an empty **Model** dropdown after you "already set up the Provider"
-  is usually a missing attachment.
+  Organization scope. It has to be **attached** — see [Shared
+  resources](/administering/shared-resources). A Workspace Owner reporting an
+  empty **Model** dropdown after you "already set up the Provider" is usually a
+  missing attachment.
 </Callout>
 
 ## The screens
 
 **Organization settings** holds:
 
-| Screen           | For                                                                                             |
-| ---------------- | ----------------------------------------------------------------------------------------------- |
-| **General**      | The Organization's name and its identity / context text, folded into every Chat in the Org       |
-| **Members**      | Who is in the Organization, and their **Org Role**                                              |
-| **Invitations**  | Inviting people in — see [Users & access](/self-hosting/users-and-access)                        |
-| **Providers**    | The credential-bearing model connections                                                        |
-| **MCP**          | Organization-scoped MCP servers                                                                 |
-| **Skills**       | Shared Skills, and where a promoted one is edited                                               |
-| **Agents**       | Shared Agents, same                                                                             |
-| **Blueprints**   | Named bundles of Shared resources you apply to a Workspace in one step                           |
-| **Plugins**      | Read-only: what the deployment actually loaded at boot                                          |
+| Screen               | For                                                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **General**          | The Organization's name, its identity / context text (folded into every Chat in the Org), and which Workspaces take [Inbound Trigger](#inbound-triggers) calls |
+| **Members**          | Who is in the Organization, and their **Org Role**                                                                                                             |
+| **Invitations**      | Inviting people in — see [Users & access](/self-hosting/users-and-access)                                                                                      |
+| **Providers**        | The credential-bearing model connections                                                                                                                       |
+| **MCP**              | Organization-scoped MCP servers                                                                                                                                |
+| **Skills**           | Shared Skills, and where a promoted one is edited                                                                                                              |
+| **Agents**           | Shared Agents, same                                                                                                                                            |
+| **Blueprints**       | Named bundles of Shared resources you apply to a Workspace in one step                                                                                         |
+| **Plugins**          | Read-only: what the deployment actually loaded at boot                                                                                                         |
+| **Inbound Triggers** | Every Trigger in the Organization that an outside system can call, with its token's standing                                                                   |
 
 ### Members and roles
 
@@ -67,9 +68,9 @@ by an Org Admin.
 <Callout type="info">
   **Plugins** is deliberately read-only — there is no install or enable button.
   Which Plugins run is a deploy-time decision belonging to the Operator, so it
-  changes only when they edit configuration and restart. Use the screen to confirm
-  what loaded, and to trace a Tool set or Sandbox backend back to the Plugin that
-  provided it.
+  changes only when they edit configuration and restart. Use the screen to
+  confirm what loaded, and to trace a Tool set or Sandbox backend back to the
+  Plugin that provided it.
 </Callout>
 
 ### Deleting the Organization
@@ -80,6 +81,48 @@ them, and every Shared resource. Each Workspace's Sandbox is torn down too.
 With the Docker backend that removes the container and its volume, so any files
 an Agent left in `/workspace` are gone. With SSH the host is left alone. You
 can't recover any of this from inside the product, only from a database backup.
+
+## Inbound Triggers
+
+An [Inbound Trigger](/building-with-platypus/triggers#inbound-triggers) is a
+Trigger a system outside Platypus starts over HTTP, with a token its Workspace
+Owner issues. Its run acts as that Owner, so it is a way in from outside, and
+whether a Workspace may have that is your decision.
+
+**General → Inbound Triggers** decides it for the whole Organization:
+
+| Setting                 | Calls are accepted for                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Off** _(default)_     | No Workspace                                                                                                             |
+| **All workspaces**      | Every Workspace, including ones created later                                                                            |
+| **Selected workspaces** | Only Workspaces with **Allow Inbound Triggers** on in their [settings](/administering/workspaces#allow-inbound-triggers) |
+
+It is checked on every call. Switching to **Off**, or turning a Workspace's
+switch off under **Selected workspaces**, refuses that Workspace's calls from
+the next one on. Its Triggers and their tokens stay as they are, so switching
+back resumes them. Owners can create Inbound Triggers whatever the setting
+says; they just can't be called until you allow it.
+
+### See and revoke
+
+**Organization settings → Inbound Triggers** lists every Inbound Trigger in the
+Organization: its Workspace, Owner, when it was created, whether its token is
+active, expiring within 30 days, expired or missing, and when it was last used
+and last rejected. It never shows a token.
+
+**Last rejected** is the column to watch. A Trigger rejecting calls it used to
+accept is usually an expired token behind a broken integration. A Trigger
+rejecting calls it never accepted may be someone guessing.
+
+**Revoke token** stops a token at once and sends its Owner a notification. It is
+the only thing you can do to another person's Trigger here. You cannot edit or
+disable one.
+
+<Callout type="warning">
+  A revoke is not lasting: the Owner can issue a new token straight away. To
+  stop a Workspace taking calls for good, change **General → Inbound Triggers**,
+  which the Owner cannot.
+</Callout>
 
 ## Where to next
 

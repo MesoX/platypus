@@ -262,6 +262,29 @@ describe("Trigger Routes", () => {
       expect(res.status).toBe(201);
     });
 
+    it.each([
+      [
+        "a cron config for an Inbound Trigger",
+        { type: "inbound", config: { cronExpression: "* * * * *" } },
+      ],
+      ["an unknown event", { type: "event", config: { events: ["bogus"] } }],
+      ["an inbound config for a Cron Trigger", { type: "cron", config: {} }],
+    ])(
+      "validates the config against its own type, refusing %s",
+      async (_label, override) => {
+        stubAuthLookups();
+
+        const res = await app.request(baseUrl, {
+          method: "POST",
+          body: JSON.stringify({ ...createBody, ...override }),
+          headers: { "Content-Type": "application/json" },
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockDb.values).not.toHaveBeenCalled();
+      },
+    );
+
     it("rejects creation when the agent is not in the workspace", async () => {
       stubAuthLookups();
       mockDb.limit.mockResolvedValueOnce([]); // agent verify: not found

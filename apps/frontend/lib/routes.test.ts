@@ -20,6 +20,9 @@ describe("orgRoutes", () => {
     expect(routes.settings.agents).toBe("/org1/settings/agents");
     expect(routes.settings.blueprints).toBe("/org1/settings/blueprints");
     expect(routes.settings.plugins).toBe("/org1/settings/plugins");
+    expect(routes.settings.inboundTriggers).toBe(
+      "/org1/settings/inbound-triggers",
+    );
   });
 
   it("builds the organization settings create paths", () => {
@@ -46,6 +49,7 @@ describe("orgRoutes", () => {
       "blueprints",
       "createBlueprint",
       "createMcp",
+      "inboundTriggers",
       "invitations",
       "mcp",
       "mcpDetail",

@@ -210,7 +210,7 @@ export const composeInboundInputs = (
   declared: InboundTriggerInput[],
 ): string => {
   const lines = declared
-    .filter((input) => input.name in inputs)
+    .filter((input) => Object.hasOwn(inputs, input.name))
     .map((input) => {
       const description = input.description
         ? ` (${input.description.replace(/\s+/g, " ").trim()})`

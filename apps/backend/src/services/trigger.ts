@@ -104,8 +104,15 @@ const CREATE_DEFAULTS = {
   includeMemories: false,
 };
 
-/** The fields an update carries — only the ones actually supplied. */
-export type TriggerUpdateFields = Partial<TriggerBaseFields>;
+/**
+ * The fields an update carries — only the ones actually supplied. `config` is
+ * unparsed: its shape depends on the Trigger's effective type, which only the
+ * stored row can settle when the update names none, so `updateTrigger`
+ * validates it against that type.
+ */
+export type TriggerUpdateFields = Partial<Omit<TriggerBaseFields, "config">> & {
+  config?: unknown;
+};
 
 /**
  * A Trigger row's `type` and `config`, narrowed together. The table stores
@@ -465,12 +472,19 @@ export async function regenerateTriggerToken(
     id: triggerId,
     workspaceId: ctx.workspaceId,
   });
-  const typed = narrowTriggerConfig(existing);
-  if (typed.type !== "inbound") {
+  if (existing.type !== "inbound") {
     throw new ValidationError("Only inbound triggers have a token.");
   }
+  // A stored config that no longer parses is a Trigger to repair, not a
+  // server fault: saving its inputs again rewrites the config.
+  const parsed = inboundTriggerConfigSchema.safeParse(existing.config);
+  if (!parsed.success) {
+    throw new ValidationError(
+      "This trigger's configuration is invalid. Save its inputs again, then regenerate the token.",
+    );
+  }
   const { token, hash } = generateInboundToken();
-  const fields = issuedTokenFields(hash, typed.config.tokenExpiryDays);
+  const fields = issuedTokenFields(hash, parsed.data.tokenExpiryDays);
   const row = await updateOwned(
     db,
     "trigger",

@@ -244,6 +244,18 @@ describe("inbound triggers", () => {
         message,
       });
     });
+
+    it.each(["constructor", "toString", "valueOf"])(
+      "does not find a required input named %s on Object.prototype",
+      (name) => {
+        expect(
+          validateInboundBody({ inputs: {} }, [{ name, required: true }]),
+        ).toEqual({
+          ok: false,
+          message: `Required input '${name}' is missing.`,
+        });
+      },
+    );
   });
 
   describe("acceptInboundCall", () => {
@@ -422,6 +434,90 @@ describe("inbound triggers", () => {
         (await acceptInboundCall(target(), config, { issueKey: "B" }, one))
           .outcome,
       ).toBe("accepted");
+    });
+  });
+
+  describe("acceptInboundCall at the concurrency cap", () => {
+    const one = { ...settings, maxConcurrentRuns: 1 };
+    const holdTheOnlySlot = async () => {
+      vi.mocked(fireTrigger).mockImplementationOnce(
+        () => new Promise(() => {}),
+      );
+      mockNanoid.mockReturnValueOnce("run-holding");
+      await acceptInboundCall(target(), config, { issueKey: "HOLD" }, one);
+      expect(activeInboundRunCount()).toBe(1);
+    };
+
+    it("still returns a record's active run, since a deduplicated call starts none", async () => {
+      seed({
+        runs: [
+          {
+            id: "run-active",
+            triggerId: "trig-1",
+            entityId: "PLAT-42",
+            status: "running",
+            startedAt: NOW,
+          },
+        ],
+      });
+      await holdTheOnlySlot();
+
+      expect(
+        await acceptInboundCall(target(), config, { issueKey: "PLAT-42" }, one),
+      ).toEqual({ outcome: "deduplicated", runId: "run-active" });
+      expect(activeInboundRunCount()).toBe(1);
+    });
+
+    it("still records a breaker trip, since a suppressed call starts no run", async () => {
+      process.env.TRIGGER_BREAKER_MAX_RUNS = "1";
+      try {
+        seed({
+          runs: [
+            {
+              id: "r1",
+              triggerId: "trig-1",
+              entityId: "PLAT-42",
+              status: "success",
+              startedAt: new Date(NOW.getTime() - 60_000),
+            },
+          ],
+        });
+        await holdTheOnlySlot();
+        mockNanoid.mockReturnValueOnce("run-suppressed");
+
+        expect(
+          await acceptInboundCall(
+            target(),
+            config,
+            { issueKey: "PLAT-42" },
+            one,
+          ),
+        ).toEqual({ outcome: "suppressed", runId: "run-suppressed" });
+        expect(activeInboundRunCount()).toBe(1);
+      } finally {
+        delete process.env.TRIGGER_BREAKER_MAX_RUNS;
+      }
+    });
+
+    it("gives the slot back when writing the pending row fails", async () => {
+      seedDb(
+        {
+          trigger: [inboundTrigger()],
+          workspace: [{ id: "ws-1", organizationId: "org-1" }],
+          organization: [{ id: "org-1", inboundTriggerGate: "all" }],
+          trigger_run: [],
+        },
+        {
+          onInsert: (table) => {
+            if (table === "trigger_run") throw new Error("insert failed");
+          },
+        },
+      );
+
+      await expect(
+        acceptInboundCall(target(), config, { issueKey: "A" }, one),
+      ).rejects.toThrow("insert failed");
+      expect(activeInboundRunCount()).toBe(0);
     });
   });
 

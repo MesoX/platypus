@@ -170,8 +170,11 @@ when one is marked, and across the whole Trigger when none is.
 ### Inbound Triggers
 
 An Inbound Trigger is started by an external system calling `/hooks/*` rather
-than by a schedule or an event. These settings bound what those callers can make
-the server do. Both apply to each backend instance separately.
+than by a schedule or an event. Every route under `/hooks/*` checks its own
+Trigger token and reads no session, so on a private network you can expose that
+prefix alone through a proxy or tunnel and keep the rest of the API unreachable
+from outside. These settings bound what those callers can make the server do.
+Both apply to each backend instance separately.
 
 | Variable                              | Purpose                                                                                         | Default         | Required |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------- | -------- |
@@ -180,7 +183,55 @@ the server do. Both apply to each backend instance separately.
 
 Each value must be a positive integer, and a malformed one fails the backend at
 startup. If you put `/hooks/*` behind a proxy, you can enforce the same body
-limit there too, so oversized requests never reach Platypus.
+limit there too, so oversized requests never reach Platypus. Per-client rate
+limiting is also the proxy's job; the backend has none.
+
+#### The inbound call log
+
+Every call to an Inbound Trigger writes exactly one log line at `info`, whatever
+became of it, with the message `Inbound trigger call`. It is the audit trail of
+inbound calls: ship it to your log store and keep it as long as you need. Its
+message, fields and values are a stable format that Platypus keeps unchanged,
+so you can build alerts and reports on them.
+
+Every field is on every line, `null` where it does not apply:
+
+| Field            | Value                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------- |
+| `organizationId` | The Trigger's Organization, when the call named a real Trigger                                    |
+| `workspaceId`    | The Trigger's Workspace, same                                                                     |
+| `triggerId`      | The id the call named, real or not                                                                |
+| `outcome`        | What happened — see below                                                                         |
+| `reason`         | Why a `rejected` call was rejected — see below                                                    |
+| `runId`          | The run the caller was given, which is also the id in **Trigger runs**                            |
+| `deduplicated`   | `true` when the call was given a record's active run instead of a new one                         |
+| `recordKey`      | The value of the Trigger's record key, when the call carried one. No other input value is logged. |
+
+`outcome` is one of `accepted`, `deduplicated`, `suppressed` (the run limit
+dropped it, and a _Suppressed_ run was recorded), `rate_limited` (answered
+`429`) or `rejected`. A rejected call's `reason` is one of:
+
+| `reason`          | The call                                                              | Answered |
+| ----------------- | --------------------------------------------------------------------- | -------- |
+| `unknown_trigger` | named no Trigger                                                      | `404`    |
+| `not_inbound`     | named a Trigger of another type                                       | `404`    |
+| `missing_token`   | carried no `Authorization: Bearer` header                             | `404`    |
+| `bad_token`       | carried a wrong or revoked token                                      | `404`    |
+| `expired_token`   | carried the right token after it expired                              | `404`    |
+| `disabled`        | named a disabled Trigger                                              | `404`    |
+| `gate`            | named a Trigger in a Workspace the Organization has not allowed       | `404`    |
+| `misconfigured`   | named a Trigger whose stored configuration no longer reads            | `404`    |
+| `invalid_inputs`  | sent a body that isn't JSON, or inputs that don't match the Trigger's | `400`    |
+| `body_too_large`  | sent a body past `INBOUND_TRIGGER_MAX_BODY_BYTES`                     | `413`    |
+| `internal_error`  | failed inside the backend                                             | `500`    |
+
+<Callout type="warning">
+  The line is written at `info`. Running the backend at `LOG_LEVEL=warn` or
+  above drops every one of them, and the audit trail with them.
+</Callout>
+
+`outcome` describes the call, not the run: an `accepted` call's run can still
+end _Failed_. Join the two on `runId` to follow a call to its result.
 
 ## Chat
 

@@ -299,7 +299,9 @@ export const validateInboundBody = (
     }
   }
   for (const input of declared) {
-    if (input.required && !(input.name in raw)) {
+    // `Object.hasOwn`, not `in`: an input named `constructor` or `toString`
+    // would otherwise be found on `Object.prototype` and pass unsent.
+    if (input.required && !Object.hasOwn(raw, input.name)) {
       return {
         ok: false,
         message: `Required input '${input.name}' is missing.`,
@@ -314,9 +316,11 @@ export const validateInboundBody = (
 /**
  * The server-wide cap on active inbound runs, held in this process: an
  * inbound run executes in the process that accepted its call, so this is the
- * count that bounds this process's load. A slot is taken before any database
- * work, so concurrent calls cannot all pass a check that none has yet acted
- * on, and handed back when the call does not start a run or its run ends.
+ * count that bounds this process's load. A slot is taken only by a call that
+ * is about to write a `pending` row — a deduplicated or suppressed call starts
+ * no run, so the cap never turns it away — and handed back when the call does
+ * not start a run after all or its run ends. Taking it is synchronous, so
+ * concurrent calls cannot all pass a check that none has yet acted on.
  */
 let activeInboundRuns = 0;
 
@@ -373,12 +377,11 @@ export const acceptInboundCall = async (
   inputs: Record<string, string>,
   settings: InboundTriggerSettings = inboundTriggerSettings(),
 ): Promise<InboundAcceptance> => {
-  if (!tryAcquireRunSlot(settings.maxConcurrentRuns)) {
-    return { outcome: "rate_limited" };
-  }
-
   const { trigger } = target;
   const entityId = inboundEntityId(trigger, config, inputs);
+  // Whether this call holds a run slot, so every path that does not end in a
+  // started run gives it back exactly once.
+  let holdsSlot = false;
   let decision: InboundAcceptance;
   try {
     decision = await db.transaction(async (tx) => {
@@ -404,6 +407,14 @@ export const acceptInboundCall = async (
       }
 
       const suppress = await shouldSuppressTriggerRun(trigger.id, entityId, tx);
+      if (!suppress) {
+        // The cap bounds runs, so it is asked only by a call that would start
+        // one. Past it, nothing is written: the transaction ends empty.
+        if (!tryAcquireRunSlot(settings.maxConcurrentRuns)) {
+          return { outcome: "rate_limited" as const };
+        }
+        holdsSlot = true;
+      }
       const runId = nanoid();
       const now = new Date();
       await tx.insert(triggerRunTable).values({
@@ -421,13 +432,10 @@ export const acceptInboundCall = async (
         : { outcome: "accepted" as const, runId };
     });
   } catch (error) {
-    releaseRunSlot();
+    if (holdsSlot) releaseRunSlot();
     throw error;
   }
 
-  if (decision.outcome !== "accepted") {
-    releaseRunSlot();
-  }
   if (decision.outcome === "suppressed") {
     // A suppressed row is bounded by its own budget; applied here as
     // `suppressTriggerRun` applies it for an Event Trigger.

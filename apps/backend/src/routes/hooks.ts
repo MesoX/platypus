@@ -1,6 +1,7 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Variables } from "../server.ts";
+import { logger } from "../logger.ts";
 import {
   acceptInboundCall,
   authenticateInboundCall,
@@ -38,23 +39,6 @@ const NOT_FOUND_BODY = { error: "Not Found" } as const;
 
 const notFound = (c: Context) => c.json(NOT_FOUND_BODY, 404);
 
-/**
- * Rejections that name a real Inbound Trigger. They stamp its "last
- * rejected", which is how an Owner or Org Admin sees that something is
- * calling with a bad or expired token without searching the logs. An unknown
- * id, or a Trigger of another type, names no Inbound Trigger to stamp.
- */
-const REAL_TRIGGER_REJECTIONS = new Set<InboundRejectReason>([
-  "missing_token",
-  "bad_token",
-  "expired_token",
-  "disabled",
-  "gate",
-  "misconfigured",
-  "invalid_inputs",
-  "body_too_large",
-]);
-
 const logContext = (target: InboundTarget | null) =>
   target
     ? {
@@ -63,41 +47,81 @@ const logContext = (target: InboundTarget | null) =>
       }
     : {};
 
-/** Logs a rejection, and stamps "last rejected" when it names a real one. */
-const recordRejection = async (
+/**
+ * Logs a rejection, and stamps "last rejected" when it names a real Inbound
+ * Trigger — how an Owner or Org Admin sees that something is calling with a
+ * bad or expired token without searching the logs. An unknown id, or a
+ * Trigger of another type, names no Inbound Trigger to stamp.
+ *
+ * The stamp is not awaited: a rejection aimed at a real Trigger must take as
+ * long as one aimed at an unknown id, or the response time would tell a
+ * caller without the token which ids exist. It never throws.
+ */
+const recordRejection = (
   triggerId: string,
   reason: InboundRejectReason,
   target: InboundTarget | null,
-) => {
+): void => {
   logInboundCall({
     triggerId,
     ...logContext(target),
     outcome: "rejected",
     reason,
   });
-  if (
-    target?.trigger.type === "inbound" &&
-    REAL_TRIGGER_REJECTIONS.has(reason)
-  ) {
-    await touchInboundTrigger(triggerId, "lastRejectedAt");
+  if (target?.trigger.type === "inbound") {
+    void touchInboundTrigger(triggerId, "lastRejectedAt");
+  }
+};
+
+/**
+ * The target a `413` names, for its log line. Best-effort: the line is owed
+ * whether or not the lookup works, so a failed one logs without the ids.
+ */
+const loadTargetForLog = async (
+  triggerId: string,
+): Promise<InboundTarget | null> => {
+  if (!triggerId) return null;
+  try {
+    return await loadInboundTarget(triggerId);
+  } catch (error) {
+    logger.error(
+      {
+        triggerId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to look up the inbound trigger an oversized call named",
+    );
+    return null;
   }
 };
 
 /**
  * The body cap is checked first — before the token — and is the only size
- * limit: it bounds what reaches the Agent's context and run history. Read per
- * request, so the middleware takes the value the boot validation reported.
+ * limit: it bounds what reaches the Agent's context and run history. The
+ * middleware is built once per cap value, not per request; the value is the
+ * one the boot validation reported.
  */
-const capBody: MiddlewareHandler = (c, next) =>
-  bodyLimit({
-    maxSize: inboundTriggerSettings().maxBodyBytes,
-    onError: async (limited) => {
-      const triggerId = limited.req.param("triggerId") ?? "";
-      const target = triggerId ? await loadInboundTarget(triggerId) : null;
-      await recordRejection(triggerId, "body_too_large", target);
-      return limited.json({ error: "Payload Too Large" }, 413);
-    },
-  })(c, next);
+let capBodyFor: { maxSize: number; middleware: MiddlewareHandler } | null =
+  null;
+
+const capBody: MiddlewareHandler = (c, next) => {
+  const { maxBodyBytes } = inboundTriggerSettings();
+  if (capBodyFor?.maxSize !== maxBodyBytes) {
+    capBodyFor = {
+      maxSize: maxBodyBytes,
+      middleware: bodyLimit({
+        maxSize: maxBodyBytes,
+        onError: async (limited) => {
+          const triggerId = limited.req.param("triggerId") ?? "";
+          const target = await loadTargetForLog(triggerId);
+          recordRejection(triggerId, "body_too_large", target);
+          return limited.json({ error: "Payload Too Large" }, 413);
+        },
+      }),
+    };
+  }
+  return capBodyFor.middleware(c, next);
+};
 
 hooks.post("/triggers/:triggerId", capBody, async (c) => {
   // Always present: the path names it. `capBody` widens the context type.
@@ -125,7 +149,7 @@ const fire = async (c: Context, triggerId: string) => {
     c.req.header("Authorization"),
   );
   if (!auth.ok) {
-    await recordRejection(triggerId, auth.reason, auth.target);
+    recordRejection(triggerId, auth.reason, auth.target);
     return notFound(c);
   }
   const { target, config } = auth;
@@ -134,12 +158,12 @@ const fire = async (c: Context, triggerId: string) => {
   try {
     body = raw.trim() === "" ? undefined : JSON.parse(raw);
   } catch {
-    await recordRejection(triggerId, "invalid_inputs", target);
+    recordRejection(triggerId, "invalid_inputs", target);
     return c.json({ error: "The request body is not valid JSON." }, 400);
   }
   const validated = validateInboundBody(body, config.inputs);
   if (!validated.ok) {
-    await recordRejection(triggerId, "invalid_inputs", target);
+    recordRejection(triggerId, "invalid_inputs", target);
     return c.json({ error: validated.message }, 400);
   }
 
@@ -170,9 +194,11 @@ const fire = async (c: Context, triggerId: string) => {
     deduplicated,
     recordKey,
   });
-  // A suppressed call used a valid token as much as an accepted one did, so
-  // it counts as use: "last used" is how a leaked token in use shows up.
-  await touchInboundTrigger(triggerId, "lastUsedAt");
+  // "Last used" is an accepted or deduplicated call (ADR-0030's brief); a
+  // suppressed one is in the call log with its outcome.
+  if (acceptance.outcome !== "suppressed") {
+    await touchInboundTrigger(triggerId, "lastUsedAt");
+  }
   return c.json({ runId: acceptance.runId, deduplicated }, 202);
 };
 
