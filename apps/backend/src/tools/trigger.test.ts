@@ -131,12 +131,16 @@ describe("createTriggerTools", () => {
   });
 
   describe("getTrigger", () => {
-    it("returns the trigger in full", async () => {
+    it("returns the trigger in full, but never its token", async () => {
       const trigger = { id: "t1", instruction: "Do something" };
-      vi.mocked(getTrigger).mockResolvedValueOnce(trigger as never);
+      vi.mocked(getTrigger).mockResolvedValueOnce({
+        ...trigger,
+        tokenHash: "secret-hash",
+        tokenNotice: "expiring_30",
+      } as never);
 
       expect(await callTool(tools.getTrigger, { triggerId: "t1" })).toEqual({
-        trigger,
+        trigger: { ...trigger, hasToken: true },
       });
       expect(getTrigger).toHaveBeenCalledWith(ctx, "t1");
     });
@@ -170,7 +174,7 @@ describe("createTriggerTools", () => {
         }),
       ).toEqual({
         success: true,
-        trigger: { id: "t9" },
+        trigger: { id: "t9", hasToken: false },
         url: "http://localhost:3000/org-1/workspace/ws-1/triggers/t9",
       });
       expect(createTrigger).toHaveBeenCalledWith(ctx, {
@@ -215,7 +219,7 @@ describe("createTriggerTools", () => {
         }),
       ).toEqual({
         success: true,
-        trigger: { id: "t1" },
+        trigger: { id: "t1", hasToken: false },
         url: "http://localhost:3000/org-1/workspace/ws-1/triggers/t1",
       });
       expect(updateTrigger).toHaveBeenCalledWith(

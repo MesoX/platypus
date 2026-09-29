@@ -79,6 +79,28 @@ describe("Trigger Routes", () => {
       expect(body.results).toHaveLength(2);
     });
 
+    it("never returns an Inbound Trigger's token hash", async () => {
+      stubAuthLookups();
+      mockDb.orderBy.mockResolvedValueOnce([
+        {
+          ...cronTrigger,
+          type: "inbound",
+          config: { inputs: [], tokenExpiryDays: 90 },
+          tokenHash: "secret-hash",
+          tokenNotice: "expiring_30",
+        },
+      ]);
+
+      const res = await app.request(baseUrl);
+      const text = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(text).not.toContain("secret-hash");
+      expect(text).not.toContain("tokenNotice");
+      const body = JSON.parse(text) as { results: { hasToken: boolean }[] };
+      expect(body.results[0].hasToken).toBe(true);
+    });
+
     it("requires authentication", async () => {
       mockNoSession();
       const res = await app.request(baseUrl);

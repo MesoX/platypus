@@ -13,6 +13,14 @@ export const CONTEXT_MAX_LENGTH = 1000;
 
 // Organization
 
+/**
+ * Which Workspaces an Organization lets take Inbound Trigger calls
+ * (ADR-0030): none, every one, or those with `inboundTriggersAllowed` set.
+ */
+export const inboundTriggerGateSchema = z.enum(["off", "all", "selected"]);
+
+export type InboundTriggerGate = z.infer<typeof inboundTriggerGateSchema>;
+
 export const organizationSchema = z.object({
   id: z.string(),
   name: z.string().min(3).max(30),
@@ -25,6 +33,10 @@ export const organizationSchema = z.object({
     .max(ORGANIZATION_IDENTITY_CONTEXT_MAX_LENGTH)
     .nullable()
     .optional(),
+  // Which Workspaces may take calls on an Inbound Trigger (ADR-0030). `off`
+  // by default; `selected` defers to each Workspace's
+  // `inboundTriggersAllowed`. Settable only by an Org Admin.
+  inboundTriggerGate: inboundTriggerGateSchema.optional(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -33,10 +45,13 @@ export type Organization = z.infer<typeof organizationSchema>;
 
 export const organizationCreateSchema = organizationSchema.pick({ name: true });
 
-export const organizationUpdateSchema = organizationSchema.pick({
-  name: true,
-  identityContext: true,
-});
+export const organizationUpdateSchema = organizationSchema
+  .pick({
+    name: true,
+    identityContext: true,
+    inboundTriggerGate: true,
+  })
+  .partial({ inboundTriggerGate: true });
 
 // Workspace
 
@@ -73,6 +88,10 @@ export const workspaceSchema = z.object({
   // respective resource.
   providerSelfManagement: z.boolean().optional(),
   mcpSelfManagement: z.boolean().optional(),
+  // Whether this Workspace's Inbound Triggers are reachable while the
+  // Organization gate is `selected` (ADR-0030). Settable only by an org admin;
+  // ignored under `off` and `all`.
+  inboundTriggersAllowed: z.boolean().optional(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -88,6 +107,7 @@ export const workspaceUpdateSchema = workspaceSchema.pick({
   maxDailySummaries: true,
   providerSelfManagement: true,
   mcpSelfManagement: true,
+  inboundTriggersAllowed: true,
 });
 
 // Chat
@@ -2079,7 +2099,7 @@ export type WebhookEvent = z.infer<typeof webhookEventSchema>;
 
 // Trigger
 
-export const triggerTypeSchema = z.enum(["cron", "event"]);
+export const triggerTypeSchema = z.enum(["cron", "event", "inbound"]);
 
 export type TriggerType = z.infer<typeof triggerTypeSchema>;
 
@@ -2103,6 +2123,87 @@ export const eventTriggerConfigSchema = z.object({
 });
 
 export type EventTriggerConfig = z.infer<typeof eventTriggerConfigSchema>;
+
+// Inbound Trigger (ADR-0030): fired by an authenticated call to
+// `POST /hooks/triggers/:triggerId` rather than a schedule or a Webhook event.
+
+export const INBOUND_TRIGGER_MAX_INPUTS = 10;
+export const INBOUND_TRIGGER_INPUT_NAME_MAX_LENGTH = 64;
+export const INBOUND_TRIGGER_INPUT_DESCRIPTION_MAX_LENGTH = 500;
+
+/** The token lifetimes an Owner picks from, in days. */
+export const INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS = [30, 90, 180, 365] as const;
+export const DEFAULT_INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS = 90;
+
+/**
+ * An input's name is an identifier, so the Instruction can refer to it by name
+ * and the caller's JSON key is unambiguous.
+ */
+const inboundTriggerInputNameRegex = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export const inboundTriggerInputSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(INBOUND_TRIGGER_INPUT_NAME_MAX_LENGTH)
+    .regex(
+      inboundTriggerInputNameRegex,
+      "Input names start with a letter or underscore and contain only letters, digits and underscores",
+    ),
+  required: z.boolean().default(false),
+  description: z
+    .string()
+    .max(INBOUND_TRIGGER_INPUT_DESCRIPTION_MAX_LENGTH)
+    .optional(),
+});
+
+export type InboundTriggerInput = z.infer<typeof inboundTriggerInputSchema>;
+
+export const inboundTriggerConfigSchema = z
+  .object({
+    inputs: z
+      .array(inboundTriggerInputSchema)
+      .max(INBOUND_TRIGGER_MAX_INPUTS)
+      .default([]),
+    /**
+     * The one required input that identifies the record a call is about (an
+     * issue key). The run-rate breaker counts per value of it, and a call for a
+     * record that already has an active run returns that run instead.
+     */
+    recordKey: z.string().optional(),
+    /**
+     * The lifetime the next token is issued with. Changing it does not move the
+     * current token's expiry; regenerating does.
+     */
+    tokenExpiryDays: z
+      .literal(INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS)
+      .default(DEFAULT_INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS),
+  })
+  .superRefine((config, ctx) => {
+    const seen = new Set<string>();
+    config.inputs.forEach((input, index) => {
+      if (seen.has(input.name)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["inputs", index, "name"],
+          message: `Input '${input.name}' is declared more than once`,
+        });
+      }
+      seen.add(input.name);
+    });
+    if (config.recordKey !== undefined) {
+      const keyInput = config.inputs.find((i) => i.name === config.recordKey);
+      if (!keyInput?.required) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["recordKey"],
+          message: "The record key must name a required input",
+        });
+      }
+    }
+  });
+
+export type InboundTriggerConfig = z.infer<typeof inboundTriggerConfigSchema>;
 
 // The bounds the Trigger form's `maxLength` / `min` / `max` attributes read.
 export const TRIGGER_NAME_MIN_LENGTH = 1;
@@ -2136,9 +2237,22 @@ export const triggerSchema = z.object({
   // headless run should not have a system prompt that drifts with the
   // Workspace User's unrelated interactive-chat activity.
   includeMemories: z.boolean().default(false),
-  config: z.union([cronTriggerConfigSchema, eventTriggerConfigSchema]),
+  // Inbound last: its every field has a default, so it would also accept a
+  // cron or event config that a union tried against it first.
+  config: z.union([
+    cronTriggerConfigSchema,
+    eventTriggerConfigSchema,
+    inboundTriggerConfigSchema,
+  ]),
   lastRunAt: z.date().nullable().optional(),
   nextRunAt: z.date().nullable().optional(),
+  // Inbound Triggers only. The token itself is never returned after it is
+  // issued; these describe it.
+  hasToken: z.boolean().optional(),
+  tokenCreatedAt: z.date().nullable().optional(),
+  tokenExpiresAt: z.date().nullable().optional(),
+  lastUsedAt: z.date().nullable().optional(),
+  lastRejectedAt: z.date().nullable().optional(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });

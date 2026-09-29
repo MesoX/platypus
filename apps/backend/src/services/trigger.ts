@@ -3,9 +3,11 @@ import { desc } from "drizzle-orm";
 import {
   cronTriggerConfigSchema,
   eventTriggerConfigSchema,
+  inboundTriggerConfigSchema,
   triggerTypeSchema,
   type CronTriggerConfig,
   type EventTriggerConfig,
+  type InboundTriggerConfig,
   type TriggerType,
 } from "@platypus/schemas";
 import { db } from "../index.ts";
@@ -13,6 +15,10 @@ import { trigger as triggerTable } from "../db/schema.ts";
 import type { ScopeContext } from "../scope.ts";
 import { NotFoundError, ValidationError } from "../errors.ts";
 import { validateCronExpression } from "../utils/cron.ts";
+import {
+  generateInboundToken,
+  issuedTokenFields,
+} from "./inbound-trigger-token.ts";
 import { resolveScoped } from "./scoped-resource.ts";
 import {
   deleteOwned,
@@ -65,8 +71,17 @@ type TriggerBaseFields = {
   maxRunsToKeep?: number;
   search?: boolean;
   includeMemories?: boolean;
-  config: CronTriggerConfig | EventTriggerConfig;
+  config: CronTriggerConfig | EventTriggerConfig | InboundTriggerConfig;
 };
+
+/**
+ * Who is writing. Only the Workspace Owner, through the UI, may create or edit
+ * an Inbound Trigger (ADR-0030): the Agent's Trigger tools must never mint a
+ * live credential into a model's context or a Chat transcript. Defaults to the
+ * narrower surface, so a new caller has to opt in to reaching Inbound
+ * Triggers.
+ */
+export type TriggerWriteOptions = { allowInbound?: boolean };
 
 /**
  * The fields a create carries. `enabled`, `maxRunsToKeep`, `search` and
@@ -99,7 +114,8 @@ export type TriggerUpdateFields = Partial<TriggerBaseFields>;
  */
 export type TypedTriggerConfig =
   | { type: "cron"; config: CronTriggerConfig }
-  | { type: "event"; config: EventTriggerConfig };
+  | { type: "event"; config: EventTriggerConfig }
+  | { type: "inbound"; config: InboundTriggerConfig };
 
 /**
  * Narrows a stored row's `type` + `config` into {@link TypedTriggerConfig},
@@ -116,6 +132,9 @@ export const narrowTriggerConfig = (
   } else if (row.type === "event") {
     const parsed = eventTriggerConfigSchema.safeParse(row.config);
     if (parsed.success) return { type: "event", config: parsed.data };
+  } else if (row.type === "inbound") {
+    const parsed = inboundTriggerConfigSchema.safeParse(row.config);
+    if (parsed.success) return { type: "inbound", config: parsed.data };
   }
   throw new Error(
     `Trigger '${row.id}' has a malformed '${row.type}' type/config pair`,
@@ -171,6 +190,38 @@ const parseEventConfig = (config: unknown): EventTriggerConfig => {
   return parsed.data;
 };
 
+/**
+ * Validates an inbound config — at most ten uniquely named string inputs, and
+ * a record key, if any, naming a required one — and returns it normalized, or
+ * throws with the first problem, since a form has one field to point at.
+ */
+const parseInboundConfig = (config: unknown): InboundTriggerConfig => {
+  const parsed = inboundTriggerConfigSchema.safeParse(config);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new ValidationError(
+      `Invalid inbound trigger config: ${issue?.message ?? "malformed"}`,
+    );
+  }
+  return parsed.data;
+};
+
+const INBOUND_ONLY_IN_UI =
+  "Inbound triggers can only be created and edited by the Workspace Owner in the Triggers page.";
+
+/**
+ * A Trigger row as either surface returns it: without the token's hash or the
+ * notice bookkeeping, and with whether a token is currently issued. The one
+ * projection both surfaces use, so a hash cannot reach a response or a Tool
+ * result by a caller forgetting to strip it.
+ */
+export const toPublicTrigger = (row: TriggerRow) => {
+  const { tokenHash, tokenNotice: _tokenNotice, ...rest } = row;
+  return { ...rest, hasToken: tokenHash != null };
+};
+
+export type PublicTrigger = ReturnType<typeof toPublicTrigger>;
+
 /** Throws `ValidationError` unless the Agent is usable in this Workspace. */
 const requireUsableAgent = async (
   ctx: ScopeContext,
@@ -192,20 +243,32 @@ const requireUsableAgent = async (
 export async function createTrigger(
   ctx: ScopeContext,
   fields: TriggerCreateFields,
-): Promise<TriggerRow> {
+  { allowInbound = false }: TriggerWriteOptions = {},
+): Promise<TriggerRow & { issuedToken?: string }> {
+  if (fields.type === "inbound" && !allowInbound) {
+    throw new ValidationError(INBOUND_ONLY_IN_UI);
+  }
   await requireUsableAgent(ctx, fields.agentId);
 
   let nextRunAt: Date | null = null;
-  let config: CronTriggerConfig | EventTriggerConfig;
+  let config: CronTriggerConfig | EventTriggerConfig | InboundTriggerConfig;
+  let tokenFields: ReturnType<typeof issuedTokenFields> | undefined;
+  let token: string | undefined;
   if (fields.type === "cron") {
     const parsed = parseCronConfig(fields.config);
     config = parsed.config;
     nextRunAt = parsed.nextRunAt;
   } else if (fields.type === "event") {
     config = parseEventConfig(fields.config);
+  } else if (fields.type === "inbound") {
+    const inbound = parseInboundConfig(fields.config);
+    config = inbound;
+    const generated = generateInboundToken();
+    token = generated.token;
+    tokenFields = issuedTokenFields(generated.hash, inbound.tokenExpiryDays);
   } else {
     throw new ValidationError(
-      "Invalid trigger type. Must be 'cron' or 'event'.",
+      "Invalid trigger type. Must be 'cron', 'event' or 'inbound'.",
     );
   }
 
@@ -226,9 +289,12 @@ export async function createTrigger(
         fields.includeMemories ?? CREATE_DEFAULTS.includeMemories,
       config,
       nextRunAt,
+      ...tokenFields,
     })
     .returning();
-  return row;
+  // The token leaves here once, beside the row, and is never readable again:
+  // only its hash was stored.
+  return token ? { ...row, issuedToken: token } : row;
 }
 
 /**
@@ -243,11 +309,30 @@ export async function updateTrigger(
   ctx: ScopeContext,
   triggerId: string,
   fields: TriggerUpdateFields,
+  { allowInbound = false }: TriggerWriteOptions = {},
 ): Promise<TriggerRow> {
   const existing = await requireOwned(db, "trigger", {
     id: triggerId,
     workspaceId: ctx.workspaceId,
   });
+  if (
+    !allowInbound &&
+    (existing.type === "inbound" || fields.type === "inbound")
+  ) {
+    throw new ValidationError(INBOUND_ONLY_IN_UI);
+  }
+  // A type change into or out of `inbound` would mint or orphan a credential
+  // as a side effect of an edit, so neither surface offers it: an Inbound
+  // Trigger is created as one, and its token is shown on creation.
+  if (
+    fields.type !== undefined &&
+    fields.type !== existing.type &&
+    (fields.type === "inbound" || existing.type === "inbound")
+  ) {
+    throw new ValidationError(
+      "A trigger's type cannot be changed to or from 'inbound'. Create a new trigger instead.",
+    );
+  }
   if (fields.agentId !== undefined) {
     await requireUsableAgent(ctx, fields.agentId);
   }
@@ -290,6 +375,13 @@ export async function updateTrigger(
       }
     }
     updateData.nextRunAt = null;
+  } else if (effectiveType === "inbound") {
+    // A new config does not re-issue the token: a changed `tokenExpiryDays`
+    // applies from the next regenerate, so an edit never moves a live expiry.
+    if (fields.config !== undefined) {
+      updateData.config = parseInboundConfig(fields.config);
+    }
+    updateData.nextRunAt = null;
   } else if (effectiveType === "cron") {
     if (fields.config !== undefined || fields.type !== undefined) {
       const effectiveConfigInput = fields.config ?? existing.config;
@@ -312,7 +404,7 @@ export async function updateTrigger(
     }
   } else {
     throw new ValidationError(
-      "Invalid trigger type. Must be 'cron' or 'event'.",
+      "Invalid trigger type. Must be 'cron', 'event' or 'inbound'.",
     );
   }
 
@@ -358,3 +450,35 @@ export const deleteTrigger = (
   triggerId: string,
 ): Promise<boolean> =>
   deleteOwned(db, "trigger", { id: triggerId, workspaceId: ctx.workspaceId });
+
+/**
+ * Issues a new token for an Inbound Trigger in this Workspace, invalidating
+ * the old one at once, with the lifetime its config names from now. Returns
+ * the token — the only time it is readable. Throws `NotFoundError` when the
+ * Trigger is not here, `ValidationError` when it is not inbound.
+ */
+export async function regenerateTriggerToken(
+  ctx: ScopeContext,
+  triggerId: string,
+): Promise<{ token: string; tokenExpiresAt: Date }> {
+  const existing = await requireOwned(db, "trigger", {
+    id: triggerId,
+    workspaceId: ctx.workspaceId,
+  });
+  const typed = narrowTriggerConfig(existing);
+  if (typed.type !== "inbound") {
+    throw new ValidationError("Only inbound triggers have a token.");
+  }
+  const { token, hash } = generateInboundToken();
+  const fields = issuedTokenFields(hash, typed.config.tokenExpiryDays);
+  const row = await updateOwned(
+    db,
+    "trigger",
+    { id: triggerId, workspaceId: ctx.workspaceId },
+    { ...fields, updatedAt: new Date() },
+  );
+  if (!row) {
+    throw new NotFoundError("Trigger not found");
+  }
+  return { token, tokenExpiresAt: fields.tokenExpiresAt };
+}

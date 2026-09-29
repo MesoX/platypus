@@ -16,10 +16,14 @@ import {
   deleteTrigger,
   getTrigger,
   listTriggers,
+  regenerateTriggerToken,
+  toPublicTrigger,
   updateTrigger,
   type TriggerCreateFields,
+  type TriggerRow,
   type TriggerUpdateFields,
 } from "./trigger.ts";
+import { hashInboundToken } from "./inbound-trigger-token.ts";
 import { NotFoundError, ValidationError } from "../errors.ts";
 
 const ctx = { orgId: "org-1", workspaceId: "ws-1" };
@@ -42,6 +46,17 @@ const eventFields = (): TriggerCreateFields => ({
   type: "event",
   name: "On Card",
   config: { events: ["card.created"] },
+});
+
+const inboundFields = (): TriggerCreateFields => ({
+  ...cronFields(),
+  type: "inbound",
+  name: "Ready for AI",
+  config: {
+    inputs: [{ name: "issueKey", required: true, description: "Issue key" }],
+    recordKey: "issueKey",
+    tokenExpiryDays: 30,
+  },
 });
 
 /** A stored Trigger row in `ws-1`, pointing at `agent-1`. */
@@ -309,7 +324,9 @@ describe("trigger module", () => {
       await expect(
         updateTrigger(ctx, "trig-1", { name: "Renamed" }),
       ).rejects.toThrow(
-        new ValidationError("Invalid trigger type. Must be 'cron' or 'event'."),
+        new ValidationError(
+          "Invalid trigger type. Must be 'cron', 'event' or 'inbound'.",
+        ),
       );
       expect(fake.tables.trigger[0].name).toBe("Legacy");
     });
@@ -588,6 +605,175 @@ describe("trigger module", () => {
 
       expect(await deleteTrigger(ctx, "trig-1")).toBe(false);
       expect(fake.tables.trigger).toHaveLength(1);
+    });
+  });
+
+  describe("inbound triggers", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    it("is refused unless the caller is the Owner's surface", async () => {
+      const fake = world();
+
+      await expect(createTrigger(ctx, inboundFields())).rejects.toThrow(
+        ValidationError,
+      );
+      expect(fake.tables.trigger ?? []).toEqual([]);
+    });
+
+    it("issues a token once and stores only its hash, with the chosen lifetime", async () => {
+      const fake = world();
+
+      const row = await createTrigger(ctx, inboundFields(), {
+        allowInbound: true,
+      });
+
+      expect(row.issuedToken).toMatch(/^pit_[A-Za-z0-9_-]{43}$/);
+      const [stored] = fake.tables.trigger;
+      expect(stored.tokenHash).toBe(hashInboundToken(row.issuedToken!));
+      expect(JSON.stringify(stored)).not.toContain(row.issuedToken!);
+      const lifetime =
+        (stored.tokenExpiresAt as Date).getTime() -
+        (stored.tokenCreatedAt as Date).getTime();
+      expect(lifetime).toBe(30 * DAY);
+      expect(stored.nextRunAt).toBeNull();
+    });
+
+    it.each([
+      [
+        "a record key naming an optional input",
+        {
+          inputs: [{ name: "issueKey", required: false }],
+          recordKey: "issueKey",
+        },
+      ],
+      ["a record key naming no input", { inputs: [], recordKey: "issueKey" }],
+      ["a duplicated input name", { inputs: [{ name: "a" }, { name: "a" }] }],
+      [
+        "an input name that is not an identifier",
+        { inputs: [{ name: "issue-key" }] },
+      ],
+      ["a lifetime that is not a preset", { tokenExpiryDays: 45 }],
+    ])("refuses %s", async (_label, config) => {
+      const fake = world();
+
+      await expect(
+        createTrigger(
+          ctx,
+          { ...inboundFields(), config: config as never },
+          { allowInbound: true },
+        ),
+      ).rejects.toThrow(ValidationError);
+      expect(fake.tables.trigger ?? []).toEqual([]);
+    });
+
+    it("refuses an Agent-surface edit of an Inbound Trigger", async () => {
+      world({ trigger: [triggerRow({ type: "inbound", config: {} })] });
+
+      await expect(
+        updateTrigger(ctx, "trig-1", { name: "Renamed" }),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it.each([
+      ["into inbound", "cron", "inbound"],
+      ["out of inbound", "inbound", "cron"],
+    ] as const)(
+      "refuses a type change %s on any surface",
+      async (_l, from, to) => {
+        world({ trigger: [triggerRow({ type: from, config: {} })] });
+
+        await expect(
+          updateTrigger(ctx, "trig-1", { type: to }, { allowInbound: true }),
+        ).rejects.toThrow(/cannot be changed to or from 'inbound'/);
+      },
+    );
+
+    it("keeps the live token's expiry when the Owner changes the lifetime", async () => {
+      const expires = new Date("2026-12-01T00:00:00Z");
+      const fake = world({
+        trigger: [
+          triggerRow({
+            type: "inbound",
+            config: { inputs: [], tokenExpiryDays: 90 },
+            tokenHash: "h",
+            tokenExpiresAt: expires,
+          }),
+        ],
+      });
+
+      await updateTrigger(
+        ctx,
+        "trig-1",
+        { config: { inputs: [], tokenExpiryDays: 365 } },
+        { allowInbound: true },
+      );
+
+      expect(fake.tables.trigger[0]).toMatchObject({
+        tokenHash: "h",
+        tokenExpiresAt: expires,
+        config: { inputs: [], tokenExpiryDays: 365 },
+      });
+    });
+
+    it("regenerates: a new token, the old hash gone, the notice record cleared", async () => {
+      const fake = world({
+        trigger: [
+          triggerRow({
+            type: "inbound",
+            config: { inputs: [], tokenExpiryDays: 180 },
+            tokenHash: "old-hash",
+            tokenNotice: "expiring_7",
+          }),
+        ],
+      });
+
+      const { token, tokenExpiresAt } = await regenerateTriggerToken(
+        ctx,
+        "trig-1",
+      );
+
+      const [stored] = fake.tables.trigger;
+      expect(stored.tokenHash).toBe(hashInboundToken(token));
+      expect(stored.tokenNotice).toBeNull();
+      expect(stored.tokenExpiresAt).toEqual(tokenExpiresAt);
+      expect(
+        tokenExpiresAt.getTime() - (stored.tokenCreatedAt as Date).getTime(),
+      ).toBe(180 * DAY);
+    });
+
+    it("regenerates only an inbound trigger in this workspace", async () => {
+      world({
+        trigger: [
+          triggerRow(),
+          triggerRow({
+            id: "trig-2",
+            workspaceId: "ws-2",
+            type: "inbound",
+            config: {},
+          }),
+        ],
+      });
+
+      await expect(regenerateTriggerToken(ctx, "trig-1")).rejects.toThrow(
+        ValidationError,
+      );
+      await expect(regenerateTriggerToken(ctx, "trig-2")).rejects.toThrow(
+        NotFoundError,
+      );
+    });
+
+    it("never exposes the hash through the public projection", () => {
+      const row = {
+        ...triggerRow(),
+        tokenHash: "secret",
+        tokenNotice: "expired",
+      } as unknown as TriggerRow;
+
+      const exposed = toPublicTrigger(row);
+
+      expect(exposed).not.toHaveProperty("tokenHash");
+      expect(exposed).not.toHaveProperty("tokenNotice");
+      expect(exposed.hasToken).toBe(true);
     });
   });
 });

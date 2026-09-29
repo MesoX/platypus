@@ -52,6 +52,7 @@ import {
   type Agent,
   type CronTriggerConfig,
   type EventTriggerConfig,
+  type TriggerType,
   type KanbanBoard,
   type KanbanBoardState,
 } from "@platypus/schemas";
@@ -388,7 +389,7 @@ const TriggerForm = ({
   }>("boards", scope);
   const boards = boardsData?.results || [];
 
-  const [triggerType, setTriggerType] = useState<"cron" | "event">("cron");
+  const [triggerType, setTriggerType] = useState<TriggerType>("cron");
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [filterBoardId, setFilterBoardId] = useState<string>("");
   const [filterColumnId, setFilterColumnId] = useState<string>("");
@@ -485,7 +486,7 @@ const TriggerForm = ({
         } else {
           setScheduleMode("advanced");
         }
-      } else {
+      } else if (trigger.type === "event") {
         const eventConfig = trigger.config as EventTriggerConfig;
         setSelectedEvents(eventConfig.events);
         setFilterBoardId(eventConfig.filters?.boardId || "");

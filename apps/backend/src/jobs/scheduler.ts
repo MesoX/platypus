@@ -7,6 +7,7 @@ import {
   triggerRunEvent as triggerRunEventTable,
 } from "../db/schema.ts";
 import { fireTrigger } from "../services/trigger-firing.ts";
+import { sendInboundTokenReminders } from "../services/inbound-trigger.ts";
 import { narrowTriggerConfig, nextCronRunAt } from "../services/trigger.ts";
 import { logger } from "../logger.ts";
 import { chatPerRunTimeoutMs } from "../runs/chat-timeouts.ts";
@@ -256,8 +257,11 @@ export function stuckTriggerCutoff(): Date {
 export async function recoverStuckTriggers(): Promise<void> {
   const cutoff = stuckTriggerCutoff();
 
-  // Mark abandoned running runs as failed. The age cutoff guarantees no
-  // live peer is still working on them.
+  // Mark abandoned runs as failed. The age cutoff guarantees no live peer is
+  // still working on them. `pending` is included for Inbound Trigger runs
+  // (ADR-0030): the row is written before the run starts, so a crash between
+  // the two leaves it pending — and a pending row holds its record's dedup
+  // slot, so it must not stay that way.
   const orphaned = await db
     .update(triggerRunTable)
     .set({
@@ -267,7 +271,7 @@ export async function recoverStuckTriggers(): Promise<void> {
     })
     .where(
       and(
-        eq(triggerRunTable.status, "running"),
+        inArray(triggerRunTable.status, ["running", "pending"]),
         lt(triggerRunTable.startedAt, cutoff),
       ),
     )
@@ -450,6 +454,11 @@ export function startScheduler(): void {
         await recoverStuckChats();
       } catch (error) {
         logger.error({ error }, "Chat recovery sweep failed");
+      }
+      try {
+        await sendInboundTokenReminders();
+      } catch (error) {
+        logger.error({ error }, "Inbound trigger token reminders failed");
       }
       await processDueTriggers();
     });

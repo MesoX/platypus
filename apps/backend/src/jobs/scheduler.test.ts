@@ -243,7 +243,7 @@ describe("recoverStuckTriggers", () => {
     vi.useRealTimers();
   });
 
-  it("fails only `running` rows started before the Trigger per-run timeout plus the buffer", async () => {
+  it("fails only `running` and `pending` rows started before the Trigger per-run timeout plus the buffer", async () => {
     process.env.TRIGGER_PER_RUN_TIMEOUT_MS = String(90 * 60 * 1000);
     const { updates } = captureUpdates([]);
 
@@ -257,10 +257,11 @@ describe("recoverStuckTriggers", () => {
     });
     const { sql: text, params } = render(runs.where);
     expect(text).toBe(
-      `("trigger_run"."status" = $1 and "trigger_run"."started_at" < $2)`,
+      `("trigger_run"."status" in ($1, $2) and "trigger_run"."started_at" < $3)`,
     );
-    // 12:00 − (90 min + 5 min buffer).
-    expect(params).toEqual(["running", "2026-08-30T10:25:00.000Z"]);
+    // 12:00 − (90 min + 5 min buffer). `pending` is an Inbound Trigger run
+    // whose process died between accepting the call and starting it.
+    expect(params).toEqual(["running", "pending", "2026-08-30T10:25:00.000Z"]);
   });
 
   it("closes the orphaned runs' still-open events as errors, with no duration", async () => {

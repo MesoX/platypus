@@ -13,6 +13,8 @@ import {
   deleteTrigger,
   getTrigger,
   listTriggers,
+  regenerateTriggerToken,
+  toPublicTrigger,
   updateTrigger,
 } from "../services/trigger.ts";
 import { NotFoundError } from "../errors.ts";
@@ -29,7 +31,7 @@ trigger.get(
   requireWorkspaceAccess,
   async (c) => {
     const results = await listTriggers(workspaceScopeOf(c));
-    return c.json({ results });
+    return c.json({ results: results.map(toPublicTrigger) });
   },
 );
 
@@ -44,7 +46,7 @@ trigger.get(
       workspaceScopeOf(c),
       c.req.param("triggerId"),
     );
-    return c.json(record);
+    return c.json(toPublicTrigger(record));
   },
 );
 
@@ -60,13 +62,24 @@ trigger.post(
     const data = c.req.valid("json");
     const scope = workspaceScopeOf(c);
 
-    const record = await createTrigger(scope, data);
+    // This route is the Workspace Owner in the UI — the one surface allowed
+    // to create an Inbound Trigger (ADR-0030).
+    const { issuedToken, ...record } = await createTrigger(scope, data, {
+      allowInbound: true,
+    });
 
     logger.info(
       `Created trigger '${record.id}' in workspace '${scope.workspaceId}'${record.nextRunAt ? ` - next run at ${record.nextRunAt.toISOString()}` : ""}`,
     );
 
-    return c.json(record, 201);
+    // An Inbound Trigger's token is in this response and never again.
+    return c.json(
+      {
+        ...toPublicTrigger(record),
+        ...(issuedToken ? { token: issuedToken } : {}),
+      },
+      201,
+    );
   },
 );
 
@@ -82,11 +95,33 @@ trigger.put(
     const triggerId = c.req.param("triggerId");
     const data = c.req.valid("json");
 
-    const record = await updateTrigger(workspaceScopeOf(c), triggerId, data);
+    const record = await updateTrigger(workspaceScopeOf(c), triggerId, data, {
+      allowInbound: true,
+    });
 
     logger.info(`Updated trigger '${triggerId}'`);
 
-    return c.json(record, 200);
+    return c.json(toPublicTrigger(record), 200);
+  },
+);
+
+/**
+ * Issue a new token for an Inbound Trigger. The old one stops working at
+ * once; the new one is in this response and never again.
+ */
+trigger.post(
+  "/:triggerId/token",
+  requireAuth,
+  requireOrgAccess(),
+  requireWorkspaceAccess,
+  requireWorkspaceOwner,
+  async (c) => {
+    const triggerId = c.req.param("triggerId");
+    const issued = await regenerateTriggerToken(workspaceScopeOf(c), triggerId);
+
+    logger.info(`Regenerated the token of trigger '${triggerId}'`);
+
+    return c.json(issued, 200);
   },
 );
 

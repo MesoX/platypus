@@ -15,6 +15,7 @@ import {
   deleteTrigger as deleteTriggerService,
   getTrigger as getTriggerService,
   listTriggers as listTriggersService,
+  toPublicTrigger,
   updateTrigger,
 } from "../services/trigger.ts";
 import { NotFoundError, ValidationError } from "../errors.ts";
@@ -97,7 +98,9 @@ export function createTriggerTools(
     }),
     execute: async ({ triggerId }) => {
       try {
-        return { trigger: await getTriggerService(ctx, triggerId) };
+        return {
+          trigger: toPublicTrigger(await getTriggerService(ctx, triggerId)),
+        };
       } catch (error) {
         if (error instanceof NotFoundError) {
           return {
@@ -241,7 +244,7 @@ export function createTriggerTools(
 
           return {
             success: true,
-            trigger: record,
+            trigger: toPublicTrigger(record),
             ...(url && { url }),
           };
         } catch (error) {
@@ -282,7 +285,7 @@ export function createTriggerTools(
 
         return {
           success: true,
-          trigger: record,
+          trigger: toPublicTrigger(record),
           ...(url && { url }),
         };
       } catch (error) {
