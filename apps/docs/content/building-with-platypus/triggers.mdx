@@ -18,8 +18,7 @@ are three types:
   a CI pipeline, calls it over HTTP with the Trigger's token. See
   [Inbound Triggers](#inbound-triggers).
 
-You'll find Triggers in the **Triggers** section of your Workspace —
-_"Automated agent runs configured for this workspace."_
+You'll find Triggers in the **Triggers** section of your Workspace.
 
 ## Create a Trigger
 
@@ -64,7 +63,15 @@ will fire.
 For an Event trigger, select one or more **Events** (e.g. `card.created`,
 `card.updated`, `card.moved`, `notification.created`). Optionally narrow with
 **Only cards in this Board** and **Only cards in this Column** so the Trigger
-only fires for activity in one place.
+only fires for activity in one place. The filters appear once you select a card
+event, and **Only cards in this Column** once you pick a Board.
+
+<Callout type="warning">
+  The Board and Column filters apply to every event the Trigger selects, and a
+  Notification belongs to no Board. A Trigger with a Board filter never fires on
+  `notification.*` events, and nothing tells you so. Put Notification events on
+  a Trigger of their own.
+</Callout>
 
 `card.moved` fires only when a card's column actually changes, so a column
 filter on it matches the card's **destination** column — use it to run an
@@ -72,7 +79,7 @@ Agent whenever a card enters a specific column, without re-firing on later
 edits to cards already sitting there.
 
 When `card.updated` is among the selected events, an **Only when these fields
-change** control appears — pick one or more card attributes (Title, Body,
+change (card.updated)** control appears — pick one or more card attributes (Title, Body,
 Labels, Assignees, Due date, Priority) and `card.updated` fires only when one
 of them actually changed, not on every write to a matching card. Leave them all
 off to fire on any change. It composes with the Board and Column filters: every
@@ -85,11 +92,13 @@ unaffected — a Trigger on both `card.moved` and `card.updated` still fires on
 every move, whatever fields the control names. To act on a column change, use
 `card.moved`: it is the event for that, and it carries the previous column.
 
-<Callout type="info">
-  An Agent's own writes never re-fire its own Event Trigger — and that holds for
-  the work its Sub-Agents do too. Whatever the Agent (or a delegate it spawned)
-  writes, the Trigger that started it doesn't run again on that write. A change
-  made by a person, or by another Agent, still fires it.
+<Callout type="warning">
+  An Event Trigger never fires on a write made by its own Agent, from any run,
+  not only the one this Trigger started. That covers the Agent's Sub-Agents at
+  any depth, and a Chat: ask the same Agent in a Chat to create a card and a
+  `card.created` Trigger on that Agent does not run. Two Triggers on the same
+  Agent cannot hand work to each other either. A change made by a person, or by
+  a different Agent, still fires it, so test an Event Trigger that way.
 </Callout>
 
 ### Or declare inputs (Inbound)
@@ -108,9 +117,9 @@ about, such as an issue key — and a **Token lifetime** of 30, 90, 180 or 365
 days (**90** unless you change it). See [The record key](#the-record-key) for
 why marking one matters.
 
-Only you, on this form, can create, edit or delete an Inbound Trigger. An
-Agent's Trigger tools refuse to, so a token never lands in a Chat and a caller
-can't talk an Agent into removing the integration it depends on.
+Only you can create, edit or delete an Inbound Trigger, in the Triggers
+section. An Agent's Trigger tools refuse to, so a token never lands in a Chat
+and a caller can't talk an Agent into removing the integration it depends on.
 
 ### Finish
 
@@ -119,36 +128,37 @@ enable **Web Search** (web search on the resolved Provider — its built-in tool
 or a Web-search backend selected on it; see [Providers &
 models](/concepts/providers#web-search)), and leave **Enabled** on. Expand
 **Advanced settings** if the run needs your Memory summaries — see [Memories in
-a run](#memories-in-a-run). Click save. An Inbound trigger then shows its token
-once — copy it before closing the dialog.
+a run](#memories-in-a-run). Click **Save** (**Update** when editing). An
+Inbound trigger then shows its token and endpoint once, in **Copy the token
+now**. Copy both, then click **I've copied it**, the only way to close it.
 
 </Steps>
 
-<Callout type="info">
-  Simple and Advanced are two views of the same thing — your Simple choices
-  compile to a standard 5-field cron expression. Switch to Advanced to see or
-  fine-tune it.
+<Callout type="warning">
+  Your Simple choices compile to a standard 5-field cron expression, and
+  switching to **Advanced** shows it for you to fine-tune. The conversion runs
+  one way: switching back to **Simple** restores your earlier Simple choices and
+  discards the Advanced edit. Save from **Advanced** once you have changed the
+  expression there.
 </Callout>
 
 ## What a run does
 
 When a Trigger fires, Platypus runs its Agent against the **instruction** as a
 background job — there's no live Chat window. The run is captured as a
-**trigger run** record: it starts as _running_ (an Inbound run is _pending_
+**trigger run** record: it starts as _Running_ (an Inbound run is _Pending_
 first, from the moment its call is accepted), accrues stats (steps, tool calls,
-token counts, how full the Context window got), and ends _success_ or _failed_.
-An Inbound run still _pending_ after five minutes lost its server before it
-could start; it is marked _failed_, so the next call for that record starts a
+token counts, how full the Context window got), and ends _Success_ or _Failed_.
+An Inbound run still _Pending_ after five minutes lost its server before it
+could start; it is marked _Failed_, so the next call for that record starts a
 new run instead of being handed the stuck one.
-
-A few details worth knowing:
 
 - **Scheduled (cron) runs** are checked about once a minute; a due Trigger is
   claimed and executed, then its next run time is recomputed from the cadence
   (one-off Triggers disable themselves instead). Switching **Enabled** back on
   restarts the cadence from that moment: the first run lands on the next slot
   the schedule names, so a Trigger that was off over one of its slots does not
-  fire the moment you re-enable it to catch up. A _failed_ run moves the
+  fire the moment you re-enable it to catch up. A _Failed_ run moves the
   schedule on just as a successful one does, and a one-off Trigger disables
   itself either way.
 - **Switching Enabled off during a run** lets that run finish, and the Trigger
@@ -156,11 +166,12 @@ A few details worth knowing:
 - **Event runs** fire when a matching event occurs, with a short debounce so a
   burst of rapid events coalesces into one run.
 - **No-progress runs stop early.** Because no one is watching a Trigger run,
-  Platypus ends it if the Agent stops making progress — repeating the same tool
-  call and getting the same result several times in a row. The run is recorded as
-  _failed_ with a reason naming the repeated tool, so it can't quietly burn its
-  whole step budget. (This guard is unattended-only; interactive Chats are never
-  stopped this way.)
+  Platypus ends it if the Agent stops making progress: it calls the same tool
+  with the same arguments and gets the same result three times during the run,
+  whether or not other calls come in between. An Agent that polls a status
+  tool and gets the same answer three times is stopped too. The run is recorded
+  as _Failed_ with a reason naming the repeated tool, so it can't quietly burn
+  its whole step budget.
 - Older run records are pruned automatically, keeping at least the newest **Max
   Runs to Keep**.
 
@@ -179,7 +190,7 @@ An Inbound Trigger is always under the same ceiling, counted per value of its
 
 This is the backstop for a cycle the per-Agent guard above cannot see. That
 guard stops a Trigger re-firing on its own Agent's writes; it cannot see two
-Triggers handing a record back and forth, or an event that arrives long after
+Triggers on different Agents handing a record back and forth, or an event that arrives long after
 the debounce window and starts another lap. The ceiling is per Trigger and per
 record, so one busy Card does not use up a Trigger's budget for every other
 Card. Events that name a set rather than one record — a bulk mark-all-read — are
@@ -205,12 +216,12 @@ Instruction is about you — a daily briefing, a summary written in your voice �
 and leave them off for a narrow, repetitive job.
 
 <Callout type="warning">
-  Upgrading to this version turns Memories **off for every Trigger you already
-  have** — before it, every run carried them. A Trigger whose Instruction
-  quietly relied on a summary — "the project I mentioned", "my usual format" —
-  has nothing to read it from on its next firing, and the run does not fail, it
-  just answers differently. Turn **Include Memories** back on for those
-  Triggers, or write the fact into the Instruction where it belongs.
+  Upgrading from 2.x to 3.0 or later turned Memories **off for every Trigger
+  that already existed**; before 3.0, every run carried them. A Trigger whose
+  Instruction quietly relied on a summary ("the project I mentioned", "my usual
+  format") has nothing to read it from, and the run does not fail: it answers
+  differently. Turn **Include Memories** back on for those Triggers, or write
+  the fact into the Instruction where it belongs.
 </Callout>
 
 The control governs the summaries in the system prompt, nothing else. An Agent
@@ -340,7 +351,11 @@ one marked:
 
 - **One run per record.** A call for a record that already has a run pending or
   running gets that run's id back with `"deduplicated": true`. Its inputs are
-  dropped and no second Agent starts on the same issue.
+  dropped and no second Agent starts on the same issue. A run that was
+  _Running_ when its server restarted keeps the record until the crash sweep
+  marks it _Failed_, about an hour and five minutes on the default [Trigger run
+  timeout](/reference/backend-configuration#triggers). Until then, calls for
+  that record get the stalled run's id back and no new run starts.
 - **A run limit per record.** The [run limit](#run-limits) counts each record
   separately, so a caller stuck re-firing on one issue is cut off for that issue
   alone.
@@ -373,12 +388,16 @@ again, so copy it straight into the calling system. The Trigger's page shows
 the token's standing — **Active**, **Expiring soon** (within 30 days),
 **Expired** or **No token** — when it expires, and when it was **Last used**
 and **Last rejected**. Both times update at most once a minute, so a second
-test call straight after the first does not move them.
+test call straight after the first does not move them. **Last used** moves on a
+`202` that started or joined a run, not on one past the run limit; **Last
+rejected** moves on any call that didn't get a `202`.
 
 - **Regenerate** issues a new token and stops the old one at once. Use it when
   a token is lost or may have leaked, then update the caller.
 - **Every token expires**, after the **Token lifetime** you chose. Changing the
-  lifetime applies to the next token you issue, not the current one.
+  lifetime applies to the next token you issue, once you save the Trigger:
+  **Regenerate** uses the saved lifetime, not one you picked and didn't save.
+  The current token keeps its expiry.
 - **You get a notification** 30 days and 7 days before expiry (a 30-day token
   only gets the 7-day one), and the first time a call arrives with an expired
   token.
@@ -401,32 +420,31 @@ curl "https://platypus.example.com/hooks/triggers/<trigger-id>/runs/<run-id>" \
   -H "Authorization: Bearer <token>"
 ```
 
-The answer carries the run's `status`, `startedAt`, `completedAt` and
+The answer carries the run's `runId`, `status`, `startedAt`, `completedAt` and
 `errorMessage` — never the Agent's output. `status` is `pending` or `running`
 while the run is under way, and ends as `success`, `failed`, `cancelled` or
 `suppressed` — the last meaning no Agent ran.
 
 Polling is for short-term checks. It goes through the same check as a call, so
-it answers `404` once **Max Runs to Keep** prunes the run, and also as soon as
+it answers `404` once the run is pruned from run history, and also as soon as
 the token is regenerated, revoked or expired, the Trigger is disabled, or the
-Organization stops allowing the Workspace.
+Organization stops allowing the Workspace. A refused poll is not logged and
+does not move **Last rejected**.
 
 ## Review run history
 
-**Trigger runs** is one page per Workspace, not a tab inside the Trigger
-editor. Open it from **Trigger runs** in the Triggers section of the Workspace
-home page, or from the command menu. Every run from every Trigger in the
-Workspace is there, newest first, each row naming the Trigger it came from and
-linking to it.
+**Trigger runs** is one page per Workspace. Open it from **Trigger runs** in the
+Triggers section of the Workspace home page, or from the command menu. Every
+run from every Trigger in the Workspace is there, newest first, each row naming
+the Trigger it came from and linking to it.
 
 That is the page that answers "what fired here recently?" and "which Trigger
-just failed?" — questions a per-Trigger list could only answer one Trigger at a
-time. Two filters narrow it, and both live in the address bar, so a filtered
+just failed?". Two filters narrow it, and both live in the address bar, so a filtered
 view survives a refresh and can be sent to a colleague as a link:
 
 - **Trigger** — all Triggers, or one of them. **View runs** on a Trigger's
   three-dot menu opens the page already filtered to it.
-- **Status** — all, or one of Success, Failed, Cancelled, Running, Pending,
+- **Status** — all, or one of Pending, Running, Success, Failed, Cancelled,
   Suppressed. _Cancelled_ is a run someone stopped, not one that failed: it
   carries no error, and its timeline ends where the stop landed.
 
@@ -440,8 +458,8 @@ event type for Event triggers, per-run stats, and any error message. It's the
 place to confirm a schedule is actually firing and to debug a Trigger that's
 failing.
 
-Each run's identifier isn't shown on the row — it's an opaque value nobody
-reads at a glance. Instead every run offers a **Copy run id** control. Use it
+Each run's identifier isn't shown on the row. Instead every run offers a
+**Copy run id** control. Use it
 when a run fails and you need to find that run's log lines: backend logs are
 keyed by the run id, so copying it here and pasting it into your log query is
 how you cross-reference a failed run against what happened behind the scenes.
@@ -510,9 +528,9 @@ it is absent for a Provider that reports no cache detail.
 A run that never happened leaves no row in **Trigger runs** — unless it was the
 [run limit](#run-limits) that dropped it, which records a _Suppressed_ row. For
 anything else the answer is in the backend logs. Every time an event reaches a
-Trigger that subscribes to it, Platypus writes one dispatch decision line naming
+Trigger that subscribes to it, Platypus writes a dispatch decision line naming
 the event, the Trigger, the Trigger's Agent, the Agents that were running when
-the write happened, and one of four outcomes:
+the write happened, and one of these outcomes:
 
 - `fired` — the run is scheduled, and starts once the debounce window closes.
 - `skipped_self_actor` — the Trigger's own Agent (or one of its Sub-Agents) made
@@ -520,13 +538,14 @@ the write happened, and one of four outcomes:
 - `debounced` — a run was already pending for the same Trigger and record, and
   this event folded into it. A separate line reports how many events a burst
   coalesced.
-- `suppressed` — the run limit had already been reached for this Trigger and
-  record, so the firing was dropped before the Agent started. The dropped firing
-  is also recorded on **Trigger runs** as _Suppressed_.
+- `suppressed` — written after that firing's `fired` line, once the debounce
+  window closed: the run limit had already been reached for this Trigger and
+  record, so the firing was dropped before the Agent started. The dropped
+  firing is also recorded on **Trigger runs** as _Suppressed_.
 
-A Trigger the event didn't select — the wrong event type, or filters that didn't
-match — writes no line at all. So the absence of a decision is how you tell a
-filter problem from a suppressed run. The lines name identifiers only, never Card
+A Trigger the event didn't select — disabled, the wrong event type, or filters
+that didn't match — writes no line at all. So the absence of a decision is how
+you tell a disabled or filtered-out Trigger from a suppressed run. The lines name identifiers only, never Card
 titles or body text.
 
 An Inbound call that was refused writes none of these lines either. Its trace
@@ -539,7 +558,7 @@ log](/reference/backend-configuration#the-inbound-call-log).
 Every model has a ceiling on how much it can write in one reply. A run that
 reaches it stops wherever it got to — mid-sentence, mid-list — and still ends
 _Success_, because nothing failed; the Agent ran out of room to finish writing.
-That run carries a muted line in the runs view reading **Run cut short at the
+That run carries a muted line on **Trigger runs** reading **Run cut short at the
 model's output limit.**
 
 <Callout type="warning">
@@ -549,8 +568,7 @@ model's output limit.**
   a full transcript, one Board rather than every Board.
 </Callout>
 
-The ceiling itself is **Max output tokens** on the Provider's model, which an
-Org Admin sets — see
+The ceiling itself is **Max output tokens** on the Provider's model — see
 [Capping a single reply](/self-hosting/providers-and-auth#capping-a-single-reply).
 Worth checking before rewriting the Instruction.
 
@@ -558,11 +576,12 @@ A run can also stop early for the other reason: it ran out of _steps_ rather
 than room to write. A run that reaches its Agent's **Max steps** — see
 [Tune generation](/building-with-platypus/agents#tune-generation) — stops with
 work outstanding and still ends _Success_, because it did what it was allowed to
-do. It carries a muted line in the runs view reading **Run cut short at the step
-limit.**
+do. It carries a muted line on **Trigger runs** reading **Run cut short at the
+step limit.**
 
-The **Steps** figure in the run's own statistics is the count it reached, so a
-run history where every run stops at the same number is the shape to look for.
+The step count in the run's stats (such as `25 steps`) is the count it reached,
+so a run history where every run stops at the same number is the shape to look
+for.
 
 <Callout type="info">
   A run that stopped because the Agent made no progress — the same tool call

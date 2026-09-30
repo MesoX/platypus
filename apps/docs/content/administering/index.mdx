@@ -18,8 +18,10 @@ and you can hand some of it back per Workspace.
 
 ## Providers come first
 
-A new installation can sign in and do nothing else. It has no **Provider**, so no
-Workspace can reach a model, and every **Model** dropdown in the product is empty.
+A new installation has no Workspace and no **Provider**. Creating the first
+Workspace asks for one: add it there, scoped to that Workspace, or first add a
+Shared one here so the Workspace can attach it. Until a Shared Provider exists,
+the Workspace form's **Shared provider** tab has nothing to offer.
 
 Go to **Organization settings → Providers → Add provider**. A Provider created
 here is available to every Workspace it's attached to; one created inside a
@@ -62,8 +64,15 @@ menu offers **Edit org role** and **Remove from Org**.
 
 A member with the `admin` role is an Org Admin — they can do everything on this
 page, including to you. A **Super Admin** row is the platform-level account and
-has no actions available here at all; it is managed at the deployment level, not
-by an Org Admin.
+has no actions available here at all; an Org Admin can't change or remove it.
+
+<Callout type="warning">
+  **Remove from Org** doesn't touch the Workspaces that person owns. Their
+  Triggers keep running as them, and their Inbound Trigger tokens stay valid.
+  Revoke those tokens under [**Inbound Triggers**](#see-and-revoke) before you
+  remove someone. Nobody can chat in their Workspaces afterwards, and since a
+  Workspace's owner can't be reassigned, the only fix is to delete them.
+</Callout>
 
 <Callout type="info">
   **Plugins** is deliberately read-only — there is no install or enable button.
@@ -101,7 +110,14 @@ It is checked on every call. Switching to **Off**, or turning a Workspace's
 switch off under **Selected workspaces**, refuses that Workspace's calls from
 the next one on. Its Triggers and their tokens stay as they are, so switching
 back resumes them. Owners can create Inbound Triggers whatever the setting
-says; they just can't be called until you allow it.
+says; they can't be called until you allow it.
+
+<Callout type="warning">
+  Switching from **All workspaces** to **Selected workspaces** stops every
+  Workspace whose **Allow Inbound Triggers** switch is off, and every switch
+  starts off. Turn it on in each Workspace that should keep taking calls first:
+  the switch saves under any setting.
+</Callout>
 
 ### See and revoke
 
@@ -111,12 +127,13 @@ Organization: its Workspace, Owner, when it was created, its **Token** standing
 and when it was **Last used** and **Last rejected**. It never shows a token.
 
 **Last rejected** is the column to watch. A Trigger rejecting calls it used to
-accept is usually an expired token behind a broken integration. A Trigger
+accept has lost its way in: an expired or revoked token, a **Disabled** badge,
+or this Organization setting no longer admitting its Workspace. A Trigger
 rejecting calls it never accepted may be someone guessing. It also moves when a
-caller sends inputs that don't match the Trigger's, or when the server turns calls
-away because it is already running as many inbound runs as it allows — the
-[inbound call log](/reference/backend-configuration#the-inbound-call-log) tells
-these apart. Both times update at most once a minute.
+caller sends inputs that don't match the Trigger's, or when the server turns
+calls away because it is already running as many inbound runs as it allows. The
+[inbound call log](/reference/backend-configuration#the-inbound-call-log) names
+the reason for each one. Both times update at most once a minute.
 
 **Revoke token** stops a token at once and sends its Owner a notification. It is
 the only thing you can do to another person's Trigger here. You cannot edit or
@@ -133,6 +150,7 @@ disable one.
 - **[Shared resources](/administering/shared-resources)** — Promote, attach, and
   Blueprints, with the buttons named.
 - **[Workspace settings](/administering/workspaces)** — per-Workspace Providers,
-  memory retention, and the two switches that delegate work to an owner.
+  memory retention, the two switches that delegate work to an owner, and which
+  Workspaces take Inbound Trigger calls.
 - **[Users & access](/self-hosting/users-and-access)** — how people get accounts
   in the first place.

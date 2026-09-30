@@ -276,6 +276,7 @@ const REMOVED_VARS = new Set<string>([]);
 const VARS_WITHOUT_ENV_EXAMPLE_ENTRY = new Set([
   "ALLOWED_DEV_ORIGINS",
   "NEXT_PUBLIC_APP_VERSION",
+  "NODE_ENV",
   "PLATYPUS_PLUGIN_CONFIG",
 ]);
 
@@ -1658,6 +1659,21 @@ describe("the closer timeout", () => {
 
 // --- backend constants the concept pages quote -------------------------------
 
+/** How the pages spell small counts. */
+const NUMBER_WORDS = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+];
+
 /**
  * Numbers a reader plans around that live only as a backend constant, not in a
  * schema this file can import. Each is read as `NAME = <product of integers>`
@@ -1714,6 +1730,24 @@ const BACKEND_CONSTANTS = [
       `**${entries.toLocaleString("en-US")} entries**`,
     files: ["extending/sandbox-backends.mdx"],
     cost: "A backend author truncating at the stated cap disagrees with every other adapter about `truncated`.",
+  },
+  {
+    source: "apps/backend/src/runs/no-progress.ts",
+    name: "DEFAULT_NO_PROGRESS_THRESHOLD",
+    phrase: (count: number) => `${NUMBER_WORDS[count] ?? count} times`,
+    files: ["building-with-platypus/triggers.mdx"],
+    cost: "A reader debugging a _Failed_ run looks for the wrong number of repeats.",
+  },
+  {
+    source: "apps/backend/src/jobs/scheduler.ts",
+    name: "RECOVERY_STALE_BUFFER_MS",
+    phrase: (ms: number) =>
+      `${NUMBER_WORDS[ms / 60_000] ?? ms / 60_000} minutes`,
+    files: [
+      "building-with-platypus/triggers.mdx",
+      "reference/backend-configuration.mdx",
+    ],
+    cost: "An integrator waits the wrong time for a stuck record to take calls again.",
   },
 ] as const;
 

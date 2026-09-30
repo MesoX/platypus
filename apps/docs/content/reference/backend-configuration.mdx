@@ -18,16 +18,24 @@ For a guided walkthrough of configuring a deployment, see
   backend container.
 </Callout>
 
+<Callout type="warning">
+  The shipped `compose.yaml` sets `PORT`, `DATABASE_URL`, `NODE_OPTIONS` and
+  `BETTER_AUTH_URL` (from `BACKEND_URL`) for the backend itself, and those take
+  precedence over `.env`. Pointing `DATABASE_URL` at an external Postgres in
+  `.env` is silently ignored: change these four in a `compose.override.yaml`.
+</Callout>
+
 ## Core
 
-| Variable          | Purpose                                                                                                                                                                                                                                    | Default                                                  | Required |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- | -------- |
-| `PORT`            | Port the backend HTTP server listens on.                                                                                                                                                                                                   | `4001`                                                   | No       |
-| `ALLOWED_ORIGINS` | Comma-separated origins allowed by CORS and better-auth's trusted origins. **No default in code** — the backend splits it at module load, so an unset value throws before the server starts. `.env.example` ships `http://localhost:3001`. | _(none)_                                                 | **Yes**  |
-| `DATABASE_URL`    | Postgres 17 connection string (with pgvector).                                                                                                                                                                                             | `postgres://postgres:mypassword@localhost:5432/postgres` | **Yes**  |
-| `LOG_LEVEL`       | Logging verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`).                                                                                                                                                                    | `info`                                                   | No       |
-| `TIMEZONE`        | IANA timezone (e.g. `America/New_York`, `Europe/London`) used by the **time Tools only** — see the note below.                                                                                                                             | `UTC`                                                    | No       |
-| `NODE_OPTIONS`    | Node runtime flags. Ships set to silence the experimental-feature warning.                                                                                                                                                                 | `--disable-warning=ExperimentalWarning`                  | No       |
+| Variable          | Purpose                                                                                                                                                                                              | Default   | Required |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | -------- |
+| `PORT`            | Port the backend HTTP server listens on.                                                                                                                                                             | `4001`    | No       |
+| `ALLOWED_ORIGINS` | Comma-separated origins allowed by CORS and better-auth's trusted origins. **No default in code** — an unset value stops the backend before it starts. `.env.example` ships `http://localhost:3001`. | _(none)_  | **Yes**  |
+| `DATABASE_URL`    | Postgres 17 connection string (with pgvector). **No default in code.** `.env.example` ships `postgres://postgres:mypassword@localhost:5432/postgres`.                                                | _(none)_  | **Yes**  |
+| `LOG_LEVEL`       | Logging verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`).                                                                                                                              | `info`    | No       |
+| `NODE_ENV`        | `production` writes logs as JSON lines to stdout and turns on better-auth's production checks; anything else pretty-prints logs for a terminal. The published image sets `production`.               | _(unset)_ | No       |
+| `TIMEZONE`        | IANA timezone (e.g. `America/New_York`, `Europe/London`) used by the **time Tools only** — see the note below.                                                                                       | `UTC`     | No       |
+| `NODE_OPTIONS`    | Node runtime flags. `.env.example` and `compose.yaml` ship `--disable-warning=ExperimentalWarning` to silence the experimental-feature warning.                                                      | _(none)_  | No       |
 
 <Callout type="warning">
   `TIMEZONE` is read in exactly one place: the `getCurrentTime` tool.
@@ -66,11 +74,11 @@ The manifest side is in
 | `REQUIRE_INVITATION_TO_SIGN_UP` | `true` closes public sign-up: the sign-in page stops offering **Sign up**, the sign-up page says that sign-up is by invitation, and an account can only be created by redeeming an invitation link. Sign-in, password changes, administrative password resets and first-boot seeding are unaffected. Anything other than `true` or `1` leaves sign-up open. See [Users & access](/self-hosting/users-and-access#who-can-create-an-account).                                                                                                                        | `false`                                                    | No       |
 
 <Callout type="warning">
-  `BETTER_AUTH_SECRET`'s 32+ character requirement is enforced only when
-  `NODE_ENV=production` — the published Docker image sets this, but running from
-  source without it gets no hard failure at all: an unset or weak secret
-  silently falls back to a well-known default and only logs a warning. Don't
-  rely on the runtime to catch a missing secret outside the published image.
+  Nothing enforces the 32-character minimum: a shorter `BETTER_AUTH_SECRET` is
+  accepted everywhere and only logs a warning. With `NODE_ENV=production`, which
+  the published image sets, an unset secret is refused. Running from source
+  without it, an unset secret silently falls back to a well-known built-in
+  default and only logs a warning. Generate one with `openssl rand -base64 32`.
 </Callout>
 
 ## Default admin
@@ -81,10 +89,10 @@ effect; change the password from within the app. See
 [what first boot creates](/self-hosting/docker-compose#what-first-boot-creates)
 for the seeding rule and the recovery path.
 
-| Variable         | Purpose                                   | Default  | Required          |
-| ---------------- | ----------------------------------------- | -------- | ----------------- |
-| `ADMIN_EMAIL`    | Email of the first admin (Operator) user. | _(none)_ | **On first boot** |
-| `ADMIN_PASSWORD` | Password for that user.                   | _(none)_ | **On first boot** |
+| Variable         | Purpose                                                             | Default  | Required          |
+| ---------------- | ------------------------------------------------------------------- | -------- | ----------------- |
+| `ADMIN_EMAIL`    | Email of the first admin (Operator) user.                           | _(none)_ | **On first boot** |
+| `ADMIN_PASSWORD` | Password for that user; at least 8 characters, or first boot fails. | _(none)_ | **On first boot** |
 
 <Callout type="warning">
   Neither has a default **in code**. Against an empty database with either
@@ -97,11 +105,17 @@ for the seeding rule and the recovery path.
 
 ## Background workers
 
-| Variable                         | Purpose                                                                                                                        | Default              | Required |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------- | -------- |
-| `MEMORY_EXTRACTION_INTERVAL_MS`  | How often the memory-extraction worker runs, in milliseconds.                                                                  | `300000` (5 minutes) | No       |
-| `SCHEDULE_SCHEDULER_INTERVAL_MS` | How often the scheduler runs, in milliseconds. Each pass starts due Triggers and recovers runs and Chats abandoned by a crash. | `60000` (1 minute)   | No       |
-| `SCHEDULE_MAX_CONCURRENT`        | Maximum parallel Trigger executions.                                                                                           | `5`                  | No       |
+| Variable                         | Purpose                                                                                                                             | Default              | Required |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------- | -------- |
+| `MEMORY_EXTRACTION_INTERVAL_MS`  | How often the memory-extraction worker runs, in milliseconds.                                                                       | `300000` (5 minutes) | No       |
+| `SCHEDULE_SCHEDULER_INTERVAL_MS` | How often the scheduler runs, in milliseconds. Each pass starts due Triggers and recovers runs and Chats abandoned by a crash.      | `60000` (1 minute)   | No       |
+| `SCHEDULE_MAX_CONCURRENT`        | Maximum scheduled (Cron) Triggers run in parallel within one scheduler pass. Event and Inbound Trigger runs don't count against it. | `5`                  | No       |
+
+<Callout type="warning">
+  A scheduler pass that starts scheduled Triggers ends only when they finish.
+  While a long scheduled run is going, no other scheduled Trigger starts and
+  neither crash sweep below runs, however short the interval.
+</Callout>
 
 ## Triggers
 
@@ -117,13 +131,19 @@ run sooner.
 | `TRIGGER_PER_STEP_TIMEOUT_MS` | Idle timeout between steps of a Trigger run; a step that makes no progress aborts it. | `600000` (10 minutes)  | No       |
 | `TRIGGER_PER_RUN_TIMEOUT_MS`  | Wall-clock timeout for an entire Trigger run.                                         | `3600000` (60 minutes) | No       |
 
+A malformed or zero value falls back to the default without warning.
+
 If the backend is killed mid-run, neither timeout gets the chance to end the
-run, so its record would otherwise stay _running_ for ever — and a scheduled
+run, so its record would otherwise stay _Running_ for ever — and a scheduled
 Trigger it belonged to would never be picked up again. A background sweep marks
-those runs failed once they are older than `TRIGGER_PER_RUN_TIMEOUT_MS` plus a
+those runs _Failed_ once they are older than `TRIGGER_PER_RUN_TIMEOUT_MS` plus a
 five-minute grace period, and puts a scheduled Trigger back on its cadence. It
-runs once a minute, so a run abandoned by a crash is cleared roughly 65 minutes
-later on the defaults.
+runs on each scheduler pass (see `SCHEDULE_SCHEDULER_INTERVAL_MS`), so a run
+abandoned by a crash is cleared roughly 65 minutes later on the defaults.
+
+An Inbound run the backend accepted but never started is failed sooner:
+five minutes after its call. Until then, calls for the same record are answered
+with that run's id.
 
 <Callout type="warning">
   Running several backends against one database looks like it needs no
@@ -142,24 +162,22 @@ rolling window, further firings are dropped before an Agent is invoked — no
 model call, no tokens — and recorded on the **Trigger runs** page as
 _Suppressed_.
 
-This is a standing safety net rather than a diagnosis of one loop: the
-per-Agent guard ([Agents & Sub-Agents](/building-with-platypus/triggers#create-a-trigger))
-stops a Trigger re-firing on its own Agent's writes, but two Triggers can keep a
-record moving between them without ever crossing that rule. The count is per
-Trigger and per record, so one busy Card does not consume a Trigger's budget for
-every other Card, and events that name a set rather than one record (a bulk
-mark-all-read) are exempt.
+The count is per Trigger and per record, and events that name a set rather than
+one record (a bulk mark-all-read) are exempt. Why it exists alongside the
+per-Agent guard is in [Triggers → Run
+limits](/building-with-platypus/triggers#run-limits).
 
 The window is also a retention floor: every run inside it is kept even when a
 Trigger has run more than **Max Runs to Keep** times, because the breaker counts
 those rows. A longer window therefore retains more run records. Suppressed rows
-get their own budget and do not consume **Max Runs to Keep**.
+get their own budget and do not consume **Max Runs to Keep**. A run still
+pending or running is never pruned.
 
-| Variable                                  | Purpose                                                                                    | Default         | Required |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------ | --------------- | -------- |
-| `TRIGGER_BREAKER_MAX_RUNS`                | Runs allowed per Trigger per record within the window; firings past it are suppressed.     | `20`            | No       |
-| `TRIGGER_BREAKER_WINDOW_SECONDS`          | Length of the rolling window, in seconds.                                                  | `3600` (1 hour) | No       |
-| `TRIGGER_BREAKER_SUPPRESSED_RUNS_TO_KEEP` | Suppressed run records retained per Trigger, separate from the Trigger's Max Runs to Keep. | `20`            | No       |
+| Variable                                  | Purpose                                                                                        | Default         | Required |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------- | -------- |
+| `TRIGGER_BREAKER_MAX_RUNS`                | Runs allowed per Trigger per record within the window; firings past it are suppressed.         | `20`            | No       |
+| `TRIGGER_BREAKER_WINDOW_SECONDS`          | Length of the rolling window, in seconds.                                                      | `3600` (1 hour) | No       |
+| `TRIGGER_BREAKER_SUPPRESSED_RUNS_TO_KEEP` | Suppressed run records retained per Trigger, separate from the Trigger's **Max Runs to Keep**. | `20`            | No       |
 
 Each value must be a positive integer; a malformed setting fails the backend at
 startup rather than silently falling back to a default nobody chose.
@@ -187,7 +205,7 @@ across them. Divide the load you want to allow by the number of instances.
 Each value must be a positive integer, and a malformed one fails the backend at
 startup. If you put `/hooks/*` behind a proxy, you can enforce the same body
 limit there too, so oversized requests never reach Platypus. Per-client rate
-limiting is also the proxy's job; the backend has none.
+limiting is also the proxy's job; the backend has none on `/hooks/*`.
 
 <Callout type="warning">
   The endpoint a Workspace Owner copies from the Trigger's page is built from
@@ -199,25 +217,25 @@ limiting is also the proxy's job; the backend has none.
 
 #### The inbound call log
 
-Every call that fires an Inbound Trigger writes exactly one log line at `info`,
-whatever became of it, with the message `Inbound trigger call`. A caller polling
-a run writes none. It is the audit trail of inbound calls: ship it to your log
+Every call that fires an Inbound Trigger writes exactly one call-log line at
+`info`, whatever became of it, with the message `Inbound trigger call`. A caller
+polling a run writes none. It is the audit trail of inbound calls: ship it to your log
 store and keep it as long as you need. Its
 message, fields and values are a stable format that Platypus keeps unchanged,
 so you can build alerts and reports on them.
 
 Every field is on every line, `null` where it does not apply:
 
-| Field            | Value                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------- |
-| `organizationId` | The Trigger's Organization, when the call named a real Trigger — never on `internal_error`        |
-| `workspaceId`    | The Trigger's Workspace, same                                                                     |
-| `triggerId`      | The id the call named, real or not                                                                |
-| `outcome`        | What happened — see below                                                                         |
-| `reason`         | Why a `rejected` call was rejected — see below                                                    |
-| `runId`          | The run the caller was given, which is also the id in **Trigger runs**                            |
-| `deduplicated`   | `true` when the call was given a record's active run instead of a new one                         |
-| `recordKey`      | The value of the Trigger's record key, when the call carried one. No other input value is logged. |
+| Field            | Value                                                                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `organizationId` | The Trigger's Organization, when the call named a real Trigger — never on `internal_error`                                                                     |
+| `workspaceId`    | The Trigger's Workspace, same                                                                                                                                  |
+| `triggerId`      | The id the call named, real or not                                                                                                                             |
+| `outcome`        | What happened — see below                                                                                                                                      |
+| `reason`         | Why a `rejected` call was rejected — see below                                                                                                                 |
+| `runId`          | The run the caller was given, which is also the id in **Trigger runs**                                                                                         |
+| `deduplicated`   | `true` when the call was given a record's active run instead of a new one                                                                                      |
+| `recordKey`      | The value of the Trigger's record key on an accepted, deduplicated, suppressed or rate-limited call; `null` on a rejected one. No other input value is logged. |
 
 `outcome` is one of `accepted`, `deduplicated`, `suppressed` (the run limit
 dropped it, and a _Suppressed_ run was recorded), `rate_limited` (answered
@@ -258,6 +276,8 @@ through.
 | `CHAT_PER_STEP_TIMEOUT_MS` | Idle timeout for a Chat turn; the run is stopped after this long with no streamed output from the model. | `120000` (2 minutes)   | No       |
 | `CHAT_PER_RUN_TIMEOUT_MS`  | Wall-clock timeout for an entire Chat turn.                                                              | `1800000` (30 minutes) | No       |
 
+A malformed or zero value falls back to the default without warning.
+
 When either bound stops a turn, the reason is shown in the chat rather than the
 answer simply ending.
 
@@ -265,8 +285,8 @@ If the backend is killed mid-turn, neither bound gets the chance to run, so the
 Chat would otherwise stay marked as running for ever — the sidebar keeps
 spinning and the composer stays disabled. A background sweep marks those Chats
 failed once they are older than `CHAT_PER_RUN_TIMEOUT_MS` plus a five-minute
-grace period, and it runs once a minute, so a Chat abandoned by a crash frees
-itself roughly 35 minutes later on the defaults.
+grace period, and it runs on each scheduler pass, so a Chat abandoned by a
+crash frees itself roughly 35 minutes later on the defaults.
 
 <Callout type="warning">
   Running several backends against one database looks like it needs no
@@ -279,10 +299,10 @@ itself roughly 35 minutes later on the defaults.
 
 ## Tools
 
-| Variable                        | Purpose                                                                                                                                                            | Default                 | Required |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- | -------- |
-| `FRONTEND_URL`                  | Frontend URL used to build resource links inside tool responses.                                                                                                   | `http://localhost:3001` | No       |
-| `EGRESS_ALLOW_PRIVATE_NETWORKS` | Whether tools that fetch a **model-chosen** URL, and Webhook deliveries, may reach private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`). | `true`                  | No       |
+| Variable                        | Purpose                                                                                                                                                                                                                                                                                            | Default                 | Required |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------- |
+| `FRONTEND_URL`                  | Public URL of the frontend. Used for resource links in tool responses, as the base of the MCP OAuth callback (`/oauth/mcp/callback`), and in the startup check behind `AUTH_COOKIE_DOMAIN`. Falls back to `http://localhost:3001`, which only works for local dev — a real deployment must set it. | `http://localhost:3001` | No       |
+| `EGRESS_ALLOW_PRIVATE_NETWORKS` | Whether tools that fetch a **model-chosen** URL, and Webhook deliveries, may reach private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`).                                                                                                                                 | `true`                  | No       |
 
 Which address ranges the guard blocks regardless of that setting, and why the
 default is permissive, are in
@@ -349,7 +369,9 @@ Both are enabled by listing the Plugin — `@platypus/docker` or `@platypus/ssh`
 in [`PLATYPUS_PLUGINS`](#plugins). Everything else is configured elsewhere: the
 Docker network allowlist as `config.allowedNetworks` in `PLATYPUS_PLUGIN_CONFIG_DOCKER`,
 and the whole SSH connection surface as per-Workspace Sandbox settings an Org
-Admin enters in the app.
+Admin enters in the app. The Docker backend reaches the daemon the standard way:
+`/var/run/docker.sock`, or `DOCKER_HOST` (with `DOCKER_TLS_VERIFY` and
+`DOCKER_CERT_PATH`) when set.
 
 See [Sandbox](/self-hosting/configuration#sandbox) for how the two fit together,
 and [Sandbox infrastructure](/self-hosting/sandbox) for the security model and the
