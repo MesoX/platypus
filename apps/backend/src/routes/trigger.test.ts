@@ -452,6 +452,19 @@ describe("Trigger Routes", () => {
       expect(await res.json()).toEqual({ message: "Trigger deleted" });
     });
 
+    it("deletes an Inbound Trigger: the Owner's surface may", async () => {
+      stubAuthLookups();
+      // Were the route to take the Agent's narrower surface, the type check
+      // would read this row and refuse with 400.
+      mockDb.limit.mockResolvedValueOnce([{ ...cronTrigger, type: "inbound" }]);
+      mockDb.returning.mockResolvedValueOnce([
+        { ...cronTrigger, type: "inbound" },
+      ]);
+
+      const res = await app.request(`${baseUrl}/trig-1`, { method: "DELETE" });
+      expect(res.status).toBe(200);
+    });
+
     it("returns 404 when the trigger doesn't exist", async () => {
       stubAuthLookups();
       mockDb.returning.mockResolvedValueOnce([]);

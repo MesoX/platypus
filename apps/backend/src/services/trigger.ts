@@ -24,6 +24,7 @@ import {
   deleteOwned,
   listOwned,
   requireOwned,
+  resolveOwned,
   updateOwned,
 } from "./workspace-resource.ts";
 
@@ -75,11 +76,11 @@ type TriggerBaseFields = {
 };
 
 /**
- * Who is writing. Only the Workspace Owner, through the UI, may create or edit
- * an Inbound Trigger (ADR-0030): the Agent's Trigger tools must never mint a
- * live credential into a model's context or a Chat transcript. Defaults to the
- * narrower surface, so a new caller has to opt in to reaching Inbound
- * Triggers.
+ * Who is writing. Only the Workspace Owner, through the UI, may create, edit
+ * or delete an Inbound Trigger (ADR-0030): the Agent's Trigger tools must
+ * never mint a live credential into a model's context or a Chat transcript,
+ * nor stop an integration a caller depends on. Defaults to the narrower
+ * surface, so a new caller has to opt in to reaching Inbound Triggers.
  */
 export type TriggerWriteOptions = { allowInbound?: boolean };
 
@@ -214,7 +215,7 @@ const parseInboundConfig = (config: unknown): InboundTriggerConfig => {
 };
 
 const INBOUND_ONLY_IN_UI =
-  "Inbound triggers can only be created and edited by the Workspace Owner in the Triggers page.";
+  "Inbound triggers can only be created, edited and deleted by the Workspace Owner in the Triggers page.";
 
 /**
  * A Trigger row as either surface returns it: without the token's hash or the
@@ -451,12 +452,28 @@ export const getTrigger = (
 ): Promise<TriggerRow> =>
   requireOwned(db, "trigger", { id: triggerId, workspaceId: ctx.workspaceId });
 
-/** Deletes a Trigger in this Workspace; `false` when none was here. */
-export const deleteTrigger = (
+/**
+ * Deletes a Trigger in this Workspace; `false` when none was here. An Inbound
+ * Trigger only on the Owner's surface: an inbound run's context carries
+ * caller-supplied text, and an Agent talked into deleting its own integration
+ * would stop it with nothing but a uniform `404` to show for it (ADR-0030).
+ * The type is read first, then the row deleted — safe because no edit moves a
+ * Trigger's type to or from `inbound`.
+ */
+export const deleteTrigger = async (
   ctx: ScopeContext,
   triggerId: string,
-): Promise<boolean> =>
-  deleteOwned(db, "trigger", { id: triggerId, workspaceId: ctx.workspaceId });
+  { allowInbound = false }: TriggerWriteOptions = {},
+): Promise<boolean> => {
+  const ref = { id: triggerId, workspaceId: ctx.workspaceId };
+  if (!allowInbound) {
+    const existing = await resolveOwned(db, "trigger", ref);
+    if (existing?.type === "inbound") {
+      throw new ValidationError(INBOUND_ONLY_IN_UI);
+    }
+  }
+  return deleteOwned(db, "trigger", ref);
+};
 
 /**
  * Issues a new token for an Inbound Trigger in this Workspace, invalidating

@@ -12,6 +12,7 @@ vi.mock("./notification.ts", () => ({
 import { fireTrigger } from "./trigger-firing.ts";
 import { createNotification } from "./notification.ts";
 import { hashInboundToken } from "./inbound-trigger-token.ts";
+import { ConflictError } from "../errors.ts";
 import {
   acceptInboundCall,
   activeInboundRunCount,
@@ -233,6 +234,8 @@ describe("inbound triggers", () => {
       [{ inputs: { issueKey: 42 } }, "Input 'issueKey' must be a string."],
       [{ inputs: { issueKey: null } }, "Input 'issueKey' must be a string."],
       [{ inputs: ["PLAT-42"] }, "'inputs' must be a JSON object."],
+      // Present but `null` is not "no inputs": it is refused, not read as `{}`.
+      [{ inputs: null }, "'inputs' must be a JSON object."],
       [["PLAT-42"], "The request body must be a JSON object."],
       [
         { issueKey: "PLAT-42" },
@@ -297,6 +300,39 @@ describe("inbound triggers", () => {
       const fake = seed();
       await acceptInboundCall(target(), config, { issueKey: "A" }, settings);
       expect(fake.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it("queues a record's concurrent calls in memory, so only one holds a connection waiting on the lock", async () => {
+      const fake = seed();
+      let release: () => void = () => {};
+      fake.execute.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ rowCount: 0, rows: [] });
+          }),
+      );
+
+      const first = acceptInboundCall(
+        target(),
+        config,
+        { issueKey: "A" },
+        settings,
+      );
+      const second = acceptInboundCall(
+        target(),
+        config,
+        { issueKey: "A" },
+        settings,
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // The second call has not opened a transaction behind the first.
+      expect(fake.execute).toHaveBeenCalledTimes(1);
+
+      release();
+      expect((await first).outcome).toBe("accepted");
+      expect((await second).outcome).toBe("deduplicated");
+      expect(fake.execute).toHaveBeenCalledTimes(2);
     });
 
     it("returns the active run for a record that has one, and starts nothing", async () => {
@@ -606,6 +642,73 @@ describe("inbound triggers", () => {
       expect(fake.tables.trigger[0].tokenNotice).toBe("expiring_7");
     });
 
+    it("sends a reminder again on the next sweep when its Notification could not be posted", async () => {
+      const fake = seed({
+        trigger: [
+          inboundTrigger({
+            tokenCreatedAt: new Date(NOW.getTime() - 70 * DAY),
+            tokenExpiresAt: new Date(NOW.getTime() + 20 * DAY),
+          }),
+        ],
+      });
+      vi.mocked(createNotification).mockRejectedValueOnce(new Error("db down"));
+
+      await sendInboundTokenReminders(NOW);
+      // Handed back, not recorded as sent.
+      expect(fake.tables.trigger[0].tokenNotice).toBeNull();
+
+      await sendInboundTokenReminders(NOW);
+      expect(createNotification).toHaveBeenCalledTimes(2);
+      expect(fake.tables.trigger[0].tokenNotice).toBe("expiring_30");
+    });
+
+    it("keeps sending the other Triggers' reminders when one fails", async () => {
+      const fake = seed({
+        trigger: [
+          inboundTrigger({
+            id: "trig-1",
+            tokenCreatedAt: new Date(NOW.getTime() - 70 * DAY),
+            tokenExpiresAt: new Date(NOW.getTime() + 20 * DAY),
+          }),
+          inboundTrigger({
+            id: "trig-2",
+            tokenCreatedAt: new Date(NOW.getTime() - 70 * DAY),
+            tokenExpiresAt: new Date(NOW.getTime() + 20 * DAY),
+          }),
+        ],
+      });
+      const handle = fake.handle as { update: (...args: unknown[]) => unknown };
+      const update = handle.update;
+      handle.update = () => {
+        handle.update = update;
+        throw new Error("db down");
+      };
+
+      await sendInboundTokenReminders(NOW);
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(fake.tables.trigger.map((t) => t.tokenNotice)).toEqual([
+        null,
+        "expiring_30",
+      ]);
+    });
+
+    it("tells the Owner about an expired token on a later call when the first notice could not be posted", async () => {
+      const fake = seed({
+        trigger: [
+          inboundTrigger({ tokenExpiresAt: new Date(NOW.getTime() - 1) }),
+        ],
+      });
+      vi.mocked(createNotification).mockRejectedValueOnce(new Error("db down"));
+
+      await authenticateInboundCall("trig-1", `Bearer ${TOKEN}`);
+      expect(fake.tables.trigger[0].tokenNotice).toBeNull();
+
+      await authenticateInboundCall("trig-1", `Bearer ${TOKEN}`);
+      expect(createNotification).toHaveBeenCalledTimes(2);
+      expect(fake.tables.trigger[0].tokenNotice).toBe("expired");
+    });
+
     it("skips revoked tokens and Triggers of other types", async () => {
       seed({
         trigger: [
@@ -678,6 +781,24 @@ describe("inbound triggers", () => {
       // The revoked token now fails like any wrong one.
       const result = await authenticateInboundCall("trig-1", `Bearer ${TOKEN}`);
       expect(result.ok ? "ok" : result.reason).toBe("bad_token");
+    });
+
+    it("refuses, and keeps the new token, when the Owner regenerated mid-revoke", async () => {
+      const fake = seed();
+      // The Owner's regenerate lands between the revoke's read and its write.
+      const handle = fake.handle as { update: (...args: unknown[]) => unknown };
+      const update = handle.update;
+      handle.update = (...args: unknown[]) => {
+        fake.tables.trigger[0].tokenHash = "regenerated-hash";
+        handle.update = update;
+        return update(...args);
+      };
+
+      await expect(
+        revokeInboundTriggerToken("org-1", "trig-1"),
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(fake.tables.trigger[0].tokenHash).toBe("regenerated-hash");
+      expect(createNotification).not.toHaveBeenCalled();
     });
 
     it("cannot reach another Organization's Trigger", async () => {

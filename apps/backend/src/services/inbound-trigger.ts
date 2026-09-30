@@ -24,6 +24,7 @@ import {
   user as userTable,
   workspace as workspaceTable,
 } from "../db/schema.ts";
+import { ConflictError } from "../errors.ts";
 import { logger } from "../logger.ts";
 import { createNotification } from "./notification.ts";
 import {
@@ -284,7 +285,9 @@ export const validateInboundBody = (
       message: `Unexpected field '${unexpected[0]}'. The body is { "inputs": { ... } }.`,
     };
   }
-  const raw = body.inputs ?? {};
+  // Absent is a call with no inputs; present is taken as sent, so an explicit
+  // `null` is refused like any other non-object rather than read as `{}`.
+  const raw = Object.hasOwn(body, "inputs") ? body.inputs : {};
   if (!isPlainObject(raw)) {
     return { ok: false, message: "'inputs' must be a JSON object." };
   }
@@ -343,6 +346,32 @@ export const resetInboundRunSlots = (): void => {
 };
 
 /**
+ * Calls waiting for their record's turn in this process, by lock key. The
+ * advisory lock is what serialises a record across instances, but a call
+ * waiting on it holds a pooled connection the whole time — so a burst at one
+ * Trigger with no record key could hold every connection in the pool while
+ * all but one of them wait. Queuing here first means a process has at most
+ * one connection waiting per record; the rest wait in memory.
+ */
+const localTurns = new Map<string, Promise<void>>();
+
+const inLocalTurn = async <T>(key: string, work: () => Promise<T>) => {
+  const previous = localTurns.get(key) ?? Promise.resolve();
+  const turn = previous.then(work);
+  const settled = turn.then(
+    () => undefined,
+    () => undefined,
+  );
+  localTurns.set(key, settled);
+  try {
+    return await turn;
+  } finally {
+    // The last call in the queue clears it, so an idle record holds nothing.
+    if (localTurns.get(key) === settled) localTurns.delete(key);
+  }
+};
+
+/**
  * The entity an inbound run is counted and deduplicated under: the record
  * key's value, or — with no key marked — the Trigger's own id, so the breaker
  * caps the whole Trigger and no inbound run is exempt from it.
@@ -379,58 +408,65 @@ export const acceptInboundCall = async (
 ): Promise<InboundAcceptance> => {
   const { trigger } = target;
   const entityId = inboundEntityId(trigger, config, inputs);
+  const lockKey = `inbound:${trigger.id}:${entityId}`;
   // Whether this call holds a run slot, so every path that does not end in a
   // started run gives it back exactly once.
   let holdsSlot = false;
   let decision: InboundAcceptance;
   try {
-    decision = await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`inbound:${trigger.id}:${entityId}`}, 0))`,
-      );
+    decision = await inLocalTurn(lockKey, () =>
+      db.transaction(async (tx) => {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+        );
 
-      if (config.recordKey !== undefined) {
-        const [active] = await tx
-          .select({ id: triggerRunTable.id })
-          .from(triggerRunTable)
-          .where(
-            and(
-              eq(triggerRunTable.triggerId, trigger.id),
-              eq(triggerRunTable.entityId, entityId),
-              inArray(triggerRunTable.status, ["pending", "running"]),
-            ),
-          )
-          .limit(1);
-        if (active) {
-          return { outcome: "deduplicated" as const, runId: active.id };
+        if (config.recordKey !== undefined) {
+          const [active] = await tx
+            .select({ id: triggerRunTable.id })
+            .from(triggerRunTable)
+            .where(
+              and(
+                eq(triggerRunTable.triggerId, trigger.id),
+                eq(triggerRunTable.entityId, entityId),
+                inArray(triggerRunTable.status, ["pending", "running"]),
+              ),
+            )
+            .limit(1);
+          if (active) {
+            return { outcome: "deduplicated" as const, runId: active.id };
+          }
         }
-      }
 
-      const suppress = await shouldSuppressTriggerRun(trigger.id, entityId, tx);
-      if (!suppress) {
-        // The cap bounds runs, so it is asked only by a call that would start
-        // one. Past it, nothing is written: the transaction ends empty.
-        if (!tryAcquireRunSlot(settings.maxConcurrentRuns)) {
-          return { outcome: "rate_limited" as const };
+        const suppress = await shouldSuppressTriggerRun(
+          trigger.id,
+          entityId,
+          tx,
+        );
+        if (!suppress) {
+          // The cap bounds runs, so it is asked only by a call that would start
+          // one. Past it, nothing is written: the transaction ends empty.
+          if (!tryAcquireRunSlot(settings.maxConcurrentRuns)) {
+            return { outcome: "rate_limited" as const };
+          }
+          holdsSlot = true;
         }
-        holdsSlot = true;
-      }
-      const runId = nanoid();
-      const now = new Date();
-      await tx.insert(triggerRunTable).values({
-        id: runId,
-        triggerId: trigger.id,
-        status: suppress ? "suppressed" : "pending",
-        entityId,
-        eventType: null,
-        eventData: { inputs },
-        startedAt: now,
-        createdAt: now,
-      });
-      return suppress
-        ? { outcome: "suppressed" as const, runId }
-        : { outcome: "accepted" as const, runId };
-    });
+        const runId = nanoid();
+        const now = new Date();
+        await tx.insert(triggerRunTable).values({
+          id: runId,
+          triggerId: trigger.id,
+          status: suppress ? "suppressed" : "pending",
+          entityId,
+          eventType: null,
+          eventData: { inputs },
+          startedAt: now,
+          createdAt: now,
+        });
+        return suppress
+          ? { outcome: "suppressed" as const, runId }
+          : { outcome: "accepted" as const, runId };
+      }),
+    );
   } catch (error) {
     if (holdsSlot) releaseRunSlot();
     throw error;
@@ -573,14 +609,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const formatDate = (date: Date): string => date.toISOString().slice(0, 10);
 
-/** Posts a Notification to the Trigger's Workspace, from the Trigger's Agent. */
+/**
+ * Posts a Notification to the Trigger's Workspace, from the Trigger's Agent.
+ * `false` — logged — when it could not be posted, so a notice claimed for it
+ * can be handed back and sent again.
+ */
 const notifyOwner = async (
   target: Pick<InboundTarget, "organizationId" | "workspaceId"> & {
     trigger: Pick<TriggerRow, "id" | "agentId">;
   },
   title: string,
   body: string,
-): Promise<void> => {
+): Promise<boolean> => {
   try {
     await createNotification(
       db,
@@ -591,6 +631,7 @@ const notifyOwner = async (
       },
       { title, body },
     );
+    return true;
   } catch (error) {
     logger.error(
       {
@@ -599,6 +640,7 @@ const notifyOwner = async (
       },
       "Failed to notify the Workspace Owner about an inbound trigger token",
     );
+    return false;
   }
 };
 
@@ -631,24 +673,53 @@ const claimNotice = async (
 };
 
 /**
+ * Hands back a notice {@link claimNotice} recorded but whose Notification
+ * could not be posted, so the next reminder sweep — or the next call with an
+ * expired token — sends it after all. Conditional like the claim, so it never
+ * undoes a later notice or reaches a token issued since. Best-effort: a
+ * failure is logged, and costs only that one Notification.
+ */
+const releaseNotice = async (
+  triggerId: string,
+  tokenHash: string,
+  notice: TokenNotice,
+  previous: string | null,
+): Promise<void> => {
+  try {
+    await db
+      .update(triggerTable)
+      .set({ tokenNotice: previous })
+      .where(
+        and(
+          eq(triggerTable.id, triggerId),
+          eq(triggerTable.tokenHash, tokenHash),
+          eq(triggerTable.tokenNotice, notice),
+        ),
+      );
+  } catch (error) {
+    logger.error(
+      {
+        triggerId,
+        notice,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to hand back an unsent inbound trigger token notice",
+    );
+  }
+};
+
+/**
  * The first call with an expired token tells the Owner, once per token: the
  * caller only sees the uniform `404`, and many callers do not retry, so
  * nothing else would say a live integration has stopped.
  */
 const noticeExpiredTokenUse = async (target: InboundTarget): Promise<void> => {
   const { trigger } = target;
-  if (!trigger.tokenHash || tokenNoticeSent(trigger.tokenNotice, "expired")) {
-    return;
-  }
+  // Read once, before the claim moves the row on: the hand-back restores this.
+  const { tokenHash, tokenNotice: previous } = trigger;
+  if (!tokenHash || tokenNoticeSent(previous, "expired")) return;
   try {
-    if (
-      !(await claimNotice(
-        trigger.id,
-        trigger.tokenHash,
-        trigger.tokenNotice,
-        "expired",
-      ))
-    ) {
+    if (!(await claimNotice(trigger.id, tokenHash, previous, "expired"))) {
       return;
     }
   } catch (error) {
@@ -664,11 +735,12 @@ const noticeExpiredTokenUse = async (target: InboundTarget): Promise<void> => {
   const expired = trigger.tokenExpiresAt
     ? ` on ${formatDate(trigger.tokenExpiresAt)}`
     : "";
-  await notifyOwner(
+  const sent = await notifyOwner(
     target,
     "Inbound trigger token has expired",
     `A call to the inbound trigger "${trigger.name}" used its token after it expired${expired}, and was refused. Regenerate the token on the trigger's page and update the system that calls it.`,
   );
+  if (!sent) await releaseNotice(trigger.id, tokenHash, "expired", previous);
 };
 
 /**
@@ -693,9 +765,11 @@ export const dueReminder = (
 
 /**
  * Sends each Inbound Trigger token's expiry reminders as they fall due. Run
- * on the scheduler's tick, under its lock. Each reminder is claimed on the row
- * before it is sent, so a tick that runs twice, or a peer, never repeats one,
- * and deleting the Notification never brings it back.
+ * from the scheduler, under its lock. Each reminder is claimed on the row
+ * before it is sent, so a sweep that runs twice, or a peer, never repeats one,
+ * and deleting the Notification never brings it back; one that could not be
+ * posted is handed back and sent by the next sweep. Each Trigger is handled
+ * on its own, so one that fails does not hold back the rest.
  */
 export const sendInboundTokenReminders = async (
   now: Date = new Date(),
@@ -715,34 +789,37 @@ export const sendInboundTokenReminders = async (
 
   for (const row of rows) {
     const trigger = row.trigger;
-    if (!trigger.tokenHash || !trigger.tokenExpiresAt) continue;
+    // Read once, before the claim moves the row on: the hand-back restores it.
+    const { tokenHash, tokenExpiresAt, tokenNotice: previous } = trigger;
+    if (!tokenHash || !tokenExpiresAt) continue;
     const due = dueReminder(
-      {
-        tokenCreatedAt: trigger.tokenCreatedAt,
-        tokenExpiresAt: trigger.tokenExpiresAt,
-      },
+      { tokenCreatedAt: trigger.tokenCreatedAt, tokenExpiresAt },
       now,
     );
-    if (!due || tokenNoticeSent(trigger.tokenNotice, due)) continue;
-    if (
-      !(await claimNotice(
-        trigger.id,
-        trigger.tokenHash,
-        trigger.tokenNotice,
-        due,
-      ))
-    ) {
-      continue;
+    if (!due || tokenNoticeSent(previous, due)) continue;
+    try {
+      if (!(await claimNotice(trigger.id, tokenHash, previous, due))) continue;
+      const sent = await notifyOwner(
+        {
+          organizationId: row.workspace.organizationId,
+          workspaceId: row.workspace.id,
+          trigger,
+        },
+        "Inbound trigger token expires soon",
+        `The token for the inbound trigger "${trigger.name}" expires on ${formatDate(tokenExpiresAt)}. Regenerate it on the trigger's page and update the system that calls it; calls with the current token are refused once it expires.`,
+      );
+      if (!sent) {
+        await releaseNotice(trigger.id, tokenHash, due, previous);
+      }
+    } catch (error) {
+      logger.error(
+        {
+          triggerId: trigger.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to send an inbound trigger token reminder",
+      );
     }
-    await notifyOwner(
-      {
-        organizationId: row.workspace.organizationId,
-        workspaceId: row.workspace.id,
-        trigger,
-      },
-      "Inbound trigger token expires soon",
-      `The token for the inbound trigger "${trigger.name}" expires on ${formatDate(trigger.tokenExpiresAt)}. Regenerate it on the trigger's page and update the system that calls it; calls with the current token are refused once it expires.`,
-    );
   }
 };
 
@@ -839,12 +916,27 @@ export const revokeInboundTriggerToken = async (
     )
     .limit(1);
   if (!row) return false;
-  if (!row.trigger.tokenHash) return true;
+  const { tokenHash } = row.trigger;
+  if (!tokenHash) return true;
 
-  await db
+  // Revokes the token the Admin was looking at, not whichever is current: an
+  // Owner who regenerated in the meantime issued a token nobody has judged,
+  // and wiping it would hand them one that is dead on arrival.
+  const revoked = await db
     .update(triggerTable)
     .set({ ...revokedTokenFields(), updatedAt: new Date() })
-    .where(eq(triggerTable.id, triggerId));
+    .where(
+      and(
+        eq(triggerTable.id, triggerId),
+        eq(triggerTable.tokenHash, tokenHash),
+      ),
+    )
+    .returning({ id: triggerTable.id });
+  if (revoked.length === 0) {
+    throw new ConflictError(
+      "The token was replaced while you were revoking it. Refresh the list and revoke the new one if it should stop too.",
+    );
+  }
 
   await notifyOwner(
     {

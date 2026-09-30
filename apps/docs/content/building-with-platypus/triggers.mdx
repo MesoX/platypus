@@ -108,8 +108,9 @@ about, such as an issue key — and a **Token lifetime** of 30, 90, 180 or 365
 days (**90** unless you change it). See [The record key](#the-record-key) for
 why marking one matters.
 
-Only you, on this form, can create or edit an Inbound Trigger. An Agent's
-Trigger tools refuse to, so a token never lands in a Chat.
+Only you, on this form, can create, edit or delete an Inbound Trigger. An
+Agent's Trigger tools refuse to, so a token never lands in a Chat and a caller
+can't talk an Agent into removing the integration it depends on.
 
 ### Finish
 
@@ -136,6 +137,9 @@ background job — there's no live Chat window. The run is captured as a
 **trigger run** record: it starts as _running_ (an Inbound run is _pending_
 first, from the moment its call is accepted), accrues stats (steps, tool calls,
 token counts, how full the Context window got), and ends _success_ or _failed_.
+An Inbound run still _pending_ after five minutes lost its server before it
+could start; it is marked _failed_, so the next call for that record starts a
+new run instead of being handed the stuck one.
 
 A few details worth knowing:
 
@@ -304,12 +308,17 @@ The call is answered before the Agent starts:
 | `400`                                           | The body isn't `{ "inputs": { … } }` JSON, a required input is missing, one isn't declared, or a value isn't a string. The body says which. |
 | `404`                                           | Refused. See below.                                                                                                                         |
 | `413`                                           | The body is larger than your Operator allows (64 KB unless they changed it).                                                                |
-| `429`                                           | The server is running as many inbound runs as it allows. Retry after the seconds in `Retry-After`.                                          |
+| `429`                                           | The server is running as many inbound runs as it allows, and this call would start another. Retry after the seconds in `Retry-After`.       |
 
 A call past the [run limit](#run-limits) also gets `202` with
 `"deduplicated": false`, but its run is _Suppressed_ and no Agent starts. A
 caller that needs to know the work began has to [check on the
 run](#check-on-a-run).
+
+`429` is only for a call that would start a run. A call that starts none — one
+for a record whose run is still going, or one past the run limit — gets its
+`202` however busy the server is, so retrying never turns an answer you
+already had into a wait.
 
 A `404` does not say why. An unknown Trigger, a missing, wrong, revoked or
 expired token, a disabled Trigger, a Workspace the Organization hasn't allowed,

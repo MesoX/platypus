@@ -223,6 +223,19 @@ export function stuckTriggerCutoff(): Date {
 }
 
 /**
+ * The moment before which a `pending` Inbound Trigger run is considered
+ * abandoned (ADR-0030): the stale buffer alone. A pending row has not started,
+ * so no per-run timeout bounds it — its own process moves it to `running`
+ * moments after accepting the call. One still pending past the buffer lost its
+ * process in between, and it holds its record's dedup, so waiting the full
+ * per-run timeout would answer that record's calls with a run that never
+ * starts for an hour.
+ */
+export function stuckPendingTriggerCutoff(): Date {
+  return staleCutoff(0);
+}
+
+/**
  * Periodic recovery for state left behind by a server crash mid-execution.
  *
  * Two failure modes both manifest as "trigger never runs again":
@@ -261,7 +274,7 @@ export async function recoverStuckTriggers(): Promise<void> {
   // still working on them. `pending` is included for Inbound Trigger runs
   // (ADR-0030): the row is written before the run starts, so a crash between
   // the two leaves it pending — and a pending row holds its record's dedup
-  // slot, so it must not stay that way.
+  // slot, so it gets the shorter cutoff of a run that never started.
   const orphaned = await db
     .update(triggerRunTable)
     .set({
@@ -270,9 +283,15 @@ export async function recoverStuckTriggers(): Promise<void> {
       completedAt: new Date(),
     })
     .where(
-      and(
-        inArray(triggerRunTable.status, ["running", "pending"]),
-        lt(triggerRunTable.startedAt, cutoff),
+      or(
+        and(
+          eq(triggerRunTable.status, "running"),
+          lt(triggerRunTable.startedAt, cutoff),
+        ),
+        and(
+          eq(triggerRunTable.status, "pending"),
+          lt(triggerRunTable.startedAt, stuckPendingTriggerCutoff()),
+        ),
       ),
     )
     .returning({
@@ -428,6 +447,41 @@ export async function recoverStuckChats(): Promise<void> {
 }
 
 /**
+ * How often the Inbound Trigger token reminders are swept. Their thresholds
+ * are days, so the scheduler's every-minute tick would only repeat a query
+ * that finds nothing new; hourly keeps a reminder at most an hour late.
+ */
+const INBOUND_REMINDER_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * When this process last finished a reminder sweep. Per process: each claim
+ * is conditional, so a peer sweeping too never repeats a reminder.
+ */
+let lastInboundReminderSweepAt: number | null = null;
+
+/**
+ * The reminder sweep, when it is due. A sweep that throws is not recorded, so
+ * the next tick tries again rather than waiting out the interval.
+ */
+export async function sweepInboundTokenRemindersIfDue(
+  now: number = Date.now(),
+): Promise<void> {
+  if (
+    lastInboundReminderSweepAt !== null &&
+    now - lastInboundReminderSweepAt < INBOUND_REMINDER_INTERVAL_MS
+  ) {
+    return;
+  }
+  await sendInboundTokenReminders(new Date(now));
+  lastInboundReminderSweepAt = now;
+}
+
+/** Test seam: forget when the reminders were last swept. */
+export function resetInboundReminderSweep(): void {
+  lastInboundReminderSweepAt = null;
+}
+
+/**
  * Starts the background scheduler.
  * This should be called after the database is initialized.
  */
@@ -456,7 +510,7 @@ export function startScheduler(): void {
         logger.error({ error }, "Chat recovery sweep failed");
       }
       try {
-        await sendInboundTokenReminders();
+        await sweepInboundTokenRemindersIfDue();
       } catch (error) {
         logger.error({ error }, "Inbound trigger token reminders failed");
       }

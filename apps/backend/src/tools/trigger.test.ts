@@ -293,5 +293,20 @@ describe("createTriggerTools", () => {
         await callTool(tools.deleteTrigger, { triggerId: "t1", label: "x" }),
       ).toEqual({ error: "Trigger not found" });
     });
+
+    it("reports the refusal to delete an Inbound Trigger as a tool error", async () => {
+      vi.mocked(deleteTrigger).mockRejectedValueOnce(
+        new ValidationError("Inbound triggers can only be deleted in the UI"),
+      );
+
+      expect(
+        await callTool(tools.deleteTrigger, { triggerId: "t1", label: "x" }),
+      ).toEqual({
+        success: false,
+        error: "Inbound triggers can only be deleted in the UI",
+      });
+      // The tool never opts in to reaching Inbound Triggers.
+      expect(deleteTrigger).toHaveBeenCalledWith(ctx, "t1");
+    });
   });
 });

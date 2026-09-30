@@ -305,8 +305,13 @@ export function createTriggerTools(
       label: z.string().describe("The trigger name (for display purposes)"),
     }),
     execute: async ({ triggerId }) => {
-      if (!(await deleteTriggerService(ctx, triggerId))) {
-        return { error: "Trigger not found" };
+      try {
+        if (!(await deleteTriggerService(ctx, triggerId))) {
+          return { error: "Trigger not found" };
+        }
+      } catch (error) {
+        // An Inbound Trigger is refused here, as on create and edit.
+        return toToolError(error);
       }
 
       return { success: true };

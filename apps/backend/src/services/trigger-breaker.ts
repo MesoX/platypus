@@ -223,6 +223,13 @@ export const retainTriggerRuns = async (
           and(
             eq(triggerRunTable.triggerId, triggerId),
             ne(triggerRunTable.status, "suppressed"),
+            // A run still in flight is never pruned, however old: its row is
+            // what its sink finishes and what an Inbound Trigger's dedup and
+            // poll read (ADR-0030). A per-run timeout longer than the window
+            // would otherwise delete a live run's row mid-run. The recovery
+            // sweep fails an abandoned one, which then prunes normally.
+            ne(triggerRunTable.status, "pending"),
+            ne(triggerRunTable.status, "running"),
             lte(triggerRunTable.startedAt, since),
             notInArray(
               triggerRunTable.id,

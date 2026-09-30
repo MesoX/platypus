@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockDb, resetMockDb } from "../test-utils.ts";
-import { lte, notInArray } from "drizzle-orm";
+import { lte, ne, notInArray } from "drizzle-orm";
 import { triggerRun as triggerRunTable } from "../db/schema.ts";
 
 import { mockLogger, mockNanoid } from "../test-setup.ts";
@@ -271,6 +271,24 @@ describe("trigger-breaker", () => {
         2,
         triggerRunTable.id,
         ["suppressed-newest"],
+      );
+    });
+
+    it("never prunes a run still in flight, however old", async () => {
+      // A per-run timeout longer than the breaker window would otherwise
+      // delete a live run's row: its sink would finish nothing, and an Inbound
+      // Trigger's dedup and poll would lose it mid-run.
+      stubRetention({ newest: [{ id: "newest" }], suppressed: [] });
+
+      await retainTriggerRuns("trigger-1", 1);
+
+      expect(vi.mocked(ne)).toHaveBeenCalledWith(
+        triggerRunTable.status,
+        "pending",
+      );
+      expect(vi.mocked(ne)).toHaveBeenCalledWith(
+        triggerRunTable.status,
+        "running",
       );
     });
 

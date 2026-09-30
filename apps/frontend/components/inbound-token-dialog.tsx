@@ -72,9 +72,11 @@ export const InboundTokenDialog = ({
 }) => (
   <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
     <DialogContent
-      // Closing is the one irreversible step, so a stray click outside must
-      // not do it: only the button does.
+      // Closing is the one irreversible step, so neither a stray click
+      // outside, Escape nor a corner X may do it: only the button does.
       onPointerDownOutside={(e) => e.preventDefault()}
+      onEscapeKeyDown={(e) => e.preventDefault()}
+      showCloseButton={false}
     >
       <DialogHeader>
         <DialogTitle>Copy the token now</DialogTitle>

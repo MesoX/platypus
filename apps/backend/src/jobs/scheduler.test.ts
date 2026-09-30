@@ -10,18 +10,22 @@ import type { SQL } from "drizzle-orm";
  * drizzle real and renders the query instead.
  */
 
-const { mockDb, mockFireTrigger } = vi.hoisted(() => ({
+const { mockDb, mockFireTrigger, mockSendReminders } = vi.hoisted(() => ({
   mockDb: {
     update: vi.fn<(table: unknown) => unknown>(),
     select: vi.fn(),
     execute: vi.fn<(query: SQL) => Promise<unknown>>(),
   },
   mockFireTrigger: vi.fn(),
+  mockSendReminders: vi.fn<(now: Date) => Promise<void>>(),
 }));
 
 vi.mock("../index.ts", () => ({ db: mockDb }));
 vi.mock("../services/trigger-firing.ts", () => ({
   fireTrigger: mockFireTrigger,
+}));
+vi.mock("../services/inbound-trigger.ts", () => ({
+  sendInboundTokenReminders: mockSendReminders,
 }));
 
 import { mockLogger } from "../test-setup.ts";
@@ -29,11 +33,13 @@ import { mockLogger } from "../test-setup.ts";
 import {
   recoverStuckChats,
   recoverStuckTriggers,
+  resetInboundReminderSweep,
   runWithLock,
   scheduleAligned,
   startScheduler,
   stuckChatCutoff,
   stuckTriggerCutoff,
+  sweepInboundTokenRemindersIfDue,
 } from "./scheduler.ts";
 import {
   chat as chatTable,
@@ -243,7 +249,7 @@ describe("recoverStuckTriggers", () => {
     vi.useRealTimers();
   });
 
-  it("fails only `running` and `pending` rows started before the Trigger per-run timeout plus the buffer", async () => {
+  it("fails `running` rows past the per-run timeout plus the buffer, and `pending` rows past the buffer alone", async () => {
     process.env.TRIGGER_PER_RUN_TIMEOUT_MS = String(90 * 60 * 1000);
     const { updates } = captureUpdates([]);
 
@@ -257,11 +263,18 @@ describe("recoverStuckTriggers", () => {
     });
     const { sql: text, params } = render(runs.where);
     expect(text).toBe(
-      `("trigger_run"."status" in ($1, $2) and "trigger_run"."started_at" < $3)`,
+      `(("trigger_run"."status" = $1 and "trigger_run"."started_at" < $2) or ` +
+        `("trigger_run"."status" = $3 and "trigger_run"."started_at" < $4))`,
     );
-    // 12:00 − (90 min + 5 min buffer). `pending` is an Inbound Trigger run
-    // whose process died between accepting the call and starting it.
-    expect(params).toEqual(["running", "pending", "2026-08-30T10:25:00.000Z"]);
+    // `running`: 12:00 − (90 min + 5 min buffer). `pending` is an Inbound
+    // Trigger run whose process died between accepting the call and starting
+    // it: it never started, so no per-run timeout applies — 12:00 − 5 min.
+    expect(params).toEqual([
+      "running",
+      "2026-08-30T10:25:00.000Z",
+      "pending",
+      "2026-08-30T11:55:00.000Z",
+    ]);
   });
 
   it("closes the orphaned runs' still-open events as errors, with no duration", async () => {
@@ -341,6 +354,37 @@ describe("recoverStuckTriggers", () => {
       triggerRunEventTable,
     ]);
     expect(mockLogger.error).toHaveBeenCalledTimes(errors);
+  });
+});
+
+describe("sweepInboundTokenRemindersIfDue", () => {
+  const HOUR = 60 * 60 * 1000;
+  const T0 = new Date("2026-08-30T12:00:00.000Z").getTime();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetInboundReminderSweep();
+    mockSendReminders.mockResolvedValue(undefined);
+  });
+
+  it("sweeps at most once an hour: the reminders' thresholds are days", async () => {
+    await sweepInboundTokenRemindersIfDue(T0);
+    await sweepInboundTokenRemindersIfDue(T0 + HOUR - 1);
+    expect(mockSendReminders).toHaveBeenCalledTimes(1);
+    expect(mockSendReminders).toHaveBeenCalledWith(new Date(T0));
+
+    await sweepInboundTokenRemindersIfDue(T0 + HOUR);
+    expect(mockSendReminders).toHaveBeenCalledTimes(2);
+  });
+
+  it("tries again on the next tick after a sweep that failed", async () => {
+    mockSendReminders.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(sweepInboundTokenRemindersIfDue(T0)).rejects.toThrow(
+      "db down",
+    );
+    await sweepInboundTokenRemindersIfDue(T0 + 60_000);
+    expect(mockSendReminders).toHaveBeenCalledTimes(2);
   });
 });
 

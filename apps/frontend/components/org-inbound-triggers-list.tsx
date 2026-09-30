@@ -89,10 +89,12 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
     );
     if (outcome.outcome === "success") {
       toast.success("Token revoked");
-      await mutate();
     } else {
       toast.error(outcome.message);
     }
+    // After a failure too: a token replaced mid-revoke is refused, and the
+    // list should show the one that is current now.
+    await mutate();
     setIsRevoking(false);
     setToRevoke(null);
   };

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../../index.ts";
 import {
   triggerRun as triggerRunTable,
@@ -139,10 +139,24 @@ export class TriggerSink implements RunSink {
     if (this.params.adoptPendingRow) {
       // `startedAt` moves to the real start, so the run's duration does not
       // include the moment between acceptance and the Drive picking it up.
-      await db
+      // Only a row still `pending` is adopted: one the recovery sweep already
+      // failed, or retention pruned, must not come back as a live run nobody's
+      // dedup or poll can see. Throwing fails the run before the Agent starts.
+      const adopted = await db
         .update(triggerRunTable)
         .set({ status: "running", startedAt: new Date() })
-        .where(eq(triggerRunTable.id, ctx.runId));
+        .where(
+          and(
+            eq(triggerRunTable.id, ctx.runId),
+            eq(triggerRunTable.status, "pending"),
+          ),
+        )
+        .returning({ id: triggerRunTable.id });
+      if (adopted.length === 0) {
+        throw new Error(
+          `Inbound trigger run '${ctx.runId}' is no longer pending; not started`,
+        );
+      }
     } else {
       await db.insert(triggerRunTable).values({
         id: ctx.runId,

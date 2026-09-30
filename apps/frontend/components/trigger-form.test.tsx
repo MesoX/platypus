@@ -336,8 +336,38 @@ describe("TriggerForm — Inbound Triggers", () => {
     ).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
 
+    // Only the button closes it: Escape does not, and there is no corner X.
+    fireEvent.keyDown(screen.getByDisplayValue("pit_shown-once"), {
+      key: "Escape",
+    });
+    expect(screen.getByDisplayValue("pit_shown-once")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole("button", { name: /copied it/i }));
     expect(push).toHaveBeenCalledWith("/org1/workspace/ws1");
+  });
+
+  it("does not claim the gate is closed while the Workspace is still loading", async () => {
+    // Under `selected` the answer is the Workspace's own flag: unknown until
+    // it loads, and unknown is not "not allowed".
+    setDataFor("/organizations/org1", { inboundTriggerGate: "selected" });
+    setLoading("/workspaces/ws1");
+    await renderInboundTriggerForm();
+
+    expect(
+      screen.queryByText(/doesn.t allow Inbound Triggers/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says the gate is closed once the Workspace has loaded without the allow flag", async () => {
+    setDataFor("/organizations/org1", { inboundTriggerGate: "selected" });
+    setDataFor("/workspaces/ws1", { inboundTriggersAllowed: false });
+    await renderInboundTriggerForm();
+
+    expect(
+      screen.getByText(/doesn.t allow Inbound Triggers/),
+    ).toBeInTheDocument();
   });
 
   it("unmarks the record key when its input stops being required", async () => {

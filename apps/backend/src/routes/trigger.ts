@@ -135,7 +135,13 @@ trigger.delete(
   async (c) => {
     const triggerId = c.req.param("triggerId");
 
-    if (!(await deleteTrigger(workspaceScopeOf(c), triggerId))) {
+    // The Workspace Owner in the UI — the one surface allowed to delete an
+    // Inbound Trigger (ADR-0030).
+    if (
+      !(await deleteTrigger(workspaceScopeOf(c), triggerId, {
+        allowInbound: true,
+      }))
+    ) {
       throw new NotFoundError("Trigger not found");
     }
 

@@ -767,8 +767,13 @@ const TriggerForm = ({
     .map(([, message]) => message);
 
   const tokenStatus = trigger ? inboundTokenStatus(trigger, now) : "none";
+  // Only once everything the answer depends on has loaded: under `selected`
+  // that includes the Workspace's own flag, and a Workspace still loading (or
+  // failed to load) is unknown, not disallowed.
   const gateClosed =
     organization !== undefined &&
+    (organization.inboundTriggerGate !== "selected" ||
+      workspace !== undefined) &&
     !inboundGateAdmits(
       organization.inboundTriggerGate,
       workspace?.inboundTriggersAllowed,

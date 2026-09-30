@@ -606,6 +606,22 @@ describe("trigger module", () => {
       expect(await deleteTrigger(ctx, "trig-1")).toBe(false);
       expect(fake.tables.trigger).toHaveLength(1);
     });
+
+    it("refuses an Inbound Trigger unless the caller is the Owner's surface", async () => {
+      // An inbound run's context carries caller text: an Agent talked into
+      // deleting its own integration would stop it silently.
+      const fake = world({ trigger: [triggerRow({ type: "inbound" })] });
+
+      await expect(deleteTrigger(ctx, "trig-1")).rejects.toThrow(
+        ValidationError,
+      );
+      expect(fake.tables.trigger).toHaveLength(1);
+
+      expect(await deleteTrigger(ctx, "trig-1", { allowInbound: true })).toBe(
+        true,
+      );
+      expect(fake.tables.trigger).toHaveLength(0);
+    });
   });
 
   describe("inbound triggers", () => {

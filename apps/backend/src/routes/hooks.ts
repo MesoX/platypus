@@ -6,7 +6,6 @@ import {
   acceptInboundCall,
   authenticateInboundCall,
   getInboundRunStatus,
-  inboundEntityId,
   inboundTriggerSettings,
   INBOUND_RETRY_AFTER_SECONDS,
   loadInboundTarget,
@@ -95,33 +94,25 @@ const loadTargetForLog = async (
   }
 };
 
+/** Answers a body past the cap, logging it like any other rejection. */
+const bodyTooLarge = async (c: Context) => {
+  const triggerId = c.req.param("triggerId") ?? "";
+  const target = await loadTargetForLog(triggerId);
+  recordRejection(triggerId, "body_too_large", target);
+  return c.json({ error: "Payload Too Large" }, 413);
+};
+
 /**
  * The body cap is checked first — before the token — and is the only size
- * limit: it bounds what reaches the Agent's context and run history. The
- * middleware is built once per cap value, not per request; the value is the
- * one the boot validation reported.
+ * limit: it bounds what reaches the Agent's context and run history. The cap
+ * is the value the boot validation reported, read per call like every other
+ * setting; building the limiter is a closure, not work worth caching.
  */
-let capBodyFor: { maxSize: number; middleware: MiddlewareHandler } | null =
-  null;
-
-const capBody: MiddlewareHandler = (c, next) => {
-  const { maxBodyBytes } = inboundTriggerSettings();
-  if (capBodyFor?.maxSize !== maxBodyBytes) {
-    capBodyFor = {
-      maxSize: maxBodyBytes,
-      middleware: bodyLimit({
-        maxSize: maxBodyBytes,
-        onError: async (limited) => {
-          const triggerId = limited.req.param("triggerId") ?? "";
-          const target = await loadTargetForLog(triggerId);
-          recordRejection(triggerId, "body_too_large", target);
-          return limited.json({ error: "Payload Too Large" }, 413);
-        },
-      }),
-    };
-  }
-  return capBodyFor.middleware(c, next);
-};
+const capBody: MiddlewareHandler = (c, next) =>
+  bodyLimit({
+    maxSize: inboundTriggerSettings().maxBodyBytes,
+    onError: bodyTooLarge,
+  })(c, next);
 
 hooks.post("/triggers/:triggerId", capBody, async (c) => {
   // Always present: the path names it. `capBody` widens the context type.
@@ -167,9 +158,10 @@ const fire = async (c: Context, triggerId: string) => {
     return c.json({ error: validated.message }, 400);
   }
 
+  // The record key's value, for the log line; validation proved it present.
   const recordKey =
     config.recordKey !== undefined
-      ? inboundEntityId(target.trigger, config, validated.inputs)
+      ? validated.inputs[config.recordKey]
       : undefined;
   const acceptance = await acceptInboundCall(target, config, validated.inputs);
 
