@@ -5,7 +5,7 @@ import {
   listOrgInboundTriggers,
   revokeInboundTriggerToken,
 } from "../services/inbound-trigger.ts";
-import { NotFoundError } from "../errors.ts";
+import { NotFoundError, ValidationError } from "../errors.ts";
 import type { Variables } from "../server.ts";
 
 /**
@@ -27,14 +27,29 @@ orgInboundTrigger.get(
   },
 );
 
-/** Revoke an Inbound Trigger's token. The Owner is notified. */
+/**
+ * Revoke an Inbound Trigger's token. The Owner is notified. `tokenCreatedAt`
+ * names the token the Admin saw, as the list reported it; `409` when the
+ * current one was issued at another time.
+ */
 orgInboundTrigger.delete(
   "/:triggerId/token",
   requireAuth,
   requireOrgAccess(["admin"]),
   async (c) => {
     const { orgId } = orgScopeOf(c);
-    if (!(await revokeInboundTriggerToken(orgId, c.req.param("triggerId")))) {
+    const seenTokenCreatedAt = new Date(c.req.query("tokenCreatedAt") ?? "");
+    if (Number.isNaN(seenTokenCreatedAt.getTime())) {
+      throw new ValidationError(
+        "tokenCreatedAt must name the token to revoke, as the list reported it.",
+      );
+    }
+    const found = await revokeInboundTriggerToken(
+      orgId,
+      c.req.param("triggerId"),
+      seenTokenCreatedAt,
+    );
+    if (!found) {
       throw new NotFoundError("Inbound trigger not found");
     }
     return c.json({ message: "Token revoked" });

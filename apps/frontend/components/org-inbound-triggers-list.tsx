@@ -80,10 +80,15 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
   const handleRevoke = async () => {
     if (!backendUrl || !toRevoke) return;
     setIsRevoking(true);
+    // Names the token this row showed, so a token the Owner regenerated since
+    // the list loaded is refused rather than revoked unseen.
+    const seen = new URLSearchParams({
+      tokenCreatedAt: toRevoke.tokenCreatedAt ?? "",
+    });
     const outcome = await writeAt(
       joinUrl(
         scopedUrl(backendUrl, "inbound-triggers", scope),
-        `/${toRevoke.id}/token`,
+        `/${toRevoke.id}/token?${seen}`,
       ),
       { method: "DELETE" },
     );
@@ -92,8 +97,8 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
     } else {
       toast.error(outcome.message);
     }
-    // After a failure too: a token replaced mid-revoke is refused, and the
-    // list should show the one that is current now.
+    // After a failure too: a token replaced since the list loaded is refused,
+    // and the list should show the one that is current now.
     await mutate();
     setIsRevoking(false);
     setToRevoke(null);

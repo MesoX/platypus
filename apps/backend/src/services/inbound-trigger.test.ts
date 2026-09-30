@@ -763,10 +763,15 @@ describe("inbound triggers", () => {
       ).toBe("active");
     });
 
+    /** When the fixture's token was issued — what the Admin's list showed. */
+    const SEEN = new Date(NOW.getTime() - 10 * DAY);
+
     it("revokes a token and tells the Owner", async () => {
       const fake = seed();
 
-      expect(await revokeInboundTriggerToken("org-1", "trig-1")).toBe(true);
+      expect(await revokeInboundTriggerToken("org-1", "trig-1", SEEN)).toBe(
+        true,
+      );
       expect(fake.tables.trigger[0]).toMatchObject({
         tokenHash: null,
         tokenExpiresAt: null,
@@ -795,7 +800,24 @@ describe("inbound triggers", () => {
       };
 
       await expect(
-        revokeInboundTriggerToken("org-1", "trig-1"),
+        revokeInboundTriggerToken("org-1", "trig-1", SEEN),
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(fake.tables.trigger[0].tokenHash).toBe("regenerated-hash");
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    it("refuses, and keeps the new token, when the Owner regenerated after the list loaded", async () => {
+      const fake = seed({
+        trigger: [
+          inboundTrigger({
+            tokenHash: "regenerated-hash",
+            tokenCreatedAt: new Date(NOW.getTime() - DAY),
+          }),
+        ],
+      });
+
+      await expect(
+        revokeInboundTriggerToken("org-1", "trig-1", SEEN),
       ).rejects.toBeInstanceOf(ConflictError);
       expect(fake.tables.trigger[0].tokenHash).toBe("regenerated-hash");
       expect(createNotification).not.toHaveBeenCalled();
@@ -803,7 +825,9 @@ describe("inbound triggers", () => {
 
     it("cannot reach another Organization's Trigger", async () => {
       const fake = seed();
-      expect(await revokeInboundTriggerToken("org-2", "trig-1")).toBe(false);
+      expect(await revokeInboundTriggerToken("org-2", "trig-1", SEEN)).toBe(
+        false,
+      );
       expect(fake.tables.trigger[0].tokenHash).not.toBeNull();
       expect(createNotification).not.toHaveBeenCalled();
     });

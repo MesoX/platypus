@@ -137,7 +137,9 @@ the reason for each one. Both times update at most once a minute.
 
 **Revoke token** stops a token at once and sends its Owner a notification. It is
 the only thing you can do to another person's Trigger here. You cannot edit or
-disable one.
+disable one. It revokes only the token the list showed you: if the Owner issued
+a new one since you opened the page, the revoke is refused and the list
+refreshes, so you can judge the new token before revoking it too.
 
 <Callout type="warning">
   A revoke is not lasting: the Owner can issue a new token straight away. To

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockDb, mockSession, resetMockDb } from "../test-utils.ts";
+import { ConflictError } from "../errors.ts";
 
 vi.mock("../services/inbound-trigger.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/inbound-trigger.ts")>()),
@@ -38,25 +39,61 @@ describe("Org Inbound Trigger Routes", () => {
     expect(listOrgInboundTriggers).toHaveBeenCalledWith("org-1");
   });
 
-  it("revokes a token for an Org Admin", async () => {
+  const SEEN = "2026-07-01T10:00:00.000Z";
+
+  it("revokes the token the Org Admin saw", async () => {
     asRole("admin");
     vi.mocked(revokeInboundTriggerToken).mockResolvedValueOnce(true);
 
-    const res = await app.request(`${baseUrl}/trig-1/token`, {
-      method: "DELETE",
-    });
+    const res = await app.request(
+      `${baseUrl}/trig-1/token?tokenCreatedAt=${SEEN}`,
+      { method: "DELETE" },
+    );
 
     expect(res.status).toBe(200);
-    expect(revokeInboundTriggerToken).toHaveBeenCalledWith("org-1", "trig-1");
+    expect(revokeInboundTriggerToken).toHaveBeenCalledWith(
+      "org-1",
+      "trig-1",
+      new Date(SEEN),
+    );
   });
+
+  it("409s when the token was replaced since the list loaded", async () => {
+    asRole("admin");
+    vi.mocked(revokeInboundTriggerToken).mockRejectedValueOnce(
+      new ConflictError("The token was replaced since you loaded the list."),
+    );
+
+    const res = await app.request(
+      `${baseUrl}/trig-1/token?tokenCreatedAt=${SEEN}`,
+      { method: "DELETE" },
+    );
+
+    expect(res.status).toBe(409);
+  });
+
+  it.each(["", "?tokenCreatedAt=", "?tokenCreatedAt=yesterday"])(
+    "400s a revoke that doesn't name the token (%s)",
+    async (query) => {
+      asRole("admin");
+
+      const res = await app.request(`${baseUrl}/trig-1/token${query}`, {
+        method: "DELETE",
+      });
+
+      expect(res.status).toBe(400);
+      expect(revokeInboundTriggerToken).not.toHaveBeenCalled();
+    },
+  );
 
   it("404s a revoke of a Trigger not in the Organization", async () => {
     asRole("admin");
     vi.mocked(revokeInboundTriggerToken).mockResolvedValueOnce(false);
 
-    const res = await app.request(`${baseUrl}/trig-x/token`, {
-      method: "DELETE",
-    });
+    const res = await app.request(
+      `${baseUrl}/trig-x/token?tokenCreatedAt=${SEEN}`,
+      { method: "DELETE" },
+    );
 
     expect(res.status).toBe(404);
   });

@@ -53,7 +53,7 @@ describe("OrgInboundTriggersList", () => {
     expect(within(dataRow).getByText("Never")).toBeInTheDocument();
   });
 
-  it("revokes a token through the Org route and revalidates", async () => {
+  it("revokes the token the row showed through the Org route and revalidates", async () => {
     const fetchMock = stubAcceptedSave({ message: "Token revoked" });
     mockScopedSWR({ "/inbound-triggers": [row()] });
     renderList(<OrgInboundTriggersList orgId="org1" />);
@@ -66,7 +66,7 @@ describe("OrgInboundTriggersList", () => {
 
     await waitFor(() => expect(mutate).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://test/organizations/org1/inbound-triggers/trig-1/token",
+      "http://test/organizations/org1/inbound-triggers/trig-1/token?tokenCreatedAt=2026-07-01T10%3A00%3A00.000Z",
       expect.objectContaining({ method: "DELETE" }),
     );
   });

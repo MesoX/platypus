@@ -892,16 +892,24 @@ export const listOrgInboundTriggers = async (
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 };
 
+const TOKEN_REPLACED_MESSAGE =
+  "The token was replaced since you loaded the list. Refresh it and revoke the new one if it should stop too.";
+
 /**
  * Revokes an Inbound Trigger's token on an Org Admin's behalf — the one thing
  * an Admin does inside another person's Workspace. The token stops working at
  * once and the Owner is told; regenerating stays theirs. `false` when no
  * Inbound Trigger by that id is in the Organization. Revoking a Trigger with
  * no token is a no-op that notifies nobody.
+ *
+ * `seenTokenCreatedAt` is when the token the Admin was looking at was issued.
+ * A token issued at any other time is one they never judged, so the revoke is
+ * refused rather than wiping it.
  */
 export const revokeInboundTriggerToken = async (
   orgId: string,
   triggerId: string,
+  seenTokenCreatedAt: Date,
 ): Promise<boolean> => {
   const [row] = await db
     .select()
@@ -916,12 +924,17 @@ export const revokeInboundTriggerToken = async (
     )
     .limit(1);
   if (!row) return false;
-  const { tokenHash } = row.trigger;
+  const { tokenHash, tokenCreatedAt } = row.trigger;
   if (!tokenHash) return true;
 
   // Revokes the token the Admin was looking at, not whichever is current: an
-  // Owner who regenerated in the meantime issued a token nobody has judged,
-  // and wiping it would hand them one that is dead on arrival.
+  // Owner who regenerated since the list loaded issued a token nobody has
+  // judged, and wiping it would hand them one that is dead on arrival.
+  if (tokenCreatedAt?.getTime() !== seenTokenCreatedAt.getTime()) {
+    throw new ConflictError(TOKEN_REPLACED_MESSAGE);
+  }
+  // The same holds for a regenerate landing between the read above and this
+  // write, so the write is conditional on the hash just read.
   const revoked = await db
     .update(triggerTable)
     .set({ ...revokedTokenFields(), updatedAt: new Date() })
@@ -933,9 +946,7 @@ export const revokeInboundTriggerToken = async (
     )
     .returning({ id: triggerTable.id });
   if (revoked.length === 0) {
-    throw new ConflictError(
-      "The token was replaced while you were revoking it. Refresh the list and revoke the new one if it should stop too.",
-    );
+    throw new ConflictError(TOKEN_REPLACED_MESSAGE);
   }
 
   await notifyOwner(
