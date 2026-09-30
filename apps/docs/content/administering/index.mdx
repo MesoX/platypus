@@ -106,13 +106,17 @@ says; they just can't be called until you allow it.
 ### See and revoke
 
 **Organization settings → Inbound Triggers** lists every Inbound Trigger in the
-Organization: its Workspace, Owner, when it was created, whether its token is
-active, expiring within 30 days, expired or missing, and when it was last used
-and last rejected. It never shows a token.
+Organization: its Workspace, Owner, when it was created, its **Token** standing
+— **Active**, **Expiring soon** (within 30 days), **Expired** or **No token** —
+and when it was **Last used** and **Last rejected**. It never shows a token.
 
 **Last rejected** is the column to watch. A Trigger rejecting calls it used to
 accept is usually an expired token behind a broken integration. A Trigger
-rejecting calls it never accepted may be someone guessing.
+rejecting calls it never accepted may be someone guessing. It also moves when a
+caller sends inputs that don't match the Trigger's, or when the server turns calls
+away because it is already running as many inbound runs as it allows — the
+[inbound call log](/reference/backend-configuration#the-inbound-call-log) tells
+these apart. Both times update at most once a minute.
 
 **Revoke token** stops a token at once and sends its Owner a notification. It is
 the only thing you can do to another person's Trigger here. You cannot edit or

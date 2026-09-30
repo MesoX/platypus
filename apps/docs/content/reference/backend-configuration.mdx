@@ -186,11 +186,20 @@ startup. If you put `/hooks/*` behind a proxy, you can enforce the same body
 limit there too, so oversized requests never reach Platypus. Per-client rate
 limiting is also the proxy's job; the backend has none.
 
+<Callout type="warning">
+  The endpoint a Workspace Owner copies from the Trigger's page is built from
+  the frontend's [`BACKEND_URL`](/reference/frontend-configuration) — the
+  address browsers use. Expose `/hooks/*` on a different host and that endpoint
+  points callers at an address they cannot reach. Tell Owners the public host
+  to use instead; the path stays `/hooks/triggers/<trigger-id>`.
+</Callout>
+
 #### The inbound call log
 
-Every call to an Inbound Trigger writes exactly one log line at `info`, whatever
-became of it, with the message `Inbound trigger call`. It is the audit trail of
-inbound calls: ship it to your log store and keep it as long as you need. Its
+Every call that fires an Inbound Trigger writes exactly one log line at `info`,
+whatever became of it, with the message `Inbound trigger call`. A caller polling
+a run writes none. It is the audit trail of inbound calls: ship it to your log
+store and keep it as long as you need. Its
 message, fields and values are a stable format that Platypus keeps unchanged,
 so you can build alerts and reports on them.
 
@@ -198,7 +207,7 @@ Every field is on every line, `null` where it does not apply:
 
 | Field            | Value                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
-| `organizationId` | The Trigger's Organization, when the call named a real Trigger                                    |
+| `organizationId` | The Trigger's Organization, when the call named a real Trigger — never on `internal_error`        |
 | `workspaceId`    | The Trigger's Workspace, same                                                                     |
 | `triggerId`      | The id the call named, real or not                                                                |
 | `outcome`        | What happened — see below                                                                         |
