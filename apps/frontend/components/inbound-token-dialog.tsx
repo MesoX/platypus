@@ -15,6 +15,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/format-date";
+import { copyToClipboard } from "@/lib/clipboard";
 
 /** The fire endpoint an external caller POSTs to (ADR-0030). */
 export const inboundEndpointUrl = (backendUrl: string, triggerId: string) =>
@@ -41,9 +42,16 @@ const CopyRow = ({
         size="icon"
         className="shrink-0 cursor-pointer"
         aria-label={`Copy ${label.toLowerCase()}`}
-        onClick={async () => {
-          await navigator.clipboard.writeText(value);
-          toast.success(copiedMessage);
+        onClick={async (event) => {
+          const row = event.currentTarget.parentElement ?? undefined;
+          if (await copyToClipboard(value, row)) {
+            toast.success(copiedMessage);
+          } else {
+            // Leave the value selected so Ctrl+C still gets it.
+            const input = document.getElementById(id);
+            if (input instanceof HTMLInputElement) input.select();
+            toast.error("Couldn't copy. Select the text and press Ctrl+C.");
+          }
         }}
       >
         <Copy className="h-4 w-4" />
