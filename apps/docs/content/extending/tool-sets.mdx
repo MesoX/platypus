@@ -113,6 +113,14 @@ never the chat. Returning an empty map is still the better habit — the outcome
 is the same, and you get to say _why_ through the
 [logger](/extending/plugin-api-and-config#logging).
 
+A factory that hasn't returned after **20 seconds** is treated the same way: the
+turn stops waiting, serves none of that set's tools, and logs a warning that it
+timed out. It also stops waiting at once if the Chat is cancelled. Your factory
+is not told either happened and keeps running to the end, so a factory that
+waits on something unbounded — a network call with no timeout of its own —
+costs your set its tools on every slow turn. Give that call its own, shorter
+timeout and return an empty map when it fires.
+
 ## Releasing what a factory opened
 
 A factory runs once per turn. If it opens something with a lifetime — a
