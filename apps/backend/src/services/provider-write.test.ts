@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mockDb, resetMockDb } from "../test-utils.ts";
+import { mockDb, resetMockDb, seedDb } from "../test-utils.ts";
 
 vi.mock("./embedding-invalidation.ts", () => ({
   handleEmbeddingConfigChange: vi.fn().mockResolvedValue(undefined),
@@ -257,6 +257,46 @@ describe("provider-write module", () => {
       ).rejects.toThrow(LockedError);
       expect(nullifyEmbeddingsForProvider).not.toHaveBeenCalled();
       expect(mockDb.delete).not.toHaveBeenCalled();
+    });
+
+    it("throws ConflictError naming the Agent that still uses a workspace-scoped provider, before invalidating embeddings", async () => {
+      const fake = seedDb({
+        provider: [{ id: "p1", workspaceId: "ws-1", organizationId: null }],
+        agent: [
+          { id: "a1", workspaceId: "ws-1", providerId: "p1", name: "Helper" },
+          { id: "a2", workspaceId: "ws-1", providerId: "p2", name: "Other" },
+        ],
+      });
+
+      const deleting = deleteProvider(
+        { kind: "workspace", ctx: workspaceCtx },
+        "p1",
+      );
+
+      await expect(deleting).rejects.toThrow(ConflictError);
+      await expect(deleting).rejects.toThrow(
+        'Cannot delete: this provider is used by 1 agent ("Helper"). Delete it or switch it to another provider first.',
+      );
+      expect(fake.tables.provider).toHaveLength(1);
+      expect(nullifyEmbeddingsForProvider).not.toHaveBeenCalled();
+    });
+
+    it("throws ConflictError naming the Agents that still use an organization-scoped provider", async () => {
+      const fake = seedDb({
+        provider: [{ id: "p2", workspaceId: null, organizationId: "org-1" }],
+        agent: [
+          { id: "a1", workspaceId: null, providerId: "p2", name: "Shared" },
+          { id: "a2", workspaceId: "ws-1", providerId: "p2", name: "Local" },
+        ],
+      });
+
+      await expect(
+        deleteProvider({ kind: "organization", orgId: "org-1" }, "p2"),
+      ).rejects.toThrow(
+        'Cannot delete: this provider is used by 2 agents ("Shared", "Local"). Delete them or switch them to another provider first.',
+      );
+      expect(fake.tables.provider).toHaveLength(1);
+      expect(nullifyEmbeddingsForProvider).not.toHaveBeenCalled();
     });
 
     it("deletes an organization-scoped provider once it is confirmed deletable", async () => {

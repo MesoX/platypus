@@ -559,3 +559,27 @@ export const requireSharedDeletable = async (
     );
   }
 };
+
+/**
+ * The `ConflictError` a delete throws while other rows still hold a `restrict`
+ * foreign key to the resource — naming each of them, so the user knows exactly
+ * what to change first. The in-use counterpart to
+ * {@link requireSharedDeletable}'s Attachment/Blueprint conflicts, mapped to
+ * 409 by `app.onError` (ADR-0010). `dependent` is the singular noun for what
+ * holds the reference ("trigger", "agent").
+ */
+export const inUseConflict = (
+  type: ScopedResourceType,
+  dependent: string,
+  names: string[],
+): ConflictError => {
+  const one = names.length === 1;
+  const them = one ? "it" : "them";
+  const quoted = names.map((name) => `"${name}"`).join(", ");
+  const { noun } = REGISTRY[type];
+  return new ConflictError(
+    `Cannot delete: this ${noun} is used by ${names.length} ${dependent}${
+      one ? "" : "s"
+    } (${quoted}). Delete ${them} or switch ${them} to another ${noun} first.`,
+  );
+};

@@ -344,6 +344,41 @@ describe("agent module", () => {
       );
       expect(find(fake, "shared")).toBeDefined();
     });
+
+    it("throws ConflictError naming the Triggers that still use the agent, keeping it and its avatar", async () => {
+      const fake = world();
+      fake.tables.trigger = [
+        {
+          id: "t1",
+          workspaceId: "ws-1",
+          agentId: "a1",
+          name: "Nightly digest",
+        },
+        { id: "t2", workspaceId: "ws-1", agentId: "a1", name: "Inbox triage" },
+        { id: "t3", workspaceId: "ws-1", agentId: "other", name: "Unrelated" },
+      ];
+
+      const deleting = deleteAgent(workspaceScope, "a1");
+
+      await expect(deleting).rejects.toThrow(ConflictError);
+      await expect(deleting).rejects.toThrow(
+        'Cannot delete: this agent is used by 2 triggers ("Nightly digest", "Inbox triage"). Delete them or switch them to another agent first.',
+      );
+      expect(find(fake, "a1")).toBeDefined();
+      expect(storageDelete).not.toHaveBeenCalled();
+    });
+
+    it("scrubs the deleted agent from other agents' subAgentIds in the same transaction", async () => {
+      world();
+
+      await deleteAgent(workspaceScope, "a1");
+
+      expect(scrubDeletedAgentReference).toHaveBeenCalledWith(
+        expect.anything(),
+        "subAgentIds",
+        "a1",
+      );
+    });
   });
 
   describe("deleteAgent (organization scope)", () => {
@@ -367,6 +402,19 @@ describe("agent module", () => {
 
       await expect(deleteAgent(orgScope, "loose")).resolves.toBeUndefined();
       expect(find(fake, "loose")).toBeUndefined();
+    });
+
+    it("throws ConflictError naming a Trigger that still uses the Shared agent", async () => {
+      const fake = world();
+      fake.tables.trigger = [
+        { id: "t1", workspaceId: "ws-2", agentId: "loose", name: "Nightly" },
+      ];
+
+      await expect(deleteAgent(orgScope, "loose")).rejects.toThrow(
+        'Cannot delete: this agent is used by 1 trigger ("Nightly"). Delete it or switch it to another agent first.',
+      );
+      expect(find(fake, "loose")).toBeDefined();
+      expect(storageDelete).not.toHaveBeenCalled();
     });
 
     it("throws ConflictError while an Attachment still references the agent", async () => {

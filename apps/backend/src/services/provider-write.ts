@@ -1,8 +1,11 @@
 import type { z } from "zod";
-import type { SQL } from "drizzle-orm";
+import { eq, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../index.ts";
-import { provider as providerTable } from "../db/schema.ts";
+import {
+  agent as agentTable,
+  provider as providerTable,
+} from "../db/schema.ts";
 import type {
   providerCreateSchema,
   ProviderUpdateData,
@@ -20,6 +23,7 @@ import {
   deMigrateOrphanedAliases,
 } from "./model-alias-migration.ts";
 import {
+  inUseConflict,
   orgScopedWhere,
   requireOrgScoped,
   requireSharedDeletable,
@@ -172,11 +176,31 @@ export async function updateProvider(
 }
 
 /**
+ * Throws `ConflictError` naming every Agent that still runs on this Provider —
+ * `agent.provider_id` is an `ON DELETE RESTRICT` foreign key, so the delete
+ * would otherwise fail in Postgres with nothing the user could act on.
+ */
+async function requireNoAgents(providerId: string): Promise<void> {
+  const agents = await db
+    .select({ name: agentTable.name })
+    .from(agentTable)
+    .where(eq(agentTable.providerId, providerId));
+  if (agents.length > 0) {
+    throw inUseConflict(
+      "provider",
+      "agent",
+      agents.map((a) => a.name),
+    );
+  }
+}
+
+/**
  * Deletes a Provider at the given scope. Throws `NotFoundError` (Workspace
  * scope, via `requireWorkspaceMutable`; Organization scope, when the delete
  * matches no row) and, Workspace scope only, `LockedError` for a Shared
  * Provider (ADR-0007). Organization scope also throws `ConflictError` while
  * an Attachment or Blueprint still references the Provider (ADR-0007/0008).
+ * Either scope then throws `ConflictError` while an Agent still uses it.
  */
 export async function deleteProvider(
   scope: ProviderScope,
@@ -193,6 +217,7 @@ export async function deleteProvider(
     await requireSharedDeletable(db, "provider", providerId);
     where = orgScopedWhere("provider", providerId, scope.orgId);
   }
+  await requireNoAgents(providerId);
 
   // Deleting removes every model this Provider defined, so any Workspace
   // whose memory embeddings were computed against it now points at a config
