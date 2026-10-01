@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   ReactNode,
+  useCallback,
   useDeferredValue,
   useMemo,
 } from "react";
@@ -17,7 +18,7 @@ import {
   resolveActor,
 } from "@/lib/authorization";
 import { scopedUrl, membershipEntity, workspaceEntity } from "@/lib/api-write";
-import { fetcher } from "@/lib/utils";
+import { fetcher, isNotFoundOrForbidden } from "@/lib/utils";
 
 interface OrgMembership {
   id: string;
@@ -70,7 +71,24 @@ interface AuthContextType {
   ownsWorkspace: boolean;
   /** ADR-0006 delegation flags for the Workspace in scope, if any. */
   workspaceDelegation: WorkspaceDelegationFlags | null;
+  /**
+   * A membership or Workspace read that failed for a reason other than
+   * access (a 5xx, the network), with no row to fall back on. The `actor`
+   * then says less than the caller may hold, so a gate shows this as a
+   * retryable failure rather than turning the caller away.
+   */
+  accessReadError: unknown;
+  /** Re-reads the membership and the Workspace. */
+  retryAccessReads: () => void;
 }
+
+/**
+ * A read's error when it failed for a reason reading again might clear and
+ * left no row behind. A 403 or 404 is the server's answer, not a failure;
+ * a failed revalidation still has the row it had.
+ */
+const transientReadError = (error: unknown, data: unknown): unknown =>
+  error && !data && !isNotFoundOrForbidden(error) ? error : null;
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -100,20 +118,38 @@ export function AuthProvider({
   // Membership and Workspace rows are reads, not hand-rolled effects: routing
   // them through SWR gives them a shared, per-key cache the pages read from
   // too, instead of a raw `fetch` invisible to every other consumer.
-  const { data: orgMembership, isLoading: isOrgMembershipLoading } =
-    useSWR<OrgMembership>(
-      userId && orgId
-        ? scopedUrl(backendUrl, membershipEntity, { orgId })
-        : null,
-      fetcher,
-    );
+  const {
+    data: orgMembership,
+    error: orgMembershipError,
+    isLoading: isOrgMembershipLoading,
+    mutate: mutateOrgMembership,
+  } = useSWR<OrgMembership>(
+    userId && orgId ? scopedUrl(backendUrl, membershipEntity, { orgId }) : null,
+    fetcher,
+  );
 
-  const { data: workspace, isLoading: isWorkspaceLoading } = useSWR<Workspace>(
+  const {
+    data: workspace,
+    error: workspaceError,
+    isLoading: isWorkspaceLoading,
+    mutate: mutateWorkspace,
+  } = useSWR<Workspace>(
     userId && orgId && workspaceId
       ? scopedUrl(backendUrl, workspaceEntity(workspaceId), { orgId })
       : null,
     fetcher,
   );
+
+  // A refused membership is the answer — not a member — whatever else
+  // failed to load, so it leaves the gate to turn the caller away.
+  const accessReadError = isNotFoundOrForbidden(orgMembershipError)
+    ? null
+    : (transientReadError(orgMembershipError, orgMembership) ??
+      transientReadError(workspaceError, workspace));
+  const retryAccessReads = useCallback(() => {
+    void mutateOrgMembership();
+    void mutateWorkspace();
+  }, [mutateOrgMembership, mutateWorkspace]);
 
   // Computed permissions
   const isSuperAdmin =
@@ -136,11 +172,14 @@ export function AuthProvider({
     [hasWorkspace, providerSelfManagement, mcpSelfManagement],
   );
 
+  // A read SWR is retrying after a failure is not loading as far as the gate
+  // is concerned: it keeps showing the failure until a retry lands, instead
+  // of flickering back to the page on every attempt.
   const isAuthLoading =
     isPending ||
     (!!data?.user &&
-      ((!!orgId && isOrgMembershipLoading) ||
-        (!!workspaceId && isWorkspaceLoading)));
+      ((!!orgId && isOrgMembershipLoading && !orgMembershipError) ||
+        (!!workspaceId && isWorkspaceLoading && !workspaceError)));
 
   const value = useMemo<AuthContextType>(
     () => ({
@@ -156,6 +195,8 @@ export function AuthProvider({
       actor,
       ownsWorkspace,
       workspaceDelegation,
+      accessReadError,
+      retryAccessReads,
     }),
     [
       backendUrl,
@@ -170,6 +211,8 @@ export function AuthProvider({
       actor,
       ownsWorkspace,
       workspaceDelegation,
+      accessReadError,
+      retryAccessReads,
     ],
   );
 

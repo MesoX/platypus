@@ -26,25 +26,49 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ orgId: "org1", workspaceId: "ws1" }),
 }));
 
-const { swrCalls, membership, workspace } = vi.hoisted(() => ({
-  swrCalls: [] as string[],
-  membership: { id: "m1", organizationId: "org1", role: "admin" as const },
-  workspace: {
+const { swrCalls, membership, workspace, reads } = vi.hoisted(() => {
+  const membership = {
+    id: "m1",
+    organizationId: "org1",
+    role: "admin" as const,
+  };
+  const workspace = {
     ownerId: "u1",
     providerSelfManagement: true,
     mcpSelfManagement: false,
-  },
-}));
+  };
+  return {
+    swrCalls: [] as string[],
+    membership,
+    workspace,
+    // What each access read answers; a test swaps one for a failure. Built
+    // once, so a render doesn't churn the identities the context memoises on.
+    reads: {
+      membership: {
+        data: membership as unknown,
+        error: undefined as unknown,
+        isLoading: false,
+      },
+      workspace: {
+        data: workspace as unknown,
+        error: undefined as unknown,
+        isLoading: false,
+      },
+      mutateMembership: vi.fn(),
+      mutateWorkspace: vi.fn(),
+    },
+  };
+});
 
 vi.mock("swr", () => ({
   __esModule: true,
   default: (key: string | null) => {
     if (key) swrCalls.push(key);
     if (key?.includes("/membership")) {
-      return { data: membership, isLoading: false };
+      return { ...reads.membership, mutate: reads.mutateMembership };
     }
     if (key?.includes("/workspaces/ws1")) {
-      return { data: workspace, isLoading: false };
+      return { ...reads.workspace, mutate: reads.mutateWorkspace };
     }
     return { data: undefined, isLoading: false };
   },
@@ -69,6 +93,10 @@ const Consumer = memo(function Consumer() {
 
 beforeEach(() => {
   swrCalls.length = 0;
+  reads.membership = { data: membership, error: undefined, isLoading: false };
+  reads.workspace = { data: workspace, error: undefined, isLoading: false };
+  reads.mutateMembership.mockReset();
+  reads.mutateWorkspace.mockReset();
   onRender.mockClear();
   sessionState.data = sessionData;
   sessionState.isPending = false;
@@ -156,5 +184,109 @@ describe("AuthProvider", () => {
     fireEvent.click(screen.getByRole("button"));
 
     expect(onRender).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AuthProvider access read failures", () => {
+  function AccessReadConsumer() {
+    const { accessReadError, retryAccessReads, isAuthLoading } = useAuth();
+    return (
+      <button onClick={retryAccessReads}>
+        {accessReadError ? "access read failed" : "access read ok"}
+        {isAuthLoading ? " (loading)" : ""}
+      </button>
+    );
+  }
+
+  const renderConsumer = () =>
+    render(
+      <AuthProvider backendUrl="http://test">
+        <AccessReadConsumer />
+      </AuthProvider>,
+    );
+
+  // A 5xx leaves no membership row, which the gate would otherwise read as
+  // not being a member at all.
+  it.each(["membership", "workspace"] as const)(
+    "reports a %s read that failed for a reason other than access",
+    (read) => {
+      reads[read] = {
+        data: undefined,
+        error: { status: 500 },
+        isLoading: false,
+      };
+      renderConsumer();
+
+      expect(screen.getByText("access read failed")).toBeInTheDocument();
+    },
+  );
+
+  it.each([403, 404])(
+    "leaves a %i membership answer to the access gate",
+    (status) => {
+      reads.membership = {
+        data: undefined,
+        error: { status },
+        isLoading: false,
+      };
+      renderConsumer();
+
+      expect(screen.getByText("access read ok")).toBeInTheDocument();
+    },
+  );
+
+  // Not a member is the answer, whatever else failed to load.
+  it("leaves a refused membership to the access gate even when the Workspace read fails", () => {
+    reads.membership = {
+      data: undefined,
+      error: { status: 404 },
+      isLoading: false,
+    };
+    reads.workspace = {
+      data: undefined,
+      error: { status: 500 },
+      isLoading: false,
+    };
+    renderConsumer();
+
+    expect(screen.getByText("access read ok")).toBeInTheDocument();
+  });
+
+  // SWR retries a failed read on its own; the gate keeps showing the failure
+  // meanwhile instead of flickering back to the page each attempt.
+  it("keeps reporting the failure, not loading, while SWR retries the read", () => {
+    reads.membership = {
+      data: undefined,
+      error: { status: 500 },
+      isLoading: true,
+    };
+    renderConsumer();
+
+    expect(screen.getByText("access read failed")).toBeInTheDocument();
+  });
+
+  it("keeps a row already in hand when only its revalidation fails", () => {
+    reads.membership = {
+      data: membership,
+      error: { status: 500 },
+      isLoading: false,
+    };
+    renderConsumer();
+
+    expect(screen.getByText("access read ok")).toBeInTheDocument();
+  });
+
+  it("retries both access reads", () => {
+    reads.membership = {
+      data: undefined,
+      error: { status: 500 },
+      isLoading: false,
+    };
+    renderConsumer();
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(reads.mutateMembership).toHaveBeenCalled();
+    expect(reads.mutateWorkspace).toHaveBeenCalled();
   });
 });

@@ -12,9 +12,10 @@ cp apps/backend/.env.example apps/backend/.env
 pnpm dev               # frontend + backend + local Postgres
 pnpm drizzle-kit-push  # apply schema changes (requires `pnpm dev` running)
 pnpm build
-pnpm format
-pnpm lint
-pnpm typecheck         # tsc --noEmit (apps/backend, apps/frontend); gated in CI
+pnpm format            # prettier --write .
+pnpm format:check      # prettier --check .; gated in CI
+pnpm lint              # ESLint, every package; gated in CI
+pnpm typecheck         # tsc --noEmit, every package; gated in CI
 pnpm test              # all tests (Vitest, orchestrated by Turborepo)
 ```
 
@@ -39,9 +40,9 @@ Domain hierarchy: **Organization → Workspace → Chat / Agent / MCP / Provider
 ## Known Constraints
 
 - **`drizzle-kit push` applies DDL only — it does NOT run migration `.sql` files.** Data
-  migrations (e.g. custom backfills) run in production via `scripts/migrate.ts` (`drizzle-kit
-migrate`) but are skipped by the dev push flow. In dev, apply any needed data changes manually
-  (e.g. attach org-scoped Shared resources via the UI).
+  migrations (e.g. custom backfills) run in production via `apps/backend/scripts/migrate.ts`
+  (`drizzle-kit migrate`) but are skipped by the dev push flow. In dev, apply any needed data
+  changes manually (e.g. attach org-scoped Shared resources via the UI).
 - **Postgres 18 is not supported** (Drizzle ORM incompatibility).
 - **No TypeScript parameter properties.** Node's strip-only TS mode rejects `constructor(private x: T)` shorthand. Declare fields explicitly and assign in the constructor body.
 - Format with Prettier conventions.

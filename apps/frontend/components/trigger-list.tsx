@@ -308,6 +308,7 @@ export const TriggerList = ({
                         className="cursor-pointer text-muted-foreground"
                         variant="ghost"
                         size="icon"
+                        aria-label={`Actions for ${trigger.name}`}
                         onClick={(e) => e.preventDefault()}
                       >
                         <EllipsisVertical className="h-4 w-4" />

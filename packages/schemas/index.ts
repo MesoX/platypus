@@ -170,6 +170,27 @@ export const CHAT_MAX_STEPS_MAX = 50;
  */
 export const UNTITLED_CHAT_TITLE = "Untitled";
 
+/**
+ * Bounds on the sampling parameters an Agent or a Chat can set. Temperature has
+ * no ceiling because it varies by Provider. Exported so the Agent form and the
+ * Chat settings inputs enforce the same numbers the API does.
+ */
+export const TEMPERATURE_MIN = 0;
+export const TOP_P_MIN = 0;
+export const TOP_P_MAX = 1;
+export const TOP_K_MIN = 1;
+export const PENALTY_MIN = -2;
+export const PENALTY_MAX = 2;
+
+const samplingFields = {
+  temperature: z.number().min(TEMPERATURE_MIN),
+  topP: z.number().min(TOP_P_MIN).max(TOP_P_MAX),
+  topK: z.number().int().min(TOP_K_MIN),
+  seed: z.number().int(),
+  presencePenalty: z.number().min(PENALTY_MIN).max(PENALTY_MAX),
+  frequencyPenalty: z.number().min(PENALTY_MIN).max(PENALTY_MAX),
+};
+
 export const chatSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -191,12 +212,12 @@ export const chatSchema = z.object({
   providerId: z.string().optional(),
   modelId: z.string().optional(),
   instructions: z.string().optional(),
-  temperature: z.number().optional(),
-  topP: z.number().optional(),
-  topK: z.number().optional(),
-  seed: z.number().optional(),
-  presencePenalty: z.number().optional(),
-  frequencyPenalty: z.number().optional(),
+  temperature: samplingFields.temperature.optional(),
+  topP: samplingFields.topP.optional(),
+  topK: samplingFields.topK.optional(),
+  seed: samplingFields.seed.optional(),
+  presencePenalty: samplingFields.presencePenalty.optional(),
+  frequencyPenalty: samplingFields.frequencyPenalty.optional(),
   // Per-chat step ceiling for Direct (no-Agent) turns (#539). Nullable like
   // its six sampling neighbours rather than shaped like the Agent's own
   // `maxSteps`, so a client that clears a field by sending an explicit null
@@ -337,12 +358,14 @@ export const chatActiveLeafSchema = z.object({
   messageId: z.string().min(1),
 });
 
-export const chatUpdateSchema = chatSchema.pick({
-  workspaceId: true,
-  title: true,
-  isPinned: true,
-  tags: true,
-});
+export const chatUpdateSchema = chatSchema
+  .pick({
+    workspaceId: true,
+    title: true,
+    isPinned: true,
+    tags: true,
+  })
+  .partial();
 
 export type ChatSubmitData = z.infer<typeof chatSubmitSchema>;
 
@@ -439,12 +462,12 @@ export const agentBaseSchema = z.object({
   // (null) — without null, JSON.stringify drops the cleared `undefined` key
   // and the column keeps its previous value (#263). null is treated as "unset"
   // at run time, falling back to the provider/model default.
-  temperature: z.number().nullable().optional(),
-  topP: z.number().nullable().optional(),
-  topK: z.number().nullable().optional(),
-  seed: z.number().nullable().optional(),
-  presencePenalty: z.number().nullable().optional(),
-  frequencyPenalty: z.number().nullable().optional(),
+  temperature: samplingFields.temperature.nullable().optional(),
+  topP: samplingFields.topP.nullable().optional(),
+  topK: samplingFields.topK.nullable().optional(),
+  seed: samplingFields.seed.nullable().optional(),
+  presencePenalty: samplingFields.presencePenalty.nullable().optional(),
+  frequencyPenalty: samplingFields.frequencyPenalty.nullable().optional(),
   toolSetIds: z.array(z.string()).optional(),
   skillIds: z.array(z.string()).optional(),
   subAgentIds: z.array(z.string()).optional(),
@@ -1931,7 +1954,8 @@ export const invitationSchema = z.object({
   id: z.string(),
   email: z.string().email(),
   organizationId: z.string(),
-  invitedBy: z.string(),
+  // Null once the inviter's account has been deleted.
+  invitedBy: z.string().nullable(),
   status: invitationStatusSchema,
   // Optional name for the Workspace provisioned when this invitation is
   // accepted (ADR-0008). When null/omitted the accept handler defaults it to
@@ -1964,7 +1988,7 @@ export const invitationCreateSchema = invitationSchema.pick({
 
 export const invitationListItemSchema = invitationSchema.extend({
   organizationName: z.string().optional(),
-  invitedByName: z.string().optional(),
+  invitedByName: z.string().nullable().optional(),
 });
 
 export type InvitationListItem = z.infer<typeof invitationListItemSchema>;
@@ -2266,7 +2290,7 @@ export const triggerSchema = z.object({
     .int()
     .min(TRIGGER_MAX_RUNS_TO_KEEP_MIN)
     .max(TRIGGER_MAX_RUNS_TO_KEEP_MAX)
-    .default(50),
+    .default(10),
   search: z.boolean().default(false),
   // Whether a firing composes the `<memories>` block. Off by default: a
   // headless run should not have a system prompt that drifts with the
@@ -2996,7 +3020,7 @@ export * from "./widget-registry.ts";
 export const dashboardSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
-  name: z.string(),
+  name: z.string().min(1).max(200),
   description: z.string().max(500).nullable().optional(),
   desktopLayout: z.array(rglLayoutItemSchema),
   mobileLayout: z.array(rglLayoutItemSchema),
@@ -3006,17 +3030,19 @@ export const dashboardSchema = z.object({
 
 export type Dashboard = z.infer<typeof dashboardSchema>;
 
-export const dashboardCreateSchema = z.object({
-  name: z.string().min(1).max(200),
-  description: z.string().max(500).nullable().optional(),
+export const dashboardCreateSchema = dashboardSchema.pick({
+  name: true,
+  description: true,
 });
 
-export const dashboardUpdateSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  description: z.string().max(500).nullable().optional(),
-  desktopLayout: z.array(rglLayoutItemSchema).optional(),
-  mobileLayout: z.array(rglLayoutItemSchema).optional(),
-});
+export const dashboardUpdateSchema = dashboardSchema
+  .pick({
+    name: true,
+    description: true,
+    desktopLayout: true,
+    mobileLayout: true,
+  })
+  .partial();
 
 // --- Webhook event payloads --------------------------------------------------
 

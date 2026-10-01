@@ -1,18 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import Link from "next/link";
-import { FileQuestion, ShieldX, TriangleAlert } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { DefaultFormSkeleton } from "@/components/form-skeleton";
+import { FetchErrorNotice } from "@/components/fetch-error-notice";
 
 export type DetailFormStateProps = {
   /** True while the record is still being read. */
@@ -44,37 +34,6 @@ export type DetailFormStateProps = {
    */
   loadingLabel?: string;
   children: ReactNode;
-};
-
-const statusOf = (error: unknown): number | undefined => {
-  if (error && typeof error === "object" && "status" in error) {
-    const { status } = error as { status?: unknown };
-    if (typeof status === "number") return status;
-  }
-  return undefined;
-};
-
-const noticeFor = (subject: string, error: unknown) => {
-  switch (statusOf(error)) {
-    case 404:
-      return {
-        icon: <FileQuestion />,
-        title: "Not found",
-        description: `This ${subject} no longer exists. It may have been deleted.`,
-      };
-    case 403:
-      return {
-        icon: <ShieldX />,
-        title: "You don't have access",
-        description: `You do not have permission to view this ${subject}.`,
-      };
-    default:
-      return {
-        icon: <TriangleAlert />,
-        title: "Couldn't load",
-        description: `This ${subject} couldn't be loaded. Try again in a moment.`,
-      };
-  }
 };
 
 /**
@@ -110,20 +69,13 @@ export const DetailFormState = ({
   }
 
   if (error && !data) {
-    const notice = noticeFor(subject, error);
     return (
-      <Empty className="border-2 border-dashed">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">{notice.icon}</EmptyMedia>
-          <EmptyTitle>{notice.title}</EmptyTitle>
-          <EmptyDescription>{notice.description}</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button asChild variant="outline">
-            <Link href={backHref}>{backLabel}</Link>
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <FetchErrorNotice
+        error={error}
+        subject={subject}
+        backHref={backHref}
+        backLabel={backLabel}
+      />
     );
   }
 

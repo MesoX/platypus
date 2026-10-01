@@ -63,6 +63,32 @@ describe("User Invitation Routes", () => {
         }),
       ]);
     });
+
+    it("still lists an invitation whose inviter's account was deleted", async () => {
+      mockSession({ id: "u1", email: "user@example.com", role: "user" });
+      seedDb({
+        organization: [{ id: "org-1", name: "Org 1" }],
+        invitation: [
+          {
+            id: "inv-orphan",
+            organizationId: "org-1",
+            invitedBy: null,
+            email: "user@example.com",
+            status: "pending",
+            expiresAt: new Date(Date.now() + 7 * DAY),
+          },
+        ],
+      });
+
+      const res = await app.request(baseUrl);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { results: Row[] };
+      expect(body.results).toEqual([
+        expect.objectContaining({ id: "inv-orphan", invitedBy: null }),
+      ]);
+      expect(body.results[0].invitedByName ?? null).toBeNull();
+    });
   });
 
   describe("POST /:invitationId/accept", () => {
@@ -89,7 +115,6 @@ describe("User Invitation Routes", () => {
       mockDb.limit.mockResolvedValueOnce([mockInvitation]); // fetch invitation
 
       // Transaction mocks
-      mockDb.limit.mockResolvedValueOnce([]); // check org membership (none)
       mockDb.orderBy.mockResolvedValueOnce([]); // no blueprints on the invite
 
       const res = await app.request(`${baseUrl}/inv-1/accept`, {
@@ -143,7 +168,6 @@ describe("User Invitation Routes", () => {
           workspaceName: null,
         },
       ]); // fetch invitation
-      mockDb.limit.mockResolvedValueOnce([]); // check org membership (none)
       mockDb.orderBy.mockResolvedValueOnce([]); // no blueprints on the invite
 
       const res = await app.request(`${baseUrl}/inv-1/accept`, {
@@ -183,7 +207,6 @@ describe("User Invitation Routes", () => {
           workspaceName: null,
         },
       ]); // fetch invitation
-      mockDb.limit.mockResolvedValueOnce([]); // check org membership (none)
       mockDb.orderBy.mockResolvedValueOnce([]); // no blueprints on the invite
 
       const res = await app.request(`${baseUrl}/inv-1/accept`, {
@@ -221,7 +244,6 @@ describe("User Invitation Routes", () => {
           workspaceName: null,
         },
       ]); // fetch invitation
-      mockDb.limit.mockResolvedValueOnce([]); // check org membership (none)
       mockDb.orderBy.mockResolvedValueOnce([]); // no blueprints on the invite
 
       const res = await app.request(`${baseUrl}/inv-1/accept`, {
@@ -264,7 +286,6 @@ describe("User Invitation Routes", () => {
           workspaceName: "Provisioned",
         },
       ]); // fetch invitation
-      mockDb.limit.mockResolvedValueOnce([]); // check org membership (none)
       // Ordered set: bp-1 then bp-2.
       mockDb.orderBy.mockResolvedValueOnce([
         { blueprintId: "bp-1" },
@@ -273,7 +294,6 @@ describe("User Invitation Routes", () => {
       // applyBlueprintsToWorkspace: Tier 2 source rows (unordered), then items.
       mockDb.where
         .mockReturnValueOnce(mockDb) // fetch invitation -> limit
-        .mockReturnValueOnce(mockDb) // org membership -> limit
         .mockReturnValueOnce(mockDb) // ordered blueprints -> orderBy
         .mockResolvedValueOnce([
           // bp-1 sets the task provider; bp-2 overrides it (last wins).
@@ -357,7 +377,6 @@ describe("User Invitation Routes", () => {
           workspaceName: null,
         },
       ]); // fetch invitation
-      mockDb.limit.mockResolvedValueOnce([]); // check org membership (none)
       mockDb.orderBy.mockResolvedValueOnce([]); // no blueprints
 
       const res = await app.request(`${baseUrl}/inv-1/accept`, {
@@ -522,7 +541,6 @@ describe("User Invitation Routes", () => {
       resetChain();
       mockSession(invitee);
       mockDb.limit.mockResolvedValueOnce(rowsVisibleTo(invitee.email));
-      mockDb.limit.mockResolvedValueOnce([]); // no existing org membership
       mockDb.orderBy.mockResolvedValueOnce([]); // no blueprints on the invite
 
       const acceptRes = await app.request(`${baseUrl}/inv-1/accept`, {
