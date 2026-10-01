@@ -2828,7 +2828,7 @@ export * from "./widget-registry.ts";
 export const dashboardSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
-  name: z.string(),
+  name: z.string().min(1).max(200),
   description: z.string().max(500).nullable().optional(),
   desktopLayout: z.array(rglLayoutItemSchema),
   mobileLayout: z.array(rglLayoutItemSchema),
@@ -2838,17 +2838,19 @@ export const dashboardSchema = z.object({
 
 export type Dashboard = z.infer<typeof dashboardSchema>;
 
-export const dashboardCreateSchema = z.object({
-  name: z.string().min(1).max(200),
-  description: z.string().max(500).nullable().optional(),
+export const dashboardCreateSchema = dashboardSchema.pick({
+  name: true,
+  description: true,
 });
 
-export const dashboardUpdateSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  description: z.string().max(500).nullable().optional(),
-  desktopLayout: z.array(rglLayoutItemSchema).optional(),
-  mobileLayout: z.array(rglLayoutItemSchema).optional(),
-});
+export const dashboardUpdateSchema = dashboardSchema
+  .pick({
+    name: true,
+    description: true,
+    desktopLayout: true,
+    mobileLayout: true,
+  })
+  .partial();
 
 // --- Webhook event payloads --------------------------------------------------
 
