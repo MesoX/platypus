@@ -1,18 +1,23 @@
 import { Hono } from "hono";
+import { sValidator } from "@hono/standard-validator";
+import { inboundTriggerAccessUpdateSchema } from "@platypus/schemas";
 import { requireAuth } from "../middleware/authentication.ts";
 import { orgScopeOf, requireOrgAccess } from "../middleware/authorization.ts";
 import {
+  getInboundTriggerAccess,
   listOrgInboundTriggers,
   revokeInboundTriggerToken,
+  setInboundTriggerAccess,
 } from "../services/inbound-trigger.ts";
 import { NotFoundError, ValidationError } from "../errors.ts";
 import type { Variables } from "../server.ts";
 
 /**
  * Org Admin oversight of Inbound Triggers (ADR-0030): see every one in the
- * Organization and revoke a token. Nothing else — no edit, no disable, no
- * lock. The Workspace Owner creates, edits and regenerates; the Organization
- * gate is the broader off switch.
+ * Organization and revoke a token, and decide which Workspaces take calls
+ * at all. Nothing else — no edit, no disable, no lock. The Workspace Owner
+ * creates, edits and regenerates; the Organization gate is the broader off
+ * switch.
  */
 const orgInboundTrigger = new Hono<{ Variables: Variables }>();
 
@@ -24,6 +29,35 @@ orgInboundTrigger.get(
   async (c) => {
     const { orgId } = orgScopeOf(c);
     return c.json({ results: await listOrgInboundTriggers(orgId) });
+  },
+);
+
+/** The Organization gate and every Workspace's switch. */
+orgInboundTrigger.get(
+  "/access",
+  requireAuth,
+  requireOrgAccess(["admin"]),
+  async (c) => {
+    const { orgId } = orgScopeOf(c);
+    return c.json(await getInboundTriggerAccess(orgId));
+  },
+);
+
+/**
+ * Set the gate and, with `allowedWorkspaceIds`, every Workspace's switch in
+ * the same write. Answers with the access as it now stands.
+ */
+orgInboundTrigger.put(
+  "/access",
+  requireAuth,
+  requireOrgAccess(["admin"]),
+  sValidator("json", inboundTriggerAccessUpdateSchema),
+  async (c) => {
+    const { orgId } = orgScopeOf(c);
+    const user = c.get("user")!;
+    return c.json(
+      await setInboundTriggerAccess(orgId, c.req.valid("json"), user.id),
+    );
   },
 );
 

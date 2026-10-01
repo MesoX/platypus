@@ -14,7 +14,6 @@ import {
   stubAcceptedSave,
   savedBody,
 } from "@/lib/form-test-harness";
-import { selectOption } from "@/lib/test-utils";
 
 vi.mock("next/navigation", () => navigationMock);
 vi.mock("@/components/auth-provider", () => authMock);
@@ -78,32 +77,5 @@ describe("OrganizationForm create", () => {
     expect(toastSuccess).toHaveBeenCalledWith("Organization created");
     expect(fetchMock.mock.calls[0][0]).toBe("http://test/organizations");
     expect(savedBody(fetchMock)).toEqual({ name: "Acme" });
-  });
-});
-
-describe("OrganizationForm Inbound Triggers gate", () => {
-  beforeEach(() => resetFormHarness());
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("seeds the gate and sends a changed one with the update", async () => {
-    setData({ id: "org1", name: "Acme", inboundTriggerGate: "off" });
-    const fetchMock = stubAcceptedSave({ id: "org1", name: "Acme" });
-    render(<OrganizationForm orgId="org1" />);
-
-    await selectOption("Off", "Selected workspaces");
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(savedBody(fetchMock)).toEqual({
-      name: "Acme",
-      identityContext: null,
-      inboundTriggerGate: "selected",
-    });
-  });
-
-  it("is not offered when creating an organization", () => {
-    render(<OrganizationForm />);
-
-    expect(screen.queryByText("Inbound Triggers")).not.toBeInTheDocument();
   });
 });

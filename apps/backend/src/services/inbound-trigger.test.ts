@@ -12,13 +12,14 @@ vi.mock("./notification.ts", () => ({
 import { fireTrigger } from "./trigger-firing.ts";
 import { createNotification } from "./notification.ts";
 import { hashInboundToken } from "./inbound-trigger-token.ts";
-import { ConflictError } from "../errors.ts";
+import { ConflictError, NotFoundError } from "../errors.ts";
 import {
   acceptInboundCall,
   activeInboundRunCount,
   authenticateInboundCall,
   bearerToken,
   dueReminder,
+  getInboundTriggerAccess,
   inboundTokenStatus,
   listOrgInboundTriggers,
   logInboundCall,
@@ -26,6 +27,7 @@ import {
   resetInboundTouches,
   revokeInboundTriggerToken,
   sendInboundTokenReminders,
+  setInboundTriggerAccess,
   touchInboundTrigger,
   validateInboundBody,
   type InboundTarget,
@@ -830,6 +832,172 @@ describe("inbound triggers", () => {
       );
       expect(fake.tables.trigger[0].tokenHash).not.toBeNull();
       expect(createNotification).not.toHaveBeenCalled();
+    });
+  });
+  describe("Org Admin access settings", () => {
+    const seedAccess = () =>
+      seedDb({
+        trigger: [
+          inboundTrigger(),
+          inboundTrigger({ id: "trig-2" }),
+          inboundTrigger({ id: "trig-cron", type: "cron" }),
+        ],
+        workspace: [
+          {
+            id: "ws-1",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            name: "Support",
+            inboundTriggersAllowed: true,
+            updatedAt: new Date(0),
+          },
+          {
+            id: "ws-2",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            name: "Billing",
+            inboundTriggersAllowed: false,
+            updatedAt: new Date(0),
+          },
+          {
+            id: "ws-other",
+            organizationId: "org-2",
+            ownerId: "user-1",
+            name: "Elsewhere",
+            inboundTriggersAllowed: true,
+            updatedAt: new Date(0),
+          },
+        ],
+        organization: [
+          { id: "org-1", name: "Acme", inboundTriggerGate: "all" },
+          { id: "org-2", name: "Other", inboundTriggerGate: "all" },
+        ],
+        user: [{ id: "user-1", name: "Owner" }],
+      });
+
+    const allowedOf = (fake: ReturnType<typeof seedAccess>) =>
+      Object.fromEntries(
+        fake.tables.workspace.map((ws): [string, unknown] => [
+          String(ws.id),
+          ws.inboundTriggersAllowed,
+        ]),
+      );
+
+    it("lists the gate and each of the Organization's Workspaces with its switch and Inbound Trigger count", async () => {
+      seedAccess();
+
+      expect(await getInboundTriggerAccess("org-1")).toEqual({
+        gate: "all",
+        workspaces: [
+          {
+            id: "ws-2",
+            name: "Billing",
+            ownerName: "Owner",
+            allowed: false,
+            inboundTriggerCount: 0,
+          },
+          {
+            id: "ws-1",
+            name: "Support",
+            ownerName: "Owner",
+            allowed: true,
+            inboundTriggerCount: 2,
+          },
+        ],
+      });
+    });
+
+    it("saves the gate and the switches together, leaving other Organizations alone", async () => {
+      const fake = seedAccess();
+
+      const access = await setInboundTriggerAccess(
+        "org-1",
+        { gate: "selected", allowedWorkspaceIds: ["ws-2"] },
+        "admin-1",
+      );
+
+      expect(access.gate).toBe("selected");
+      expect(fake.tables.organization[0].inboundTriggerGate).toBe("selected");
+      expect(fake.tables.organization[1].inboundTriggerGate).toBe("all");
+      expect(allowedOf(fake)).toEqual({
+        "ws-1": false,
+        "ws-2": true,
+        "ws-other": true,
+      });
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: "org-1",
+          userId: "admin-1",
+          gate: "selected",
+        }),
+        "Inbound trigger access changed by an Org Admin",
+      );
+    });
+
+    it("turns every switch off for an empty list", async () => {
+      const fake = seedAccess();
+
+      await setInboundTriggerAccess(
+        "org-1",
+        { gate: "selected", allowedWorkspaceIds: [] },
+        "admin-1",
+      );
+
+      expect(allowedOf(fake)).toEqual({
+        "ws-1": false,
+        "ws-2": false,
+        "ws-other": true,
+      });
+    });
+
+    it("keeps the switches when no list is sent", async () => {
+      const fake = seedAccess();
+
+      await setInboundTriggerAccess("org-1", { gate: "off" }, "admin-1");
+
+      expect(fake.tables.organization[0].inboundTriggerGate).toBe("off");
+      expect(allowedOf(fake)).toEqual({
+        "ws-1": true,
+        "ws-2": false,
+        "ws-other": true,
+      });
+    });
+
+    it("touches only the Workspaces whose switch changed", async () => {
+      const fake = seedAccess();
+
+      await setInboundTriggerAccess(
+        "org-1",
+        { gate: "selected", allowedWorkspaceIds: ["ws-1", "ws-2"] },
+        "admin-1",
+      );
+
+      const updatedAt = Object.fromEntries(
+        fake.tables.workspace.map((ws): [string, unknown] => [
+          String(ws.id),
+          ws.updatedAt,
+        ]),
+      );
+      expect(updatedAt["ws-1"]).toEqual(new Date(0));
+      expect(updatedAt["ws-2"]).toEqual(NOW);
+    });
+
+    it("refuses the whole save when a listed Workspace is in another Organization", async () => {
+      const fake = seedAccess();
+
+      await expect(
+        setInboundTriggerAccess(
+          "org-1",
+          { gate: "selected", allowedWorkspaceIds: ["ws-2", "ws-other"] },
+          "admin-1",
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
+      expect(fake.tables.organization[0].inboundTriggerGate).toBe("all");
+      expect(allowedOf(fake)).toEqual({
+        "ws-1": true,
+        "ws-2": false,
+        "ws-other": true,
+      });
     });
   });
 });

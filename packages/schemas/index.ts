@@ -45,13 +45,45 @@ export type Organization = z.infer<typeof organizationSchema>;
 
 export const organizationCreateSchema = organizationSchema.pick({ name: true });
 
-export const organizationUpdateSchema = organizationSchema
-  .pick({
-    name: true,
-    identityContext: true,
-    inboundTriggerGate: true,
-  })
-  .partial({ inboundTriggerGate: true });
+// The Inbound Trigger gate is not here: it is saved with the per-Workspace
+// switches on the Organization's Inbound Triggers screen
+// (`inboundTriggerAccessUpdateSchema`), so one place owns it.
+export const organizationUpdateSchema = organizationSchema.pick({
+  name: true,
+  identityContext: true,
+});
+
+/**
+ * Who may take Inbound Trigger calls, as an Org Admin saves it (ADR-0030).
+ * `allowedWorkspaceIds` sets every Workspace's `inboundTriggersAllowed` in
+ * the same write — on for those listed, off for the rest — so switching to
+ * `selected` never refuses calls between two saves. Omitted, the switches
+ * stay as they are.
+ */
+export const inboundTriggerAccessUpdateSchema = z.object({
+  gate: inboundTriggerGateSchema,
+  allowedWorkspaceIds: z.array(z.string()).max(10_000).optional(),
+});
+
+export type InboundTriggerAccessUpdate = z.infer<
+  typeof inboundTriggerAccessUpdateSchema
+>;
+
+/** One Workspace as the Inbound Triggers screen lists it. */
+export const inboundTriggerAccessWorkspaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  ownerName: z.string(),
+  allowed: z.boolean(),
+  inboundTriggerCount: z.number().int(),
+});
+
+export const inboundTriggerAccessSchema = z.object({
+  gate: inboundTriggerGateSchema,
+  workspaces: z.array(inboundTriggerAccessWorkspaceSchema),
+});
+
+export type InboundTriggerAccess = z.infer<typeof inboundTriggerAccessSchema>;
 
 // Workspace
 
