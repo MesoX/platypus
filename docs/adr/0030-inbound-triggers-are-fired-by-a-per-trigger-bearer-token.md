@@ -80,3 +80,44 @@ into deleting its own Trigger stops the integration, and the caller, answered
 with the uniform `404`, cannot tell why. Deleting is also harder to undo than
 the edit already refused: the Owner has to recreate the Trigger and give the
 caller a new id and token.
+
+## Amendment — the gate lives on the Inbound Triggers screen and saves with the switches (#1114)
+
+Testing the integration end to end moved the Organization gate. The decision
+above still holds: the gate is the Organization's, it is checked on every call,
+and **Selected workspaces** defers to each Workspace's switch. What changed is
+where an Org Admin sets it and how it is saved.
+
+**The gate is set on the Organization's Inbound Triggers screen, not on
+General.** That screen already listed every Inbound Trigger and was where an
+Admin revoked a token, but it had to send them to General to decide which
+Workspaces take calls at all. Who may be called, what can be called, and
+stopping a token now sit on one screen. General goes back to the Organization's
+name and identity text.
+
+**Under Selected workspaces, the screen lists every Workspace with its switch,
+and one save writes the gate and all the switches together.** The endpoint is
+`PUT /organizations/:orgId/inbound-triggers/access`, Org Admin only, with
+`{ gate, allowedWorkspaceIds? }`. With the list, every Workspace in the
+Organization is set on for the ids listed and off for the rest, in the same
+transaction as the gate. Without it, the switches are left as they are. An id
+outside the Organization refuses the whole save before anything is written.
+
+- Saved apart, switching from **All workspaces** to **Selected workspaces**
+  refused calls for every Workspace whose switch was still off. Every switch
+  starts off, and nothing switched one on while the gate was **All**, so in
+  practice that was every Workspace. The docs had to warn the Admin to visit
+  each Workspace's settings first. Saving both at once removes the gap, so the
+  warning is gone.
+- The screen also names any Workspace that holds Inbound Triggers but would be
+  switched off, before the save, so a cut-off is a choice and not a surprise.
+- The Organization update no longer accepts the gate. That update is a full
+  write that requires the name, so a gate control saving through it on another
+  screen would have to resend a name it read earlier and could undo a rename.
+  The gate now has one writer.
+
+**The Workspace's own switch stays in its settings.** It is the same flag, so
+two screens can write it. Both are Org Admin only, and the last write wins,
+which is the same rule as any other setting edited from two tabs. The Workspace
+screen is where an Admin already manages that Workspace's other delegation
+flags, so removing it there would only add a detour.
