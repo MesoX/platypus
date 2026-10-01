@@ -75,8 +75,12 @@ describe("OrgInboundTriggersList", () => {
     mockScopedSWR({ "/inbound-triggers": [row({ tokenStatus: "active" })] });
     renderList(<OrgInboundTriggersList orgId="org1" />);
 
+    expect(
+      screen.getByRole("columnheader", { name: "Expires" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Active")).not.toBeInTheDocument();
-    expect(screen.getByText(/Expires/)).toBeInTheDocument();
+    // The expiry reads as a plain date, like the other date columns.
+    expect(screen.queryByText(/Expires \d/)).not.toBeInTheDocument();
   });
 
   it("offers no revoke for a Trigger that has no token", () => {

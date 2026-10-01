@@ -56,7 +56,7 @@ const COLUMNS = [
   "Trigger",
   "Workspace",
   "Created",
-  "Token",
+  "Expires",
   "Last used",
   "Last rejected",
 ] as const;
@@ -112,7 +112,7 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
             ...COLUMNS.map((header) => ({
               header,
               cell:
-                header === "Token" ? (
+                header === "Expires" ? (
                   <BadgeSkeleton className="w-16" />
                 ) : (
                   <InlineSkeleton className="w-20" />
@@ -184,28 +184,26 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
                   </TableCell>
                   <TableCell>{formatDate(trigger.createdAt)}</TableCell>
                   <TableCell>
-                    <div className="flex flex-col gap-1">
-                      {/* Active is the normal state; only a token that needs
-                          attention gets a badge. */}
-                      {trigger.tokenStatus !== "active" && (
-                        <Badge
-                          variant={
-                            INBOUND_TOKEN_STATUS_VARIANTS[trigger.tokenStatus]
-                          }
-                          className="w-fit text-xs"
-                        >
-                          {INBOUND_TOKEN_STATUS_LABELS[trigger.tokenStatus]}
-                        </Badge>
-                      )}
-                      {trigger.tokenExpiresAt && (
-                        <span className="text-xs text-muted-foreground">
-                          {trigger.tokenStatus === "expired"
-                            ? "Expired"
-                            : "Expires"}{" "}
-                          {formatDate(trigger.tokenExpiresAt)}
-                        </span>
-                      )}
-                    </div>
+                    {/* A date like the other columns; only a token that needs
+                        attention gets a badge under it. */}
+                    {trigger.tokenExpiresAt ? (
+                      <div className="flex flex-col gap-1">
+                        <span>{formatDate(trigger.tokenExpiresAt)}</span>
+                        {(trigger.tokenStatus === "expiring" ||
+                          trigger.tokenStatus === "expired") && (
+                          <Badge
+                            variant={
+                              INBOUND_TOKEN_STATUS_VARIANTS[trigger.tokenStatus]
+                            }
+                            className="w-fit text-xs"
+                          >
+                            {INBOUND_TOKEN_STATUS_LABELS[trigger.tokenStatus]}
+                          </Badge>
+                        )}
+                      </div>
+                    ) : (
+                      INBOUND_TOKEN_STATUS_LABELS.none
+                    )}
                   </TableCell>
                   <TableCell>
                     {trigger.lastUsedAt
