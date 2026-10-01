@@ -131,9 +131,11 @@ switch.
 ### See and revoke
 
 **Organization settings → Inbound Triggers** lists every Inbound Trigger in the
-Organization: its Workspace, Owner, when it was created, its **Token** standing
-— **Active**, **Expiring soon** (within 30 days), **Expired** or **No token** —
-and when it was **Last used** and **Last rejected**. It never shows a token.
+Organization: its Workspace and that Workspace's Owner, whom the run acts as,
+when it was created, when its token expires, and when it was **Last used** and
+**Last rejected**. A token that needs a look is flagged **Expiring soon**
+(within 30 days), **Expired** or **No token**; an active one shows only its
+expiry. It never shows a token.
 
 **Last rejected** is the column to watch. A Trigger rejecting calls it used to
 accept has lost its way in: an expired or revoked token, a **Disabled** badge,

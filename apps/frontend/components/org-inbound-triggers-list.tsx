@@ -55,7 +55,6 @@ interface OrgInboundTrigger {
 const COLUMNS = [
   "Trigger",
   "Workspace",
-  "Owner",
   "Created",
   "Token",
   "Last used",
@@ -108,7 +107,7 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
     return (
       <LoadingRegion label="Loading inbound triggers">
         <TableSkeleton
-          tableClassName="min-w-[900px]"
+          tableClassName="min-w-[720px]"
           columns={[
             ...COLUMNS.map((header) => ({
               header,
@@ -151,7 +150,7 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
     <>
       <div className="border rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
-          <Table className="min-w-[900px]">
+          <Table className="min-w-[720px]">
             <TableHeader>
               <TableRow>
                 {COLUMNS.map((header) => (
@@ -173,19 +172,31 @@ export const OrgInboundTriggersList = ({ orgId }: { orgId: string }) => {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>{trigger.workspaceName}</TableCell>
-                  <TableCell>{trigger.ownerName}</TableCell>
+                  <TableCell>
+                    {/* The Owner, not the Admin: the run acts as them and a
+                        revoke notifies them. */}
+                    <div className="flex flex-col">
+                      <span>{trigger.workspaceName}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {trigger.ownerName}
+                      </span>
+                    </div>
+                  </TableCell>
                   <TableCell>{formatDate(trigger.createdAt)}</TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-1">
-                      <Badge
-                        variant={
-                          INBOUND_TOKEN_STATUS_VARIANTS[trigger.tokenStatus]
-                        }
-                        className="w-fit text-xs"
-                      >
-                        {INBOUND_TOKEN_STATUS_LABELS[trigger.tokenStatus]}
-                      </Badge>
+                      {/* Active is the normal state; only a token that needs
+                          attention gets a badge. */}
+                      {trigger.tokenStatus !== "active" && (
+                        <Badge
+                          variant={
+                            INBOUND_TOKEN_STATUS_VARIANTS[trigger.tokenStatus]
+                          }
+                          className="w-fit text-xs"
+                        >
+                          {INBOUND_TOKEN_STATUS_LABELS[trigger.tokenStatus]}
+                        </Badge>
+                      )}
                       {trigger.tokenExpiresAt && (
                         <span className="text-xs text-muted-foreground">
                           {trigger.tokenStatus === "expired"

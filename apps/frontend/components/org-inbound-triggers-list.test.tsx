@@ -71,6 +71,14 @@ describe("OrgInboundTriggersList", () => {
     );
   });
 
+  it("badges only a token that needs attention, not an active one", () => {
+    mockScopedSWR({ "/inbound-triggers": [row({ tokenStatus: "active" })] });
+    renderList(<OrgInboundTriggersList orgId="org1" />);
+
+    expect(screen.queryByText("Active")).not.toBeInTheDocument();
+    expect(screen.getByText(/Expires/)).toBeInTheDocument();
+  });
+
   it("offers no revoke for a Trigger that has no token", () => {
     mockScopedSWR({
       "/inbound-triggers": [row({ tokenStatus: "none", tokenExpiresAt: null })],
