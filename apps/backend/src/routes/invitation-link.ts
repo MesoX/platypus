@@ -4,6 +4,7 @@ import { db } from "../index.ts";
 import {
   invitation as invitationTable,
   organization as organizationTable,
+  user as userTable,
 } from "../db/schema.ts";
 import { eq } from "drizzle-orm";
 import { auth } from "../auth.ts";
@@ -150,7 +151,13 @@ invitationLink.post(
     let userId: string;
     try {
       const created = await auth.api.createUser({
-        body: { email: resolved.email, password, name },
+        // Holding the token proves the invited address reached this person.
+        body: {
+          email: resolved.email,
+          password,
+          name,
+          data: { emailVerified: true },
+        },
       });
       userId = created.user.id;
     } catch (error) {
@@ -228,6 +235,15 @@ invitationLink.post("/:token/accept", requireAuth, async (c) => {
       { error: "This invitation is for a different email address" },
       403,
     );
+  }
+
+  // Holding the token proves the address, so this account may answer later
+  // invitations from its own invitations page.
+  if (!user.emailVerified) {
+    await db
+      .update(userTable)
+      .set({ emailVerified: true })
+      .where(eq(userTable.id, user.id));
   }
 
   const result = await acceptInvitationForUser(resolved.id, user);
