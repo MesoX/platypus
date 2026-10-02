@@ -587,6 +587,17 @@ Leave it empty and a default of 10 steps applies. A research-shaped turn that
 keeps reading long pages through a Web-search backend is the usual reason to
 raise it.
 
+The sampling parameters take the same ranges as an Agent's — see
+[Tune generation](/building-with-platypus/agents#tune-generation). Leave one
+empty to use the Provider or model default. A value outside its range shows an
+error under the field, and the Chat won't send a message until you fix it.
+
+<Callout type="warning">
+  **An older Chat can hold a value that's now out of range.** If a message is
+  refused with an error naming a setting, open **Chat Settings** and correct
+  that field.
+</Callout>
+
 <Callout type="warning">
   **With an Agent selected there is no settings button.** A Chat does not
   override an Agent's Instructions or sampling parameters for one conversation —
