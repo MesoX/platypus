@@ -43,9 +43,8 @@ Only a **Super Admin** can create an Organization, and only an **Org Admin** can
 invite someone into one. So open sign-up leaks the ability to hold an account, not
 the ability to reach anything in your deployment.
 
-Registered accounts still accumulate rows in your database, and a registered
-address is enough to accept an invitation later, so the exposure is worth closing
-rather than shrugging at.
+Registered accounts still accumulate rows in your database, so the exposure is
+worth closing rather than shrugging at.
 
 ### Invitation-only sign-up
 
@@ -129,6 +128,11 @@ What they see depends on whether they're signed in, and as whom:
   can sign out and sign in with the invited account on the same page.
 
 Either of the first two provisions the Workspace, with any Blueprints applied.
+
+Redeeming a link also confirms the account's address. From then on, later
+invitations to that address appear on the account's **Invitations** page and
+in the notification bell, where it can accept or decline them without a link.
+An account that has never redeemed a link sees none there — send it the link.
 
 </Steps>
 

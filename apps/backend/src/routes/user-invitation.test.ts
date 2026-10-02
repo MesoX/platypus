@@ -48,7 +48,12 @@ describe("User Invitation Routes", () => {
 
   describe("GET /", () => {
     it("lists only the user's live pending invitations", async () => {
-      mockSession({ id: "u1", email: "user@example.com", role: "user" });
+      mockSession({
+        id: "u1",
+        email: "user@example.com",
+        role: "user",
+        emailVerified: true,
+      });
       seedInvitations();
 
       const res = await app.request(baseUrl);
@@ -65,7 +70,12 @@ describe("User Invitation Routes", () => {
     });
 
     it("still lists an invitation whose inviter's account was deleted", async () => {
-      mockSession({ id: "u1", email: "user@example.com", role: "user" });
+      mockSession({
+        id: "u1",
+        email: "user@example.com",
+        role: "user",
+        emailVerified: true,
+      });
       seedDb({
         organization: [{ id: "org-1", name: "Org 1" }],
         invitation: [
@@ -91,6 +101,50 @@ describe("User Invitation Routes", () => {
     });
   });
 
+  // An address match proves nothing until the address is verified (by
+  // redeeming an invitation link): an unverified account cannot see, accept or
+  // decline an invitation addressed to it.
+  describe("an account whose email is unverified", () => {
+    const unverified = () =>
+      mockSession({
+        id: "u1",
+        email: "user@example.com",
+        role: "user",
+        emailVerified: false,
+      });
+
+    it("lists no invitations", async () => {
+      unverified();
+      seedInvitations();
+
+      const res = await app.request(baseUrl);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ results: [] });
+    });
+
+    it.each(["accept", "decline"])(
+      "cannot %s an invitation addressed to it",
+      async (action) => {
+        unverified();
+        const fake = seedInvitations();
+
+        const res = await app.request(`${baseUrl}/inv-live/${action}`, {
+          method: "POST",
+        });
+
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({
+          error: "Invitation not found or already processed",
+        });
+        expect(
+          fake.tables.invitation.find((i) => i.id === "inv-live")?.status,
+        ).toBe("pending");
+        expect(mockDb.transaction).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   describe("POST /:invitationId/accept", () => {
     it("should accept invitation and provision a workspace with the invite name", async () => {
       mockSession({
@@ -98,6 +152,7 @@ describe("User Invitation Routes", () => {
         email: "user@example.com",
         name: "Jane",
         role: "user",
+        emailVerified: true,
       });
 
       const futureDate = new Date();
@@ -153,6 +208,7 @@ describe("User Invitation Routes", () => {
         email: "user@example.com",
         name: "Jane",
         role: "user",
+        emailVerified: true,
       });
 
       const futureDate = new Date();
@@ -192,6 +248,7 @@ describe("User Invitation Routes", () => {
         email: "user@example.com",
         name: "James",
         role: "user",
+        emailVerified: true,
       });
 
       const futureDate = new Date();
@@ -229,6 +286,7 @@ describe("User Invitation Routes", () => {
         email: "user@example.com",
         name: "Maximilian Alexander Bartholomew",
         role: "user",
+        emailVerified: true,
       });
 
       const futureDate = new Date();
@@ -271,6 +329,7 @@ describe("User Invitation Routes", () => {
         email: "user@example.com",
         name: "Jane",
         role: "user",
+        emailVerified: true,
       });
 
       const futureDate = new Date();
@@ -362,6 +421,7 @@ describe("User Invitation Routes", () => {
         email: "user@example.com",
         name: "Jane",
         role: "user",
+        emailVerified: true,
       });
 
       const futureDate = new Date();
@@ -396,7 +456,12 @@ describe("User Invitation Routes", () => {
     });
 
     it("should return 410 if invitation expired", async () => {
-      mockSession({ id: "u1", email: "user@example.com", role: "user" });
+      mockSession({
+        id: "u1",
+        email: "user@example.com",
+        role: "user",
+        emailVerified: true,
+      });
 
       const pastDate = new Date();
       pastDate.setDate(pastDate.getDate() - 1);
@@ -424,7 +489,12 @@ describe("User Invitation Routes", () => {
       app.request(`${baseUrl}/${id}/decline`, { method: "POST" });
 
     it("should decline invitation", async () => {
-      mockSession({ id: "u1", email: "user@example.com", role: "user" });
+      mockSession({
+        id: "u1",
+        email: "user@example.com",
+        role: "user",
+        emailVerified: true,
+      });
       const fake = seedInvitations();
 
       const res = await decline("inv-live");
@@ -440,7 +510,12 @@ describe("User Invitation Routes", () => {
       ["someone else's invitation", "inv-other", "pending"],
       ["an already-processed invitation", "inv-declined", "declined"],
     ])("returns 404 for %s", async (_label, id, status) => {
-      mockSession({ id: "u1", email: "user@example.com", role: "user" });
+      mockSession({
+        id: "u1",
+        email: "user@example.com",
+        role: "user",
+        emailVerified: true,
+      });
       const fake = seedInvitations();
 
       const res = await decline(id);
@@ -474,6 +549,7 @@ describe("User Invitation Routes", () => {
       email: "user@example.com",
       name: "Jane",
       role: "user",
+      emailVerified: true,
     };
 
     /** Restores the chainable mocks between phases of the round trip. */
@@ -489,7 +565,12 @@ describe("User Invitation Routes", () => {
      * to the invitation row.
      */
     const createInvitationAs = async (typedEmail: string): Promise<string> => {
-      mockSession({ id: "admin-1", email: "admin@example.com", role: "user" });
+      mockSession({
+        id: "admin-1",
+        email: "admin@example.com",
+        role: "user",
+        emailVerified: true,
+      });
       mockDb.limit.mockResolvedValueOnce([{ role: "admin" }]); // requireOrgAccess
       mockDb.returning.mockResolvedValueOnce([{ id: "inv-1" }]);
 

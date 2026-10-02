@@ -192,7 +192,11 @@ describe("Invitation Link Routes", () => {
       // The email that reaches auth.api.createUser is the token's, never
       // anything the client could have supplied in the body.
       expect(mockAuth.api.createUser.mock.calls.at(-1)?.[0]).toMatchObject({
-        body: { email: "invitee@example.com", name: "Robin" },
+        body: {
+          email: "invitee@example.com",
+          name: "Robin",
+          data: { emailVerified: true },
+        },
       });
     });
 
@@ -336,6 +340,8 @@ describe("Invitation Link Routes", () => {
       });
 
       expect(res.status).toBe(200);
+      // Redeeming the token verifies the address it was sent to.
+      expect(mockDb.set).toHaveBeenCalledWith({ emailVerified: true });
 
       const provisioned = mockDb.values.mock.calls
         .map((c) => c[0] as Record<string, unknown>)
