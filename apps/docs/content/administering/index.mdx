@@ -18,10 +18,8 @@ and you can hand some of it back per Workspace.
 
 ## Providers come first
 
-A new installation has no Workspace and no **Provider**. Creating the first
-Workspace asks for one: add it there, scoped to that Workspace, or first add a
-Shared one here so the Workspace can attach it. Until a Shared Provider exists,
-the Workspace form's **Shared provider** tab has nothing to offer.
+A new installation can sign in and do nothing else. It has no **Provider**, so no
+Workspace can reach a model, and every **Model** dropdown in the product is empty.
 
 Go to **Organization settings → Providers → Add provider**. A Provider created
 here is available to every Workspace it's attached to; one created inside a
@@ -50,7 +48,7 @@ Admins and Operators see either link.
 
 | Screen               | For                                                                                                                                       |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **General**          | The Organization's name and its identity / context text (folded into every Chat in the Org)                                               |
+| **General**          | The Organization's name and its identity / context text, folded into every Chat in the Org                                                |
 | **Members**          | Who is in the Organization, and their **Org Role**                                                                                        |
 | **Invitations**      | Inviting people in — see [Users & access](/self-hosting/users-and-access)                                                                 |
 | **Providers**        | The credential-bearing model connections                                                                                                  |
@@ -68,7 +66,8 @@ menu offers **Edit org role** and **Remove from Org**.
 
 A member with the `admin` role is an Org Admin — they can do everything on this
 page, including to you. A **Super Admin** row is the platform-level account and
-has no actions available here at all; an Org Admin can't change or remove it.
+has no actions available here at all; it is managed at the deployment level, not
+by an Org Admin.
 
 <Callout type="warning">
   **Remove from Org** leaves the Workspaces that person owns in place and

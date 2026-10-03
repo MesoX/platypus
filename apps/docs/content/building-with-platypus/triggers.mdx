@@ -18,7 +18,8 @@ are three types:
   a CI pipeline, calls it over HTTP with the Trigger's token. See
   [Inbound Triggers](#inbound-triggers).
 
-You'll find Triggers in the **Triggers** section of your Workspace.
+You'll find Triggers in the **Triggers** section of your Workspace —
+_"Automated agent runs configured for this workspace."_
 
 ## Create a Trigger
 
@@ -63,15 +64,7 @@ will fire.
 For an Event trigger, select one or more **Events** (e.g. `card.created`,
 `card.updated`, `card.moved`, `notification.created`). Optionally narrow with
 **Only cards in this Board** and **Only cards in this Column** so the Trigger
-only fires for activity in one place. The filters appear once you select a card
-event, and **Only cards in this Column** once you pick a Board.
-
-<Callout type="warning">
-  The Board and Column filters apply to every event the Trigger selects, and a
-  Notification belongs to no Board. A Trigger with a Board filter never fires on
-  `notification.*` events, and nothing tells you so. Put Notification events on
-  a Trigger of their own.
-</Callout>
+only fires for activity in one place.
 
 The Board and Column filters apply to notification events too, and a
 notification has no Board, so it never matches. Put notification events on
@@ -132,18 +125,16 @@ enable **Web Search** (web search on the resolved Provider — its built-in tool
 or a Web-search backend selected on it; see [Providers &
 models](/concepts/providers#web-search)), and leave **Enabled** on. Expand
 **Advanced settings** if the run needs your Memory summaries — see [Memories in
-a run](#memories-in-a-run). Click **Save** (**Update** when editing). An
-Inbound trigger then shows its token and endpoint once, in **Copy the token
-now**. Copy both, then click **I've copied it**, the only way to close it.
+a run](#memories-in-a-run). Click **Save**. An Inbound trigger then shows its
+token and endpoint once, in **Copy the token now**. Copy both, then click
+**I've copied it**, the only way to close it.
 
 </Steps>
 
-<Callout type="warning">
-  Your Simple choices compile to a standard 5-field cron expression, and
-  switching to **Advanced** shows it for you to fine-tune. The conversion runs
-  one way: switching back to **Simple** restores your earlier Simple choices and
-  discards the Advanced edit. Save from **Advanced** once you have changed the
-  expression there.
+<Callout type="info">
+  Simple and Advanced are two views of the same thing — your Simple choices
+  compile to a standard 5-field cron expression. Switch to Advanced to see or
+  fine-tune it.
 </Callout>
 
 ## What a run does
@@ -202,7 +193,7 @@ An Inbound Trigger is always under the same ceiling, counted per value of its
 
 This is the backstop for a cycle the per-Agent guard above cannot see. That
 guard stops a Trigger re-firing on its own Agent's writes; it cannot see two
-Triggers on different Agents handing a record back and forth, or an event that arrives long after
+Triggers handing a record back and forth, or an event that arrives long after
 the debounce window and starts another lap. The ceiling is per Trigger and per
 record, so one busy Card does not use up a Trigger's budget for every other
 Card. Events that name a set rather than one record — a bulk mark-all-read — are
@@ -446,7 +437,8 @@ linking to it. Older runs are pruned per Trigger, keeping at least its newest
 **Max Runs to Keep** — see [What a run does](#what-a-run-does).
 
 That is the page that answers "what fired here recently?" and "which Trigger
-just failed?". Two filters narrow it, and both live in the address bar, so a filtered
+just failed?" — questions a per-Trigger list could only answer one Trigger at a
+time. Two filters narrow it, and both live in the address bar, so a filtered
 view survives a refresh and can be sent to a colleague as a link:
 
 - **Trigger** — all Triggers, or one of them. **View runs** on a Trigger's
@@ -464,8 +456,8 @@ event type for Event triggers, per-run stats, and any error message. It's the
 place to confirm a schedule is actually firing and to debug a Trigger that's
 failing.
 
-Each run's identifier isn't shown on the row. Instead every run offers a
-**Copy run id** control. Use it
+Each run's identifier isn't shown on the row — it's an opaque value nobody
+reads at a glance. Instead every run offers a **Copy run id** control. Use it
 when a run fails and you need to find that run's log lines: backend logs are
 keyed by the run id, so copying it here and pasting it into your log query is
 how you cross-reference a failed run against what happened behind the scenes.
@@ -538,7 +530,7 @@ pushed it past the Trigger's [**Max Runs to Keep**](#what-a-run-does). For
 anything else the answer is in the backend logs. Every time an event reaches a
 Trigger that subscribes to it, Platypus writes a dispatch decision line naming
 the event, the Trigger, the Trigger's Agent, the Agents that were running when
-the write happened, and one of these outcomes:
+the write happened, and one of four outcomes:
 
 - `fired` — the run is scheduled, and starts once the debounce window closes.
 - `skipped_self_actor` — the Trigger's own Agent made the write, in a Trigger
@@ -553,9 +545,9 @@ the write happened, and one of these outcomes:
   debounce window closes and the limit drops it — so search for `suppressed`,
   not for a missing `fired`.
 
-A Trigger the event didn't select — disabled, the wrong event type, or filters
-that didn't match — writes no line at all. So the absence of a decision is how
-you tell a disabled or filtered-out Trigger from a suppressed run. The lines name identifiers only, never Card
+A Trigger the event didn't select — the wrong event type, or filters that didn't
+match — writes no line at all. So the absence of a decision is how you tell a
+filter problem from a suppressed run. The lines name identifiers only, never Card
 titles or body text.
 
 An Inbound call that was refused writes none of these lines either. Its trace
@@ -568,7 +560,7 @@ log](/reference/backend-configuration#the-inbound-call-log).
 Every model has a ceiling on how much it can write in one reply. A run that
 reaches it stops wherever it got to — mid-sentence, mid-list — and still ends
 _Success_, because nothing failed; the Agent ran out of room to finish writing.
-That run carries a muted line on **Trigger runs** reading **Run cut short at the
+That run carries a muted line in the runs view reading **Run cut short at the
 model's output limit.**
 
 <Callout type="warning">
@@ -578,7 +570,8 @@ model's output limit.**
   a full transcript, one Board rather than every Board.
 </Callout>
 
-The ceiling itself is **Max output tokens** on the Provider's model — see
+The ceiling itself is **Max output tokens** on the Provider's model, which an
+Org Admin sets — see
 [Capping a single reply](/self-hosting/providers-and-auth#capping-a-single-reply).
 Worth checking before rewriting the Instruction.
 
@@ -586,12 +579,11 @@ A run can also stop early for the other reason: it ran out of _steps_ rather
 than room to write. A run that reaches its Agent's **Max steps** — see
 [Tune generation](/building-with-platypus/agents#tune-generation) — stops with
 work outstanding and still ends _Success_, because it did what it was allowed to
-do. It carries a muted line on **Trigger runs** reading **Run cut short at the
-step limit.**
+do. It carries a muted line in the runs view reading **Run cut short at the step
+limit.**
 
-The step count in the run's stats (such as `25 steps`) is the count it reached,
-so a run history where every run stops at the same number is the shape to look
-for.
+The **Steps** figure in the run's own statistics is the count it reached, so a
+run history where every run stops at the same number is the shape to look for.
 
 <Callout type="info">
   A run that stopped because the Agent made no progress — the same tool call
