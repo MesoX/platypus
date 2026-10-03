@@ -12,7 +12,7 @@ import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
-import { useStreamdownControls } from "@/lib/clipboard";
+import { useStreamdownControls } from "@/components/markdown";
 import { Shimmer } from "./shimmer";
 
 type ReasoningContextValue = {

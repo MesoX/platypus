@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/tooltip";
 import { linkSafety } from "@/components/link-safety";
 import { isImageAttachment } from "@/lib/message-parts";
-import { useStreamdownControls } from "@/lib/clipboard";
+import { useStreamdownControls } from "@/components/markdown";
 import { cn } from "@/lib/utils";
 import type { FileUIPart, UIMessage } from "ai";
 import { PaperclipIcon, XIcon } from "lucide-react";

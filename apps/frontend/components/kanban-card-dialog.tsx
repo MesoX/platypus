@@ -795,7 +795,11 @@ export function KanbanCardDialog({
   const handleCopyLink = () => {
     const url = new URL(window.location.href);
     url.searchParams.set("cardId", card.id);
-    return copyWithToast(url.toString(), "Link copied to clipboard");
+    return copyWithToast(
+      url.toString(),
+      "Link copied to clipboard",
+      "Failed to copy link",
+    );
   };
 
   const toggleLabel = (labelId: string) => {

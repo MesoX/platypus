@@ -25,7 +25,8 @@ const LinkSafetyDialog = ({
   onConfirm,
   url,
 }: LinkSafetyModalProps) => {
-  const handleCopy = () => copyWithToast(url, "Link copied to clipboard");
+  const handleCopy = () =>
+    copyWithToast(url, "Link copied to clipboard", "Failed to copy link");
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>

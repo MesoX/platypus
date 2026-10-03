@@ -31,7 +31,7 @@ export const ChatErrorDialog = ({
   const message = error?.message || "An unknown error occurred.";
 
   const handleCopy = async () => {
-    if (!(await copyWithToast(message))) return;
+    if (!(await copyWithToast(message, false))) return;
     setCopied(true);
     scheduleCopiedReset(() => setCopied(false), 2000);
   };

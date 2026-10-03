@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { renderHook } from "@testing-library/react";
-import { copyToClipboard, useStreamdownControls } from "./clipboard";
+import { toast } from "sonner";
+import {
+  copyToClipboard,
+  copyWithToast,
+  installClipboardFallback,
+} from "./clipboard";
 
 // jsdom does not define `isSecureContext` at all.
 const stubSecureContext = (secure: boolean) =>
@@ -76,6 +80,26 @@ describe("copyToClipboard", () => {
     dialog.remove();
   });
 
+  it("puts the fallback inside an open menu, past its focus trap", async () => {
+    stubSecureContext(false);
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    const item = document.createElement("div");
+    item.tabIndex = -1;
+    menu.appendChild(item);
+    document.body.appendChild(menu);
+    item.focus();
+    let parent: Element | null = null;
+    setExecCommand(() => {
+      parent = document.activeElement?.parentElement ?? null;
+      return true;
+    });
+
+    expect(await copyToClipboard("tok_123")).toBe(true);
+    expect(parent).toBe(menu);
+    menu.remove();
+  });
+
   it("falls back when the Clipboard API refuses", async () => {
     stubSecureContext(true);
     setClipboard(vi.fn().mockRejectedValue(new Error("NotAllowedError")));
@@ -93,16 +117,40 @@ describe("copyToClipboard", () => {
   });
 });
 
-describe("useStreamdownControls", () => {
-  it("keeps Streamdown's defaults in a secure context", () => {
-    stubSecureContext(true);
-    expect(renderHook(useStreamdownControls).result.current).toBeUndefined();
+describe("copyWithToast", () => {
+  it("names what failed to copy", async () => {
+    stubSecureContext(false);
+    setExecCommand(() => false);
+    const error = vi.spyOn(toast, "error");
+
+    await copyWithToast("x", "Link copied", "Could not copy the link");
+    expect(error).toHaveBeenCalledWith("Could not copy the link");
   });
 
-  it("hides table copy over plain HTTP, where it cannot work", () => {
+  it("stays quiet on success when the button shows its own", async () => {
     stubSecureContext(false);
-    expect(renderHook(useStreamdownControls).result.current).toEqual({
-      table: { copy: false },
-    });
+    setExecCommand(() => true);
+    const success = vi.spyOn(toast, "success");
+
+    expect(await copyWithToast("x", false)).toBe(true);
+    expect(success).not.toHaveBeenCalled();
+  });
+});
+
+describe("installClipboardFallback", () => {
+  it("stands in for writeText over plain HTTP and reports a failed copy", async () => {
+    stubSecureContext(false);
+    setExecCommand(() => false);
+    const error = vi.spyOn(toast, "error");
+    installClipboardFallback();
+
+    await expect(navigator.clipboard.writeText("x")).rejects.toThrow();
+    expect(error).toHaveBeenCalledWith("Failed to copy to clipboard");
+  });
+
+  it("leaves a secure context alone", () => {
+    stubSecureContext(true);
+    installClipboardFallback();
+    expect(navigator.clipboard).toBeUndefined();
   });
 });

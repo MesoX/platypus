@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth-provider";
+import { ClipboardFallback } from "@/lib/clipboard";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -86,6 +87,7 @@ export default function RootLayout({
           >
             {children}
             <Toaster position="top-right" />
+            <ClipboardFallback />
           </ThemeProvider>
         </AuthProvider>
       </body>

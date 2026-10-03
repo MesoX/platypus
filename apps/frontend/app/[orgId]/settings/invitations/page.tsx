@@ -64,7 +64,11 @@ const OrgInvitationsPage = () => {
   // so there is nothing useful left to copy.
   const handleCopyLink = async (token: string) => {
     const link = `${window.location.origin}/invite/${token}`;
-    await copyWithToast(link, "Invitation link copied");
+    await copyWithToast(
+      link,
+      "Invitation link copied",
+      "Could not copy the invitation link",
+    );
   };
 
   const handleDelete = async () => {
