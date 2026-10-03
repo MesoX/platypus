@@ -2,7 +2,8 @@ import {
   experimental_createMCPClient as createMCPClient,
   auth as mcpAuth,
 } from "@ai-sdk/mcp";
-import type { SQL } from "drizzle-orm";
+import { isDeepStrictEqual } from "node:util";
+import { eq, type SQL } from "drizzle-orm";
 import type { mcpTestSchema } from "@platypus/schemas";
 import type { z } from "zod";
 import { db } from "../index.ts";
@@ -16,6 +17,8 @@ import {
 } from "./mcp-oauth-provider.ts";
 import { resolveMcpTestToolNames } from "./mcp-test-tools.ts";
 import { logger } from "../logger.ts";
+import { TOOL_SET_RESOLVE_TIMEOUT_MS } from "../tools/index.ts";
+import { withDeadline } from "../utils/abort-race.ts";
 
 /**
  * The MCP-connection choreography — probe / authorize / revoke — that both
@@ -65,17 +68,36 @@ export type McpProbeResult =
   | { success: false; error: string; status: 400 | 404 };
 
 /**
+ * Whether a test connected the way a turn would — with the stored row's own
+ * connection, not unsaved edits to it — so its success says something about
+ * the stored MCP.
+ */
+const testedStoredConnection = (
+  data: McpTestInput,
+  stored: McpRecord,
+): boolean =>
+  data.authType === "OAuth" ||
+  (data.url === stored.url &&
+    data.authType === stored.authType &&
+    isDeepStrictEqual(data.headers ?? null, stored.headers ?? null) &&
+    (data.authType !== "Bearer" || data.bearerToken === stored.bearerToken));
+
+/**
  * Probes an MCP server and reports its (namespaced) tool names — the `/test`
  * route's whole job. `storedMcp` is the row a caller already resolved for
- * `data.mcpId` when `data.authType === "OAuth"` (`null` when no such row is
- * visible); ignored otherwise, since a Bearer/None test never reads stored
- * credentials.
+ * `data.mcpId` (`null` when there is none, or no such row is visible). Only an
+ * OAuth test connects with its stored credentials; a Bearer/None test uses
+ * what it was sent. A success with the stored connection clears the row's
+ * recorded fetch failure, so the next turn tries the server again (ADR-0031).
+ *
+ * Bounded by `TOOL_SET_RESOLVE_TIMEOUT_MS`, like a turn's own fetch: a server that
+ * takes the connection and never answers is reported, not waited on.
  */
 export const probeMcpConnection = async (
   data: McpTestInput,
   storedMcp: McpRecord | null,
 ): Promise<McpProbeResult> => {
-  let mcpClient: Awaited<ReturnType<typeof createMCPClient>> | undefined;
+  let opening: ReturnType<typeof createMCPClient> | undefined;
 
   try {
     if (data.authType === "OAuth" && data.mcpId) {
@@ -89,11 +111,11 @@ export const probeMcpConnection = async (
           status: 400,
         };
       }
-      mcpClient = await createMCPClient({
+      opening = createMCPClient({
         transport: buildMcpTransportConfig(storedMcp),
       });
     } else {
-      mcpClient = await createMCPClient({
+      opening = createMCPClient({
         transport: {
           type: "http",
           url: data.url,
@@ -107,9 +129,32 @@ export const probeMcpConnection = async (
       });
     }
 
-    const mcpTools = await mcpClient.tools();
-    const rawToolNames = Object.keys(mcpTools);
-    await mcpClient.close();
+    const connecting = opening;
+    const { client, rawToolNames } = await withDeadline(async () => {
+      const connected = await connecting;
+      return {
+        client: connected,
+        rawToolNames: Object.keys(await connected.tools()),
+      };
+    }, TOOL_SET_RESOLVE_TIMEOUT_MS);
+    await client.close();
+
+    if (
+      storedMcp?.lastFetchFailedAt &&
+      testedStoredConnection(data, storedMcp)
+    ) {
+      try {
+        await db
+          .update(mcpTable)
+          .set({ lastFetchFailedAt: null })
+          .where(eq(mcpTable.id, storedMcp.id));
+      } catch (error) {
+        logger.warn(
+          { error, mcpId: storedMcp.id },
+          "Failed to clear an MCP's last fetch failure",
+        );
+      }
+    }
 
     // Namespaced under the MCP's slug (issue #467), so this reports exactly
     // what a Chat turn will see.
@@ -122,13 +167,14 @@ export const probeMcpConnection = async (
 
     return { success: true, toolNames, invalidToolNames };
   } catch (error) {
-    if (mcpClient) {
-      try {
-        await mcpClient.close();
-      } catch (closeError) {
-        logger.error({ error: closeError }, "Error closing MCP client");
-      }
-    }
+    // Closed now, or when a connect that outran the deadline lands.
+    void opening?.then(
+      (client) =>
+        client.close().catch((closeError: unknown) => {
+          logger.error({ error: closeError }, "Error closing MCP client");
+        }),
+      () => {},
+    );
 
     logger.error({ error }, "MCP test connection error");
 
