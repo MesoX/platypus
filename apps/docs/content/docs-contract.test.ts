@@ -276,7 +276,6 @@ const REMOVED_VARS = new Set<string>([]);
 const VARS_WITHOUT_ENV_EXAMPLE_ENTRY = new Set([
   "ALLOWED_DEV_ORIGINS",
   "NEXT_PUBLIC_APP_VERSION",
-  "NODE_ENV",
   "PLATYPUS_PLUGIN_CONFIG",
 ]);
 
@@ -1730,13 +1729,6 @@ const BACKEND_CONSTANTS = [
       `**${entries.toLocaleString("en-US")} entries**`,
     files: ["extending/sandbox-backends.mdx"],
     cost: "A backend author truncating at the stated cap disagrees with every other adapter about `truncated`.",
-  },
-  {
-    source: "apps/backend/src/runs/no-progress.ts",
-    name: "DEFAULT_NO_PROGRESS_THRESHOLD",
-    phrase: (count: number) => `${NUMBER_WORDS[count] ?? count} times`,
-    files: ["building-with-platypus/triggers.mdx"],
-    cost: "A reader debugging a _Failed_ run looks for the wrong number of repeats.",
   },
   {
     source: "apps/backend/src/jobs/scheduler.ts",

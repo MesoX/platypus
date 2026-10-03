@@ -254,6 +254,28 @@ describe("/hooks/triggers", () => {
       ]);
     });
 
+    it("never stamps last rejected on a 413, whatever token the call carries", async () => {
+      process.env.INBOUND_TRIGGER_MAX_BODY_BYTES = "64";
+      const earlier = new Date(Date.now() - DAY);
+
+      for (const token of [null, "pit_wrong"]) {
+        const fake = seed({ triggers: [inbound({ lastRejectedAt: earlier })] });
+
+        const res = await fire("trig-1", {
+          token,
+          body: JSON.stringify({ inputs: { issueKey: "x".repeat(100) } }),
+        });
+        // The stamp is not awaited by the route; let one land if it was sent.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(res.status, String(token)).toBe(413);
+        expect(fake.tables.trigger[0].lastRejectedAt, String(token)).toBe(
+          earlier,
+        );
+        expect(fake.tables.trigger[0].lastUsedAt, String(token)).toBeNull();
+      }
+    });
+
     it("still writes the 413's log line when the Trigger lookup fails", async () => {
       process.env.INBOUND_TRIGGER_MAX_BODY_BYTES = "64";
       mockDb.limit.mockImplementationOnce(() => {

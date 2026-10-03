@@ -121,3 +121,25 @@ two screens can write it. Both are Org Admin only, and the last write wins,
 which is the same rule as any other setting edited from two tabs. The Workspace
 screen is where an Admin already manages that Workspace's other delegation
 flags, so removing it there would only add a detour.
+
+## Amendment — a `413` does not stamp last rejected (#1114)
+
+Review found that a call with no token could move a Trigger's last rejected
+time. The decision above still holds: last rejected is how an Owner or Org
+Admin sees that something is calling with a bad or stale token, and it is
+written at most once a minute. What changed is which rejections write it.
+
+**A body past the cap is answered `413` and logged, but does not stamp last
+rejected.** The body cap is checked before the token, so a `413` says nothing
+about the token: it is the same answer with a valid token, a wrong one, or
+none. Stamping it let anyone who knew a Trigger's id move that Trigger's last
+rejected time without presenting a token at all, so the time an Owner reads as
+"something called with a bad token" no longer meant that. A missing, wrong or
+expired token still stamps, because that call was refused for its token, which
+is what the time reports.
+
+- Stamping only when the bearer token matches was the alternative. It would
+  hash the token on a path built to answer before reading it, for a case
+  where a legitimate caller already learns why from the `413` itself.
+- The `413` still writes its call-log line with reason `body_too_large`, so
+  an Operator sees the call. Every other rejection stamps as before.

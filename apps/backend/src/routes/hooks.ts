@@ -79,7 +79,6 @@ const recordRejection = (
 const loadTargetForLog = async (
   triggerId: string,
 ): Promise<InboundTarget | null> => {
-  if (!triggerId) return null;
   try {
     return await loadInboundTarget(triggerId);
   } catch (error) {
@@ -94,11 +93,21 @@ const loadTargetForLog = async (
   }
 };
 
-/** Answers a body past the cap, logging it like any other rejection. */
+/**
+ * Answers a body past the cap, logging it like any other rejection — but
+ * never stamping "last rejected". The cap runs before the token, so a caller
+ * with no token at all could otherwise move that time on any Trigger whose id
+ * it knows, and it is how an Owner spots a leaked or stale token.
+ */
 const bodyTooLarge = async (c: Context) => {
   const triggerId = c.req.param("triggerId") ?? "";
   const target = await loadTargetForLog(triggerId);
-  recordRejection(triggerId, "body_too_large", target);
+  logInboundCall({
+    triggerId,
+    ...logContext(target),
+    outcome: "rejected",
+    reason: "body_too_large",
+  });
   return c.json({ error: "Payload Too Large" }, 413);
 };
 

@@ -18,24 +18,16 @@ For a guided walkthrough of configuring a deployment, see
   backend container.
 </Callout>
 
-<Callout type="warning">
-  The shipped `compose.yaml` sets `PORT`, `DATABASE_URL`, `NODE_OPTIONS` and
-  `BETTER_AUTH_URL` (from `BACKEND_URL`) for the backend itself, and those take
-  precedence over `.env`. Pointing `DATABASE_URL` at an external Postgres in
-  `.env` is silently ignored: change these four in a `compose.override.yaml`.
-</Callout>
-
 ## Core
 
-| Variable          | Purpose                                                                                                                                                                                              | Default   | Required |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | -------- |
-| `PORT`            | Port the backend HTTP server listens on.                                                                                                                                                             | `4001`    | No       |
-| `ALLOWED_ORIGINS` | Comma-separated origins allowed by CORS and better-auth's trusted origins. **No default in code** — an unset value stops the backend before it starts. `.env.example` ships `http://localhost:3001`. | _(none)_  | **Yes**  |
-| `DATABASE_URL`    | Postgres 17 connection string (with pgvector). **No default in code.** `.env.example` ships `postgres://postgres:mypassword@localhost:5432/postgres`.                                                | _(none)_  | **Yes**  |
-| `LOG_LEVEL`       | Logging verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`).                                                                                                                              | `info`    | No       |
-| `NODE_ENV`        | `production` writes logs as JSON lines to stdout and turns on better-auth's production checks; anything else pretty-prints logs for a terminal. The published image sets `production`.               | _(unset)_ | No       |
-| `TIMEZONE`        | IANA timezone (e.g. `America/New_York`, `Europe/London`) used by the **time Tools only** — see the note below.                                                                                       | `UTC`     | No       |
-| `NODE_OPTIONS`    | Node runtime flags. `.env.example` and `compose.yaml` ship `--disable-warning=ExperimentalWarning` to silence the experimental-feature warning.                                                      | _(none)_  | No       |
+| Variable          | Purpose                                                                                                                                                                                              | Default                                 | Required |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | -------- |
+| `PORT`            | Port the backend HTTP server listens on.                                                                                                                                                             | `4001`                                  | No       |
+| `ALLOWED_ORIGINS` | Comma-separated origins allowed by CORS and better-auth's trusted origins. **No default in code** — an unset value stops the backend before it starts. `.env.example` ships `http://localhost:3001`. | _(none)_                                | **Yes**  |
+| `DATABASE_URL`    | Postgres 17 connection string (with pgvector). **No default in code.** `.env.example` ships `postgres://postgres:mypassword@localhost:5432/postgres`.                                                | _(none)_                                | **Yes**  |
+| `LOG_LEVEL`       | Logging verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`).                                                                                                                              | `info`                                  | No       |
+| `TIMEZONE`        | IANA timezone (e.g. `America/New_York`, `Europe/London`) used by the **time Tools only** — see the note below.                                                                                       | `UTC`                                   | No       |
+| `NODE_OPTIONS`    | Node runtime flags. Ships set to silence the experimental-feature warning.                                                                                                                           | `--disable-warning=ExperimentalWarning` | No       |
 
 <Callout type="warning">
   `TIMEZONE` is read in exactly one place: the `getCurrentTime` tool.
@@ -74,11 +66,11 @@ The manifest side is in
 | `REQUIRE_INVITATION_TO_SIGN_UP` | `true` closes public sign-up: the sign-in page stops offering **Sign up**, the sign-up page says that sign-up is by invitation, and an account can only be created by redeeming an invitation link. Sign-in, password changes, administrative password resets and first-boot seeding are unaffected. Anything other than `true` or `1` leaves sign-up open. See [Users & access](/self-hosting/users-and-access#who-can-create-an-account).                                                                                                                        | `false`                                                    | No       |
 
 <Callout type="warning">
-  Nothing enforces the 32-character minimum: a shorter `BETTER_AUTH_SECRET` is
-  accepted everywhere and only logs a warning. With `NODE_ENV=production`, which
-  the published image sets, an unset secret is refused. Running from source
-  without it, an unset secret silently falls back to a well-known built-in
-  default and only logs a warning. Generate one with `openssl rand -base64 32`.
+  `BETTER_AUTH_SECRET`'s 32+ character requirement is enforced only when
+  `NODE_ENV=production` — the published Docker image sets this, but running from
+  source without it gets no hard failure at all: an unset or weak secret
+  silently falls back to a well-known default and only logs a warning. Don't
+  rely on the runtime to catch a missing secret outside the published image.
 </Callout>
 
 ## Default admin
@@ -293,10 +285,10 @@ crash frees itself roughly 35 minutes later on the defaults.
 
 ## Tools
 
-| Variable                        | Purpose                                                                                                                                                                                                                                                                                            | Default                 | Required |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------- |
-| `FRONTEND_URL`                  | Public URL of the frontend. Used for resource links in tool responses, as the base of the MCP OAuth callback (`/oauth/mcp/callback`), and in the startup check behind `AUTH_COOKIE_DOMAIN`. Falls back to `http://localhost:3001`, which only works for local dev — a real deployment must set it. | `http://localhost:3001` | No       |
-| `EGRESS_ALLOW_PRIVATE_NETWORKS` | Whether tools that fetch a **model-chosen** URL, and Webhook deliveries, may reach private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`).                                                                                                                                 | `true`                  | No       |
+| Variable                        | Purpose                                                                                                                                                            | Default                 | Required |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- | -------- |
+| `FRONTEND_URL`                  | Frontend URL used to build resource links inside tool responses.                                                                                                   | `http://localhost:3001` | No       |
+| `EGRESS_ALLOW_PRIVATE_NETWORKS` | Whether tools that fetch a **model-chosen** URL, and Webhook deliveries, may reach private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`). | `true`                  | No       |
 
 Which address ranges the guard blocks regardless of that setting, and why the
 default is permissive, are in
@@ -363,9 +355,7 @@ Both are enabled by listing the Plugin — `@platypus/docker` or `@platypus/ssh`
 in [`PLATYPUS_PLUGINS`](#plugins). Everything else is configured elsewhere: the
 Docker network allowlist as `config.allowedNetworks` in `PLATYPUS_PLUGIN_CONFIG_DOCKER`,
 and the whole SSH connection surface as per-Workspace Sandbox settings an Org
-Admin enters in the app. The Docker backend reaches the daemon the standard way:
-`/var/run/docker.sock`, or `DOCKER_HOST` (with `DOCKER_TLS_VERIFY` and
-`DOCKER_CERT_PATH`) when set.
+Admin enters in the app.
 
 See [Sandbox](/self-hosting/configuration#sandbox) for how the two fit together,
 and [Sandbox infrastructure](/self-hosting/sandbox) for the security model and the

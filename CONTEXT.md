@@ -166,7 +166,7 @@ A saved automation that runs an Agent unattended against a fixed Instruction —
 _Avoid_: automation, job, scheduler, webhook (that delivers events out; it runs nothing).
 
 **Inbound Trigger**:
-A **Trigger** an external system fires by calling `POST /hooks/triggers/:triggerId` with that Trigger's bearer token — never a **Webhook event**, and never a session (ADR-0030). The token grants exactly "run this Agent with this Instruction", is shown to the Workspace Owner once, is stored only as a hash, and always expires; only the Owner creates, edits or deletes one, in the UI, and an Agent's Trigger tools can do none of those nor read its token. The run acts as the Workspace Owner like every Trigger run, so the token is only as safe as the Agent's tools are narrow. The call is answered `202` with a run id before the run starts — the **Trigger run**'s row already exists as `pending` — and every refusal that could reveal what exists is the same `404`. Reachable only while the Organization's gate admits its Workspace, checked on every call.
+A **Trigger** an external system fires by calling it with that Trigger's bearer token — never a **Webhook event**, and never a session. The token grants exactly "run this Agent with this Instruction", is shown to the Workspace Owner once, and always expires; only the Owner creates, edits or deletes one, in the UI, and an Agent's Trigger tools can do none of those nor read its token. The run acts as the Workspace Owner like every Trigger run, so the token is only as safe as the Agent's tools are narrow. Reachable only while the Organization's gate admits its Workspace.
 _Avoid_: webhook trigger (a Webhook delivers events out), API key (the token reaches one Trigger, not the API).
 
 **Trigger input**:
@@ -175,7 +175,7 @@ _Avoid_: parameter, argument, payload (an Event Trigger's payload is a Webhook e
 
 **Record key**:
 The one required **Trigger input** an **Inbound Trigger** may mark as identifying the record a call is about, such as an issue key. The run-rate breaker counts per value of it — with none marked it counts the whole Trigger, so no inbound run is exempt — and a call for a record that already has a `pending` or `running` run gets that run's id back, marked deduplicated, instead of starting a second Agent on it.
-_Avoid_: entity id (the column it is stored in, shared with Event Trigger runs), correlation id.
+_Avoid_: entity id, correlation id.
 
 **Trigger run**:
 One execution of a **Trigger** — the headless shape of a **Drive**. Recorded separately from any Chat under its own status vocabulary (`pending` / `running` / `success` / `failed` / `cancelled` / `suppressed` — not the chat-run words), with its own stats, its own **Run timeline** and its own retention: Max Runs to Keep bounds the history, everything inside the run-rate breaker's window is kept so its count stays countable, and _suppressed_ rows have a budget of their own. A _suppressed_ Trigger run is a firing the run-rate breaker dropped before the Agent started, so it never ran; the row is the visible trace of the breaker tripping. Bounded by the same **Output ceiling** and **Step ceiling** as any Drive, plus the unattended-only no-progress stop: repeating the same tool call and getting the same result several times in a row ends the run as _failed_, naming the tool — distinct from a step-limit stop, which still ends _success_.
