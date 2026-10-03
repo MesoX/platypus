@@ -91,6 +91,7 @@ describe("link safety inside a Radix Dialog", () => {
   it("copies the link", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.stubGlobal("isSecureContext", true);
     render(<Card body="[example](https://example.com)" />);
     await clickLink("example");
     const dialog = confirmation();

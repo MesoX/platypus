@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Suspense } from "react";
 import type { TriggerRunStats, TriggerRunWithTrigger } from "@platypus/schemas";
@@ -551,7 +551,10 @@ describe("Trigger runs copy-run-id control", () => {
   beforeEach(() => {
     writeText.mockReset().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
+    vi.stubGlobal("isSecureContext", true);
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it("never renders the run id as visible text", async () => {
     await renderRuns([run()]);

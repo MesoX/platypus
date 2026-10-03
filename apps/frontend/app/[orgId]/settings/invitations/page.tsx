@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Trash2, Mail, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useBackendUrl } from "@/components/auth-provider";
 import { useScopedSWR } from "@/hooks/use-scoped-swr";
 import { formatDate } from "@/lib/format-date";
@@ -63,10 +64,9 @@ const OrgInvitationsPage = () => {
   // so there is nothing useful left to copy.
   const handleCopyLink = async (token: string) => {
     const link = `${window.location.origin}/invite/${token}`;
-    try {
-      await navigator.clipboard.writeText(link);
+    if (await copyToClipboard(link)) {
       toast.success("Invitation link copied");
-    } catch {
+    } else {
       toast.error("Could not copy the invitation link");
     }
   };

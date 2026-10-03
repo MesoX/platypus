@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, type FocusEventHandler, type ReactNode } from "react";
+import {
+  useState,
+  type FocusEventHandler,
+  type MouseEvent,
+  type MouseEventHandler,
+  type ReactNode,
+} from "react";
 import { useResetOnChange } from "@/hooks/use-reset-on-change";
 import { Markdown } from "@/components/markdown";
 import { formatDate, formatDateTime } from "@/lib/format-date";
@@ -71,6 +77,7 @@ import { AgentAvatar } from "@/components/agent-avatar";
 import { KanbanCardHistory } from "@/components/kanban-card-history";
 import { Calendar } from "@/components/ui/calendar";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 type CardSaveData = {
   title?: string;
@@ -203,8 +210,8 @@ function CardTitleActions({
   onCopyMarkdown,
   onEdit,
 }: {
-  onCopyLink: () => void;
-  onCopyMarkdown: () => void;
+  onCopyLink: MouseEventHandler<HTMLButtonElement>;
+  onCopyMarkdown: MouseEventHandler<HTMLButtonElement>;
   onEdit: () => void;
 }) {
   return (
@@ -270,8 +277,8 @@ function CardTitleSection({
   isEditing: boolean;
   focusField: "title" | "body";
   onTitleChange: (title: string) => void;
-  onCopyLink: () => void;
-  onCopyMarkdown: () => void;
+  onCopyLink: MouseEventHandler<HTMLButtonElement>;
+  onCopyMarkdown: MouseEventHandler<HTMLButtonElement>;
   onEdit: () => void;
 }) {
   if (isEditing) {
@@ -361,8 +368,8 @@ function CardDetailsPane({
   focusField: "title" | "body";
   onTitleChange: (title: string) => void;
   onBodyChange: (body: string) => void;
-  onCopyLink: () => void;
-  onCopyMarkdown: () => void;
+  onCopyLink: MouseEventHandler<HTMLButtonElement>;
+  onCopyMarkdown: MouseEventHandler<HTMLButtonElement>;
   onEdit: () => void;
   onBlur: FocusEventHandler<HTMLDivElement>;
   children: ReactNode;
@@ -788,23 +795,27 @@ export function KanbanCardDialog({
 
   if (!card) return null;
 
-  const handleCopyToClipboard = async () => {
+  // The copy fallback goes next to the button, inside the dialog, so its
+  // focus trap leaves it alone.
+  const handleCopyToClipboard = async (
+    event: MouseEvent<HTMLButtonElement>,
+  ) => {
     const markdown = body ? `# ${title}\n\n${body}` : `# ${title}`;
-    try {
-      await navigator.clipboard.writeText(markdown);
+    const container = event.currentTarget.parentElement ?? undefined;
+    if (await copyToClipboard(markdown, container)) {
       toast.success("Copied to clipboard");
-    } catch {
+    } else {
       toast.error("Failed to copy to clipboard");
     }
   };
 
-  const handleCopyLink = async () => {
+  const handleCopyLink = async (event: MouseEvent<HTMLButtonElement>) => {
     const url = new URL(window.location.href);
     url.searchParams.set("cardId", card.id);
-    try {
-      await navigator.clipboard.writeText(url.toString());
+    const container = event.currentTarget.parentElement ?? undefined;
+    if (await copyToClipboard(url.toString(), container)) {
       toast.success("Link copied to clipboard");
-    } catch {
+    } else {
       toast.error("Failed to copy link");
     }
   };

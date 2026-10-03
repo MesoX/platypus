@@ -2,7 +2,9 @@
 
 import { CopyIcon, ExternalLinkIcon } from "lucide-react";
 import type { LinkSafetyConfig, LinkSafetyModalProps } from "streamdown";
+import type { MouseEvent } from "react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,11 +27,12 @@ const LinkSafetyDialog = ({
   onConfirm,
   url,
 }: LinkSafetyModalProps) => {
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
+  const handleCopy = async (event: MouseEvent<HTMLButtonElement>) => {
+    // Inside the dialog, so its focus trap leaves the fallback alone.
+    const container = event.currentTarget.parentElement ?? undefined;
+    if (await copyToClipboard(url, container)) {
       toast.success("Link copied to clipboard");
-    } catch {
+    } else {
       toast.error("Failed to copy link");
     }
   };

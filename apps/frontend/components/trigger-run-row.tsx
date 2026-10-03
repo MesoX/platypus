@@ -14,6 +14,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   TRIGGER_RUN_STATUS_LABELS,
   type TriggerRunStats,
@@ -123,10 +124,9 @@ export const TriggerRunRow = ({
   const stats = run.stats as TriggerRunStats | null | undefined;
 
   const handleCopyRunId = async () => {
-    try {
-      await navigator.clipboard.writeText(run.id);
+    if (await copyToClipboard(run.id)) {
       toast.success("Copied to clipboard");
-    } catch {
+    } else {
       toast.error("Failed to copy to clipboard");
     }
   };

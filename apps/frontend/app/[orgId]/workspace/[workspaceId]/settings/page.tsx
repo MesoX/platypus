@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Copy } from "lucide-react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { WorkspaceForm } from "@/components/workspace-form";
 
 const WorkspaceSettingsPage = () => {
@@ -25,9 +26,12 @@ const WorkspaceSettingsPage = () => {
               variant="ghost"
               size="icon"
               aria-label="Copy Organization ID"
-              onClick={() => {
-                navigator.clipboard.writeText(orgId);
-                toast.info("Copied to clipboard");
+              onClick={async () => {
+                if (await copyToClipboard(orgId)) {
+                  toast.info("Copied to clipboard");
+                } else {
+                  toast.error("Failed to copy to clipboard");
+                }
               }}
             >
               <Copy className="h-4 w-4" />
@@ -43,9 +47,12 @@ const WorkspaceSettingsPage = () => {
               variant="ghost"
               size="icon"
               aria-label="Copy Workspace ID"
-              onClick={() => {
-                navigator.clipboard.writeText(workspaceId);
-                toast.info("Copied to clipboard");
+              onClick={async () => {
+                if (await copyToClipboard(workspaceId)) {
+                  toast.info("Copied to clipboard");
+                } else {
+                  toast.error("Failed to copy to clipboard");
+                }
               }}
             >
               <Copy className="h-4 w-4" />

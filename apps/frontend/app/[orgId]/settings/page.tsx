@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Copy } from "lucide-react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { OrganizationForm } from "@/components/organization-form";
 
 const OrgSettingsPage = () => {
@@ -24,9 +25,12 @@ const OrgSettingsPage = () => {
               variant="ghost"
               size="icon"
               aria-label="Copy Organization ID"
-              onClick={() => {
-                navigator.clipboard.writeText(orgId);
-                toast.info("Copied to clipboard");
+              onClick={async () => {
+                if (await copyToClipboard(orgId)) {
+                  toast.info("Copied to clipboard");
+                } else {
+                  toast.error("Failed to copy to clipboard");
+                }
               }}
             >
               <Copy className="h-4 w-4" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,8 @@ import { Button } from "./ui/button";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { TriangleAlert, Copy, Check } from "lucide-react";
 import { useTimeout } from "@/hooks/use-timeout";
+import { copyToClipboard } from "@/lib/clipboard";
+import { toast } from "sonner";
 
 interface ChatErrorDialogProps {
   isOpen: boolean;
@@ -29,8 +31,13 @@ export const ChatErrorDialog = ({
   const scheduleCopiedReset = useTimeout();
   const message = error?.message || "An unknown error occurred.";
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(message);
+  const handleCopy = async (event: MouseEvent<HTMLButtonElement>) => {
+    // Inside the dialog, so its focus trap leaves the fallback alone.
+    const container = event.currentTarget.parentElement ?? undefined;
+    if (!(await copyToClipboard(message, container))) {
+      toast.error("Failed to copy to clipboard");
+      return;
+    }
     setCopied(true);
     scheduleCopiedReset(() => setCopied(false), 2000);
   };
