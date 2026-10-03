@@ -39,6 +39,7 @@ import {
   invitationRedemptionRegisterSchema,
   dashboardCreateSchema,
   DEFAULT_DIRECT_MAX_STEPS,
+  inboundTriggerInputSchema,
   DEFAULT_MAX_EXTRACTED_TEXT_CHARS,
   kanbanBoardSchema,
   MAX_PLUGIN_NAME_LENGTH,
@@ -941,6 +942,135 @@ const parseAlwaysOnPluginNames = (): string[] => {
   );
 };
 
+// --- inbound triggers --------------------------------------------------------
+
+/**
+ * The header of the block an Inbound Trigger's inputs arrive in. An
+ * Instruction is written against it ("the inputs above"), so the worked example
+ * on the Triggers page must show the header the service actually writes.
+ */
+const parseInboundInputsHeader = (): string => {
+  const source = readRepoFile(TRIGGER_PREFIX_SOURCE);
+  const header = source.match(/"(Inbound call inputs[^"]*)"/);
+  if (!header) {
+    throw new Error(
+      `No "Inbound call inputs" header string in ${TRIGGER_PREFIX_SOURCE}. ` +
+        `The inputs block moved or was renamed; re-anchor this test.`,
+    );
+  }
+  return header[1];
+};
+
+describe("inbound trigger inputs block", () => {
+  const page = "building-with-platypus/triggers.mdx";
+
+  it("shows the header the service writes", () => {
+    const header = parseInboundInputsHeader();
+    const examples = fencedBlocks(readDoc(page)).filter((block) =>
+      block.text.startsWith("Inbound call inputs"),
+    );
+    expect(
+      examples.length,
+      `apps/docs/content/${page} has ${examples.length} fenced blocks starting with ` +
+        `"Inbound call inputs". This check reads one — the worked example of the ` +
+        `block built in ${TRIGGER_PREFIX_SOURCE}.`,
+    ).toBe(1);
+    expect(
+      examples[0].text.split("\n")[0],
+      `apps/docs/content/${page}:${examples[0].line} does not open with the header ` +
+        `${TRIGGER_PREFIX_SOURCE} writes above an Inbound Trigger's Instruction.`,
+    ).toBe(header);
+  });
+});
+
+const INBOUND_CALL_LOG_SOURCE = "apps/backend/src/services/inbound-trigger.ts";
+const CALL_LOG_PAGE = "reference/backend-configuration.mdx";
+const CALL_LOG_HEADING = "#### The inbound call log";
+
+/** The string members of a `export type X = "a" | "b"` union in the source. */
+const unionMembers = (source: string, typeName: string): string[] => {
+  // Comments first: a `;` inside a member's doc comment would end the match.
+  const declaration = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .match(new RegExp(`export type ${typeName} =([\\s\\S]*?);`));
+  if (!declaration) {
+    throw new Error(
+      `No \`export type ${typeName}\` in ${INBOUND_CALL_LOG_SOURCE}; re-anchor this test.`,
+    );
+  }
+  return [...declaration[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+};
+
+/**
+ * The call log is the one log output Platypus promises Operators not to break:
+ * they ship it to their own store and build on its message, fields and values.
+ * So the reference must name every one of them, and name no value the backend
+ * never writes.
+ */
+describe("inbound trigger call log", () => {
+  const source = readRepoFile(INBOUND_CALL_LOG_SOURCE);
+  const content = readDoc(CALL_LOG_PAGE);
+  const start = content.indexOf(CALL_LOG_HEADING);
+  const rest =
+    start === -1 ? "" : content.slice(start + CALL_LOG_HEADING.length);
+  const nextHeading = rest.search(/\n#{1,4} /);
+  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
+  const spans = new Set(
+    [...section.matchAll(/`([^`]+)`/g)].map((match) => match[1]),
+  );
+
+  const message = source.match(/INBOUND_CALL_LOG_MESSAGE = "([^"]+)"/)?.[1];
+  const logCall = source.match(
+    /logger\.info\(\s*\{([\s\S]*?)\},\s*INBOUND_CALL_LOG_MESSAGE/,
+  );
+  const fields = logCall
+    ? [...logCall[1].matchAll(/^\s*(\w+):/gm)].map((match) => match[1])
+    : [];
+  const outcomes = unionMembers(source, "InboundCallOutcome");
+  const reasons = unionMembers(source, "InboundRejectReason");
+
+  it("found the section and the source's vocabulary", () => {
+    expect(start, `No "${CALL_LOG_HEADING}" in ${CALL_LOG_PAGE}.`).not.toBe(-1);
+    expect(
+      message,
+      `No INBOUND_CALL_LOG_MESSAGE in ${INBOUND_CALL_LOG_SOURCE}.`,
+    ).toBeDefined();
+    expect(fields.length).toBeGreaterThan(0);
+    expect(outcomes.length).toBeGreaterThan(0);
+    expect(reasons.length).toBeGreaterThan(0);
+  });
+
+  it("names the message, every field, every outcome and every reason", () => {
+    const missing = [message ?? "", ...fields, ...outcomes, ...reasons].filter(
+      (value) => !spans.has(value),
+    );
+    expectNoViolations(
+      missing.map(
+        (value) =>
+          `apps/docs/content/${CALL_LOG_PAGE} (${CALL_LOG_HEADING}) does not name \`${value}\`, ` +
+          `which ${INBOUND_CALL_LOG_SOURCE} writes on the call log line.\n` +
+          `An Operator's log tooling built from the reference misses it.`,
+      ),
+    );
+  });
+
+  it("lists no reason the backend never writes", () => {
+    const rows = [...section.matchAll(/^\|\s*`([a-z_]+)`\s*\|/gm)].map(
+      (match) => match[1],
+    );
+    const documented = rows.filter((value) => !fields.includes(value));
+    expectNoViolations(
+      documented
+        .filter((value) => !reasons.includes(value))
+        .map(
+          (value) =>
+            `apps/docs/content/${CALL_LOG_PAGE} (${CALL_LOG_HEADING}) lists the reason ` +
+            `\`${value}\`, which is not in ${INBOUND_CALL_LOG_SOURCE} (InboundRejectReason).`,
+        ),
+    );
+  });
+});
+
 describe("core plugins", () => {
   const registered = parseBuiltinPluginNames();
   const alwaysOn = parseAlwaysOnPluginNames();
@@ -1256,6 +1386,20 @@ const LIMIT_CLAIMS: LimitClaim[] = [
     anchor: "Leave it empty and a default of",
     source: "packages/schemas/index.ts (DEFAULT_DIRECT_MAX_STEPS)",
     expected: { max: DEFAULT_DIRECT_MAX_STEPS },
+  },
+  {
+    doc: "building-with-platypus/triggers.mdx",
+    anchor: "a name — letters, digits and underscores",
+    source: "packages/schemas/index.ts (inboundTriggerInputSchema.name)",
+    expected: { max: stringField(inboundTriggerInputSchema, "name").max },
+  },
+  {
+    doc: "building-with-platypus/triggers.mdx",
+    anchor: "a description — up to",
+    source: "packages/schemas/index.ts (inboundTriggerInputSchema.description)",
+    expected: {
+      max: stringField(inboundTriggerInputSchema, "description").max,
+    },
   },
 ];
 
@@ -1593,6 +1737,17 @@ const BACKEND_CONSTANTS = [
     phrase: (count: number) => `${NUMBER_WORDS[count] ?? count} times`,
     files: ["building-with-platypus/triggers.mdx"],
     cost: "A reader debugging a _Failed_ run looks for the wrong number of repeats.",
+  },
+  {
+    source: "apps/backend/src/jobs/scheduler.ts",
+    name: "RECOVERY_STALE_BUFFER_MS",
+    phrase: (ms: number) =>
+      `${NUMBER_WORDS[ms / 60_000] ?? ms / 60_000} minutes`,
+    files: [
+      "building-with-platypus/triggers.mdx",
+      "reference/backend-configuration.mdx",
+    ],
+    cost: "An integrator waits the wrong time for a stuck record to take calls again.",
   },
 ] as const;
 

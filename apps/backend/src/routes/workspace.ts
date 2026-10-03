@@ -207,6 +207,9 @@ workspace.put(
     if (!isAdmin) {
       delete data.providerSelfManagement;
       delete data.mcpSelfManagement;
+      // Same rule for the Inbound Trigger allow flag (ADR-0030): the Org
+      // Admin decides which Workspaces take calls from outside.
+      delete data.inboundTriggersAllowed;
     }
 
     // Resolve memory pointer-settings through the Scoped resource authority

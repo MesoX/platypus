@@ -6,7 +6,7 @@ import { logger } from "../logger.ts";
 import type { WebhookEvent } from "@platypus/schemas";
 
 /**
- * The run-rate breaker for Event Triggers.
+ * The run-rate breaker for Event and Inbound Triggers.
  *
  * Nothing else bounds how often one Event Trigger may run for one entity: the
  * 5s debounce in `event-trigger-debounce.ts` folds a rapid burst into a single
@@ -45,7 +45,7 @@ const DEFAULT_WINDOW_SECONDS = 3600;
  * never chose is the failure this feature exists to prevent, and a limit that
  * enforces something other than it reads is worse than no limit at all.
  */
-const readPositiveInt = (
+export const readPositiveInt = (
   name: string,
   fallback: number,
   env: NodeJS.ProcessEnv,
@@ -120,11 +120,14 @@ export const validateTriggerBreakerConfig = (): TriggerBreakerConfig => {
 export const shouldSuppressTriggerRun = async (
   triggerId: string,
   entityId: string,
+  // An inbound call counts inside the transaction that serialises calls for
+  // one record, so the count and the row it then writes are one decision.
+  database: Pick<typeof db, "select"> = db,
 ): Promise<boolean> => {
   const { maxRuns, windowSeconds } = triggerBreakerConfig();
   const since = new Date(Date.now() - windowSeconds * 1000);
 
-  const [row] = await db
+  const [row] = await database
     .select({ runs: count() })
     .from(triggerRunTable)
     .where(
@@ -220,6 +223,13 @@ export const retainTriggerRuns = async (
           and(
             eq(triggerRunTable.triggerId, triggerId),
             ne(triggerRunTable.status, "suppressed"),
+            // A run still in flight is never pruned, however old: its row is
+            // what its sink finishes and what an Inbound Trigger's dedup and
+            // poll read (ADR-0030). A per-run timeout longer than the window
+            // would otherwise delete a live run's row mid-run. The recovery
+            // sweep fails an abandoned one, which then prunes normally.
+            ne(triggerRunTable.status, "pending"),
+            ne(triggerRunTable.status, "running"),
             lte(triggerRunTable.startedAt, since),
             notInArray(
               triggerRunTable.id,

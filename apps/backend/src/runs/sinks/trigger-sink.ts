@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../index.ts";
 import {
   triggerRun as triggerRunTable,
@@ -30,6 +30,12 @@ export type TriggerSinkParams = {
   entityId?: string;
   eventType?: WebhookEvent;
   eventData?: unknown;
+  /**
+   * The run's row already exists as `pending` — an Inbound Trigger call wrote
+   * it before answering, so the run id it returned is real (ADR-0030). The
+   * start then adopts that row instead of inserting one.
+   */
+  adoptPendingRow?: boolean;
   /** Override the FlushScheduler interval. Defaults to 5 seconds. */
   flushIntervalMs?: number;
 };
@@ -87,8 +93,9 @@ const toTriggerRunStatus = (status: RunStatus): TriggerRunStatus => {
  * Persists `triggerRun` rows — and the run's **Run timeline** (#647) — around a
  * headless run.
  *
- * - `onStart`: INSERT row with status `running` and event metadata; takes the
- *   run's Run event recorder and starts flushing it.
+ * - `onStart`: INSERT row with status `running` and event metadata — or, for
+ *   an inbound run, move its `pending` row to `running`; takes the run's Run
+ *   event recorder and starts flushing it.
  * - `onProgress`: drives a FlushScheduler that writes incremental `stats`
  *   (tool-call counts, step counts) so a long-running Trigger is observable on
  *   the runs page mid-flight. The recorder bumps the same scheduler, so events
@@ -129,16 +136,39 @@ export class TriggerSink implements RunSink {
   }): Promise<void> {
     this.runId = ctx.runId;
     this.events = ctx.events;
-    await db.insert(triggerRunTable).values({
-      id: ctx.runId,
-      triggerId: this.params.triggerId,
-      status: "running",
-      entityId: this.params.entityId ?? null,
-      eventType: this.params.eventType ?? null,
-      eventData: this.params.eventData ?? null,
-      startedAt: new Date(),
-      createdAt: new Date(),
-    });
+    if (this.params.adoptPendingRow) {
+      // `startedAt` moves to the real start, so the run's duration does not
+      // include the moment between acceptance and the Drive picking it up.
+      // Only a row still `pending` is adopted: one the recovery sweep already
+      // failed, or retention pruned, must not come back as a live run nobody's
+      // dedup or poll can see. Throwing fails the run before the Agent starts.
+      const adopted = await db
+        .update(triggerRunTable)
+        .set({ status: "running", startedAt: new Date() })
+        .where(
+          and(
+            eq(triggerRunTable.id, ctx.runId),
+            eq(triggerRunTable.status, "pending"),
+          ),
+        )
+        .returning({ id: triggerRunTable.id });
+      if (adopted.length === 0) {
+        throw new Error(
+          `Inbound trigger run '${ctx.runId}' is no longer pending; not started`,
+        );
+      }
+    } else {
+      await db.insert(triggerRunTable).values({
+        id: ctx.runId,
+        triggerId: this.params.triggerId,
+        status: "running",
+        entityId: this.params.entityId ?? null,
+        eventType: this.params.eventType ?? null,
+        eventData: this.params.eventData ?? null,
+        startedAt: new Date(),
+        createdAt: new Date(),
+      });
+    }
 
     this.flusher = new FlushScheduler(
       () => this.flush(),

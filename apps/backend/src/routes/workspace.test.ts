@@ -386,6 +386,7 @@ describe("Workspace Routes", () => {
           name: "My Workspace",
           providerSelfManagement: true,
           mcpSelfManagement: true,
+          inboundTriggersAllowed: true,
         }),
         headers: { "Content-Type": "application/json" },
       });
@@ -394,6 +395,7 @@ describe("Workspace Routes", () => {
       const setArg = mockDb.set.mock.calls.at(-1)?.[0];
       expect(setArg).not.toHaveProperty("providerSelfManagement");
       expect(setArg).not.toHaveProperty("mcpSelfManagement");
+      expect(setArg).not.toHaveProperty("inboundTriggersAllowed");
     });
 
     // Security (GHSA-qg7h-g2rm-37qh): a memory Provider pointer must resolve
@@ -553,13 +555,20 @@ describe("Workspace Routes", () => {
 
       const res = await app.request("/organizations/org-1/workspaces/ws-1", {
         method: "PUT",
-        body: JSON.stringify({ name: "My Workspace", mcpSelfManagement: true }),
+        body: JSON.stringify({
+          name: "My Workspace",
+          mcpSelfManagement: true,
+          inboundTriggersAllowed: true,
+        }),
         headers: { "Content-Type": "application/json" },
       });
 
       expect(res.status).toBe(200);
       const setArg = mockDb.set.mock.calls.at(-1)?.[0];
-      expect(setArg).toMatchObject({ mcpSelfManagement: true });
+      expect(setArg).toMatchObject({
+        mcpSelfManagement: true,
+        inboundTriggersAllowed: true,
+      });
     });
   });
 

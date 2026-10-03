@@ -15,6 +15,7 @@ import {
   deleteTrigger as deleteTriggerService,
   getTrigger as getTriggerService,
   listTriggers as listTriggersService,
+  toPublicTrigger,
   updateTrigger,
 } from "../services/trigger.ts";
 import { NotFoundError, ValidationError } from "../errors.ts";
@@ -97,7 +98,9 @@ export function createTriggerTools(
     }),
     execute: async ({ triggerId }) => {
       try {
-        return { trigger: await getTriggerService(ctx, triggerId) };
+        return {
+          trigger: toPublicTrigger(await getTriggerService(ctx, triggerId)),
+        };
       } catch (error) {
         if (error instanceof NotFoundError) {
           return {
@@ -241,7 +244,7 @@ export function createTriggerTools(
 
           return {
             success: true,
-            trigger: record,
+            trigger: toPublicTrigger(record),
             ...(url && { url }),
           };
         } catch (error) {
@@ -282,7 +285,7 @@ export function createTriggerTools(
 
         return {
           success: true,
-          trigger: record,
+          trigger: toPublicTrigger(record),
           ...(url && { url }),
         };
       } catch (error) {
@@ -302,8 +305,13 @@ export function createTriggerTools(
       label: z.string().describe("The trigger name (for display purposes)"),
     }),
     execute: async ({ triggerId }) => {
-      if (!(await deleteTriggerService(ctx, triggerId))) {
-        return { error: "Trigger not found" };
+      try {
+        if (!(await deleteTriggerService(ctx, triggerId))) {
+          return { error: "Trigger not found" };
+        }
+      } catch (error) {
+        // An Inbound Trigger is refused here, as on create and edit.
+        return toToolError(error);
       }
 
       return { success: true };

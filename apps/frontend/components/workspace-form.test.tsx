@@ -127,6 +127,7 @@ describe("WorkspaceForm save", () => {
       maxDailySummaries: 90,
       providerSelfManagement: true,
       mcpSelfManagement: false,
+      inboundTriggersAllowed: false,
     });
   });
 

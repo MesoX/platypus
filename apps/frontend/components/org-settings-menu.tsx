@@ -19,6 +19,7 @@ import {
   Sparkles,
   Unplug,
   Users,
+  Webhook,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -50,6 +51,7 @@ export function OrgSettingsMenu({
   const agentsHref = routes.settings.agents;
   const blueprintsHref = routes.settings.blueprints;
   const pluginsHref = routes.settings.plugins;
+  const inboundTriggersHref = routes.settings.inboundTriggers;
 
   return (
     <SidebarContent>
@@ -152,6 +154,16 @@ export function OrgSettingsMenu({
               >
                 <Link href={pluginsHref}>
                   <Blocks /> Plugins
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                isActive={pathname.startsWith(inboundTriggersHref)}
+              >
+                <Link href={inboundTriggersHref}>
+                  <Webhook /> Inbound Triggers
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

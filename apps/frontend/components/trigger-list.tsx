@@ -2,6 +2,11 @@
 
 import { useState } from "react";
 import {
+  INBOUND_TOKEN_STATUS_LABELS,
+  INBOUND_TOKEN_STATUS_VARIANTS,
+  inboundTokenStatus,
+} from "@/lib/inbound-trigger";
+import {
   Item,
   ItemTitle,
   ItemActions,
@@ -27,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Timer,
   Zap,
+  Webhook,
   Play,
   EllipsisVertical,
   Pencil,
@@ -39,6 +45,8 @@ import {
   type Agent,
   type CronTriggerConfig,
   type EventTriggerConfig,
+  type InboundTriggerConfig,
+  type TriggerType,
 } from "@platypus/schemas";
 import Link from "next/link";
 import { useBackendUrl } from "@/components/auth-provider";
@@ -64,6 +72,12 @@ const describeSchedule = (cronExpression: string, timezone: string): string => {
   }
 };
 
+const TYPE_LABELS: Record<TriggerType, string> = {
+  cron: "Cron",
+  event: "Event",
+  inbound: "Inbound",
+};
+
 /** The trigger cards as they load; the workspace home draws them too. */
 export const TriggerCardsSkeleton = ({ cards }: { cards?: number }) => (
   <CardGridSkeleton
@@ -79,6 +93,47 @@ export const TriggerCardsSkeleton = ({ cards }: { cards?: number }) => (
   />
 );
 
+/** An Inbound Trigger's line: what it takes, and how its token stands. */
+const InboundSummary = ({
+  trigger,
+  now,
+}: {
+  trigger: Trigger;
+  now: number;
+}) => {
+  const config = trigger.config as InboundTriggerConfig;
+  const inputs = config.inputs ?? [];
+  const status = inboundTokenStatus(trigger, now);
+  return (
+    <span className="flex items-center gap-1 flex-wrap">
+      <Webhook className="h-3 w-3" />
+      Called from outside
+      {inputs.length > 0 && (
+        <>
+          {" · "}
+          {inputs.map((input) => (
+            <Badge
+              key={input.name}
+              variant="secondary"
+              className="text-xs font-mono"
+            >
+              {input.name}
+            </Badge>
+          ))}
+        </>
+      )}
+      {status !== "active" && (
+        <Badge
+          variant={INBOUND_TOKEN_STATUS_VARIANTS[status]}
+          className="text-xs"
+        >
+          {INBOUND_TOKEN_STATUS_LABELS[status]}
+        </Badge>
+      )}
+    </span>
+  );
+};
+
 export const TriggerList = ({
   orgId,
   workspaceId,
@@ -90,6 +145,8 @@ export const TriggerList = ({
   const routes = workspaceRoutes(orgId, workspaceId);
   const [triggerToToggle, setTriggerToToggle] = useState<Trigger | null>(null);
   const [isToggling, setIsToggling] = useState(false);
+  // One reading of the clock per mount, for each token's expiry standing.
+  const [now] = useState(() => Date.now());
 
   // Resolved once per render and reused for the list's reads and every write
   // below, rather than re-deriving the Organization-vs-Workspace branch at
@@ -174,7 +231,7 @@ export const TriggerList = ({
                   <div className="flex items-center gap-2">
                     <ItemTitle>{trigger.name}</ItemTitle>
                     <Badge variant="outline" className="text-xs">
-                      {trigger.type === "cron" ? "Cron" : "Event"}
+                      {TYPE_LABELS[trigger.type] ?? trigger.type}
                     </Badge>
                     {trigger.type === "cron" &&
                       (trigger.config as CronTriggerConfig).isOneOff && (
@@ -224,6 +281,8 @@ export const TriggerList = ({
                           </span>
                         )}
                       </>
+                    ) : trigger.type === "inbound" ? (
+                      <InboundSummary trigger={trigger} now={now} />
                     ) : (
                       <span className="flex items-center gap-1 flex-wrap">
                         <Zap className="h-3 w-3" />
