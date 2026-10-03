@@ -99,12 +99,10 @@ describe("useStreamdownControls", () => {
     expect(renderHook(useStreamdownControls).result.current).toBeUndefined();
   });
 
-  it("hides the copy buttons over plain HTTP, where they cannot work", () => {
+  it("hides table copy over plain HTTP, where it cannot work", () => {
     stubSecureContext(false);
     expect(renderHook(useStreamdownControls).result.current).toEqual({
-      code: { copy: false },
       table: { copy: false },
-      mermaid: { copy: false },
     });
   });
 });

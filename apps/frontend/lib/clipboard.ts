@@ -62,14 +62,30 @@ export async function copyWithToast(
   return ok;
 }
 
-// Streamdown's copy buttons call the Clipboard API directly, so over plain
-// HTTP they would do nothing. There they are hidden; the text can still be
-// selected and copied by hand.
-const insecureControls: ControlsConfig = {
-  code: { copy: false },
-  table: { copy: false },
-  mermaid: { copy: false },
-};
+/**
+ * Over plain HTTP the browser leaves `navigator.clipboard` out, and
+ * Streamdown's code-block and diagram copy buttons call
+ * `navigator.clipboard.writeText` themselves. Standing in for that one method
+ * sends them through {@link copyToClipboard}'s fallback.
+ */
+export function installClipboardFallback() {
+  if (window.isSecureContext !== false || navigator.clipboard) return;
+  Object.defineProperty(navigator, "clipboard", {
+    value: {
+      writeText: async (text: string) => {
+        if (!(await copyToClipboard(text))) throw new Error("Copy failed");
+      },
+    },
+    configurable: true,
+  });
+}
+
+if (typeof window !== "undefined") installClipboardFallback();
+
+// Streamdown's table copy calls `navigator.clipboard.write` with a
+// `ClipboardItem`, which the stand-in above does not cover, so over plain
+// HTTP it is hidden. The table can still be downloaded or selected by hand.
+const insecureControls: ControlsConfig = { table: { copy: false } };
 
 const noSubscribe = () => () => {};
 
