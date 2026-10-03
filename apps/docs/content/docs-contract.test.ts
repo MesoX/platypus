@@ -270,12 +270,14 @@ const REMOVED_VARS = new Set<string>([]);
  * Real variables that no `.env.example` ships, so the reference page is their
  * only home. The first two are read by the frontend (`next.config.ts` and the
  * About page) and neither is something a deployment normally sets.
+ * `NODE_ENV` is set by the backend image, not in `.env`.
  * `PLATYPUS_PLUGIN_CONFIG` is deprecated, so the example files show the
  * per-plugin `PLATYPUS_PLUGIN_CONFIG_<NAME>` form instead.
  */
 const VARS_WITHOUT_ENV_EXAMPLE_ENTRY = new Set([
   "ALLOWED_DEV_ORIGINS",
   "NEXT_PUBLIC_APP_VERSION",
+  "NODE_ENV",
   "PLATYPUS_PLUGIN_CONFIG",
 ]);
 
@@ -1729,6 +1731,13 @@ const BACKEND_CONSTANTS = [
       `**${entries.toLocaleString("en-US")} entries**`,
     files: ["extending/sandbox-backends.mdx"],
     cost: "A backend author truncating at the stated cap disagrees with every other adapter about `truncated`.",
+  },
+  {
+    source: "apps/backend/src/runs/no-progress.ts",
+    name: "DEFAULT_NO_PROGRESS_THRESHOLD",
+    phrase: (count: number) => `${NUMBER_WORDS[count] ?? count} times`,
+    files: ["building-with-platypus/triggers.mdx"],
+    cost: "A reader debugging a _Failed_ run looks for the wrong number of repeats.",
   },
   {
     source: "apps/backend/src/jobs/scheduler.ts",

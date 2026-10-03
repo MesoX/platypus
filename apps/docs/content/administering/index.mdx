@@ -18,8 +18,10 @@ and you can hand some of it back per Workspace.
 
 ## Providers come first
 
-A new installation can sign in and do nothing else. It has no **Provider**, so no
-Workspace can reach a model, and every **Model** dropdown in the product is empty.
+A new installation has no Workspace and no **Provider**. Creating the first
+Workspace asks for one: add it there, scoped to that Workspace, or first add a
+Shared one here so the Workspace can attach it. Until a Shared Provider exists,
+the Workspace form's **Shared provider** tab has nothing to offer.
 
 Go to **Organization settings → Providers → Add provider**. A Provider created
 here is available to every Workspace it's attached to; one created inside a
@@ -66,8 +68,7 @@ menu offers **Edit org role** and **Remove from Org**.
 
 A member with the `admin` role is an Org Admin — they can do everything on this
 page, including to you. A **Super Admin** row is the platform-level account and
-has no actions available here at all; it is managed at the deployment level, not
-by an Org Admin.
+has no actions available here at all; an Org Admin can't change or remove it.
 
 <Callout type="warning">
   **Remove from Org** leaves the Workspaces that person owns in place and
