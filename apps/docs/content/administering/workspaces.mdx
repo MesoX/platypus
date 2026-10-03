@@ -1,6 +1,6 @@
 ---
 title: Workspace settings
-description: The per-Workspace form — its Context, the task and memory Providers, memory retention, and the two switches that hand work to the owner.
+description: The per-Workspace form — its Context, the task and memory Providers, memory retention, the two switches that hand work to the owner, and whether it takes Inbound Trigger calls.
 ---
 
 import { Callout } from "nextra/components";
@@ -110,6 +110,15 @@ only Org Admins may configure that resource in this Workspace.
 The switches only cover **Workspace-scoped** resources. An owner can never edit a
 Shared one, and never touch the Sandbox — that stays admin-only whatever these
 say.
+
+## Allow Inbound Triggers
+
+Visible only to an Org Admin, and **off** by default. It lets this Workspace's
+[Inbound Triggers](/building-with-platypus/triggers#inbound-triggers) take
+calls, and it only matters while the Organization's **Inbound Triggers** setting
+is **Selected workspaces** — see [Inbound Triggers](/administering#inbound-triggers).
+Under **Off** or **All workspaces** it is ignored. The Organization's
+**Inbound Triggers** screen lists the same switch for every Workspace.
 
 ## Deleting a Workspace
 

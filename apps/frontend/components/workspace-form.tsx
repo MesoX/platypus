@@ -50,7 +50,8 @@ interface WorkspaceFormProps {
   workspaceId: string;
 }
 
-// providerSelfManagement and mcpSelfManagement are deliberately excluded:
+// providerSelfManagement, mcpSelfManagement and inboundTriggersAllowed are
+// deliberately excluded:
 // this form has no field that retracts an error keyed to them.
 const RETRACTABLE_FIELDS = [
   "name",
@@ -70,6 +71,7 @@ type WorkspaceFormData = {
   maxDailySummaries: number;
   providerSelfManagement: boolean;
   mcpSelfManagement: boolean;
+  inboundTriggersAllowed: boolean;
 };
 
 /** A delegation flag: label and description, its Switch on the right. */
@@ -95,6 +97,7 @@ const WorkspaceFormSkeleton = ({ delegation }: { delegation: boolean }) => (
         <FieldSkeleton description={1} />
         {delegation && (
           <>
+            <DelegationRowSkeleton />
             <DelegationRowSkeleton />
             <DelegationRowSkeleton />
           </>
@@ -137,6 +140,7 @@ const WorkspaceForm = ({ orgId, workspaceId }: WorkspaceFormProps) => {
       maxDailySummaries: DEFAULT_WORKSPACE_MAX_DAILY_SUMMARIES,
       providerSelfManagement: false,
       mcpSelfManagement: false,
+      inboundTriggersAllowed: false,
     },
     entity: "workspaces",
     scope: { orgId },
@@ -151,6 +155,7 @@ const WorkspaceForm = ({ orgId, workspaceId }: WorkspaceFormProps) => {
         workspace.maxDailySummaries ?? DEFAULT_WORKSPACE_MAX_DAILY_SUMMARIES,
       providerSelfManagement: workspace.providerSelfManagement ?? false,
       mcpSelfManagement: workspace.mcpSelfManagement ?? false,
+      inboundTriggersAllowed: workspace.inboundTriggersAllowed ?? false,
     }),
     retractableFields: RETRACTABLE_FIELDS,
     buildPayload: (data) => ({
@@ -163,6 +168,9 @@ const WorkspaceForm = ({ orgId, workspaceId }: WorkspaceFormProps) => {
       // Admin-only; the backend strips these for non-admins (ADR-0006).
       providerSelfManagement: data.providerSelfManagement,
       mcpSelfManagement: data.mcpSelfManagement,
+      // Admin-only too; read only while the Organization's Inbound Triggers
+      // setting is "Selected workspaces" (ADR-0030).
+      inboundTriggersAllowed: data.inboundTriggersAllowed,
     }),
     onSuccess: () => {
       toast.success("Workspace updated");
@@ -441,6 +449,34 @@ const WorkspaceForm = ({ orgId, workspaceId }: WorkspaceFormProps) => {
                       setFormData((prev) => ({
                         ...prev,
                         mcpSelfManagement: checked,
+                      }))
+                    }
+                  />
+                </Field>
+
+                <Field
+                  orientation="horizontal"
+                  className="items-center justify-between"
+                >
+                  <div>
+                    <FieldLabel htmlFor="inboundTriggersAllowed">
+                      Allow Inbound Triggers
+                    </FieldLabel>
+                    <FieldDescription>
+                      Let this workspace&apos;s Inbound Triggers accept calls
+                      from outside Platypus. Applies only while the
+                      organization&apos;s Inbound Triggers setting is Selected
+                      workspaces. Off by default.
+                    </FieldDescription>
+                  </div>
+                  <Switch
+                    id="inboundTriggersAllowed"
+                    checked={formData.inboundTriggersAllowed}
+                    disabled={isSubmitting}
+                    onCheckedChange={(checked) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        inboundTriggersAllowed: checked,
                       }))
                     }
                   />

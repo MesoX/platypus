@@ -13,6 +13,7 @@
         "$TURBO_ROOT$/apps/backend/src/plugins/builtin.ts",
         "$TURBO_ROOT$/apps/backend/src/tools/closers.ts",
         "$TURBO_ROOT$/apps/backend/src/services/trigger-firing.ts",
+        "$TURBO_ROOT$/apps/backend/src/services/inbound-trigger.ts",
         "$TURBO_ROOT$/apps/backend/src/services/memory-retrieval.ts",
         "$TURBO_ROOT$/apps/backend/src/services/file-extraction.ts",
         "$TURBO_ROOT$/apps/backend/src/sandbox/index.ts",

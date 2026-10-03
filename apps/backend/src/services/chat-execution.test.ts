@@ -179,6 +179,7 @@ const baseWorkspace = {
   maxDailySummaries: 30,
   providerSelfManagement: false,
   mcpSelfManagement: false,
+  inboundTriggersAllowed: false,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

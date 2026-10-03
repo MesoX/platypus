@@ -41,6 +41,10 @@ export const organization = pgTable("organization", (t) => ({
   // Free-text org identity / context, rendered early in the system prompt as
   // framing (not a security control). Nullable — existing orgs are unchanged.
   identityContext: t.text("identity_context"),
+  // Which Workspaces may take Inbound Trigger calls (ADR-0030): "off" |
+  // "all" | "selected". Checked on every call, so changing it takes effect
+  // on the next one. Settable only by an Org Admin.
+  inboundTriggerGate: t.text("inbound_trigger_gate").notNull().default("off"),
   createdAt: t.timestamp("created_at").notNull().defaultNow(),
   updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
 }));
@@ -148,6 +152,13 @@ export const workspace = pgTable(
       .default(false),
     mcpSelfManagement: t
       .boolean("mcp_self_management")
+      .notNull()
+      .default(false),
+    // Whether this Workspace's Inbound Triggers are reachable while the
+    // Organization's gate is "selected" (ADR-0030). Org Admin-only, like the
+    // delegation flags above; ignored under "off" and "all".
+    inboundTriggersAllowed: t
+      .boolean("inbound_triggers_allowed")
       .notNull()
       .default(false),
 
@@ -805,7 +816,7 @@ export const trigger = pgTable(
       .text("agent_id")
       .notNull()
       .references(() => agent.id, { onDelete: "restrict" }),
-    type: t.text("type").notNull(), // "cron" | "event"
+    type: t.text("type").notNull(), // "cron" | "event" | "inbound"
     name: t.text("name").notNull(),
     description: t.text("description"),
     instruction: t.text("instruction").notNull(),
@@ -820,6 +831,22 @@ export const trigger = pgTable(
     config: t.jsonb("config").notNull(),
     lastRunAt: t.timestamp("last_run_at"),
     nextRunAt: t.timestamp("next_run_at"),
+    // Inbound Triggers only (ADR-0030). The token is shown once and stored as
+    // a SHA-256 hash — it is 256 random bits, so a slow hash buys nothing. Null
+    // on other types, and on an Inbound Trigger whose token was revoked.
+    tokenHash: t.text("token_hash"),
+    tokenCreatedAt: t.timestamp("token_created_at"),
+    tokenExpiresAt: t.timestamp("token_expires_at"),
+    // The latest expiry Notification sent for the current token: null |
+    // "expiring_30" | "expiring_7" | "expired". The three are sent in that
+    // order, so one ordered value records all of them. Kept here rather than
+    // inferred from the Notification, which the Owner may delete; issuing or
+    // revoking a token clears it.
+    tokenNotice: t.text("token_notice"),
+    // Written at most once a minute per Trigger, so a flood of calls cannot
+    // become a flood of writes.
+    lastUsedAt: t.timestamp("last_used_at"),
+    lastRejectedAt: t.timestamp("last_rejected_at"),
     createdAt: t.timestamp("created_at").notNull().defaultNow(),
     updatedAt: t.timestamp("updated_at").notNull().defaultNow(),
   }),
@@ -847,7 +874,9 @@ export const triggerRun = pgTable(
     // run was for. Null on Cron runs, on rows written before the column
     // existed, and on events that name no single entity (bulk
     // `notification.read`); the run-rate breaker counts by this column and
-    // ignores null, so those firings are exempt by construction.
+    // ignores null, so those firings are exempt by construction. An Inbound
+    // Trigger run always carries one: its record key's value, or the Trigger's
+    // own id when no key is marked, so every inbound run is under the breaker.
     entityId: t.text("entity_id"),
     startedAt: t.timestamp("started_at").notNull().defaultNow(),
     completedAt: t.timestamp("completed_at"),

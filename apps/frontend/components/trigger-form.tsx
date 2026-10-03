@@ -37,7 +37,7 @@ import { useState, useMemo } from "react";
 import { useResetOnChange } from "@/hooks/use-reset-on-change";
 import { useEntityDelete, useEntityForm } from "@/hooks/use-entity-form";
 import { useRouter } from "next/navigation";
-import { ChevronsUpDown } from "lucide-react";
+import { ChevronsUpDown, Plus, RefreshCw, X } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -47,15 +47,33 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  InboundTokenDialog,
+  inboundEndpointUrl,
+} from "@/components/inbound-token-dialog";
+import { useBackendUrl } from "@/components/auth-provider";
 import {
   type Trigger,
   type Agent,
   type CronTriggerConfig,
   type EventTriggerConfig,
+  type InboundTriggerConfig,
+  type Organization,
+  type TriggerType,
   type KanbanBoard,
   type KanbanBoardState,
+  type Workspace,
 } from "@platypus/schemas";
 import {
+  DEFAULT_INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS,
+  INBOUND_TRIGGER_INPUT_DESCRIPTION_MAX_LENGTH,
+  INBOUND_TRIGGER_INPUT_NAME_MAX_LENGTH,
+  INBOUND_TRIGGER_MAX_INPUTS,
+  INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS,
   TRIGGER_INSTRUCTION_MAX_LENGTH,
   TRIGGER_MAX_RUNS_TO_KEEP_MAX,
   TRIGGER_MAX_RUNS_TO_KEEP_MIN,
@@ -65,6 +83,19 @@ import { Cron } from "croner";
 import { formatDateTime } from "@/lib/format-date";
 import { toast } from "sonner";
 import { workspaceRoutes } from "@/lib/routes";
+import {
+  organizationEntity,
+  scopedUrl,
+  workspaceEntity,
+  writeAt,
+} from "@/lib/api-write";
+import { joinUrl } from "@/lib/utils";
+import {
+  INBOUND_TOKEN_STATUS_LABELS,
+  INBOUND_TOKEN_STATUS_VARIANTS,
+  inboundGateAdmits,
+  inboundTokenStatus,
+} from "@/lib/inbound-trigger";
 
 const TIMEZONES = ["UTC", ...Intl.supportedValuesOf("timeZone")];
 
@@ -133,6 +164,20 @@ const CHANGED_FIELD_OPTIONS = [
   { value: "dueDate", label: "Due date" },
   { value: "priority", label: "Priority" },
 ] as const;
+
+const INSTRUCTION_PLACEHOLDERS: Record<TriggerType, string> = {
+  cron: "Generate a daily report of...",
+  event: "Process the incoming event and...",
+  inbound: "Work on the issue named in issueKey and...",
+};
+
+const INSTRUCTION_DESCRIPTIONS: Record<TriggerType, string> = {
+  cron: "The message sent to the agent each time this trigger runs",
+  event:
+    "The message sent to the agent when the event occurs. Event data is included automatically.",
+  inbound:
+    "The message sent to the agent on each call. The call's inputs appear above it with their descriptions, so refer to them by name.",
+};
 
 const buildCronExpression = (
   frequency: Frequency,
@@ -308,6 +353,49 @@ const parseCronExpression = (
   return null;
 };
 
+/** One declared input as the form edits it; saved as `inputs[]` (ADR-0030). */
+type InboundInputDraft = {
+  name: string;
+  required: boolean;
+  description: string;
+};
+
+/** Mirrors the backend's rule, so a bad name is caught before saving. */
+const INPUT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * What stops the declared inputs from saving, if anything. The backend checks
+ * the same rules; this only moves the message next to the rows.
+ */
+const inboundInputsProblem = (inputs: InboundInputDraft[]): string | null => {
+  const names = inputs.map((input) => input.name.trim());
+  if (names.some((name) => name === "")) return "Every input needs a name.";
+  const bad = names.find((name) => !INPUT_NAME_PATTERN.test(name));
+  if (bad !== undefined) {
+    return `"${bad}" is not a valid input name. Start with a letter or underscore, then use only letters, digits and underscores.`;
+  }
+  const duplicate = names.find((name, i) => names.indexOf(name) !== i);
+  if (duplicate !== undefined) {
+    return `"${duplicate}" is declared more than once.`;
+  }
+  return null;
+};
+
+/** What a save answers: a new Inbound Trigger's carries its token, once. */
+type SavedTrigger = {
+  id: string;
+  token?: string;
+  tokenExpiresAt?: string | null;
+};
+
+/** A token being shown in the one-time dialog, and where to go after. */
+type ShownToken = {
+  token: string;
+  triggerId: string;
+  expiresAt?: string | null;
+  leaveOnClose: boolean;
+};
+
 // isOneOff, maxRunsToKeep, search, includeMemories,
 // filterBoardId/filterColumnId, and enabled are deliberately excluded: this
 // form has no field that retracts an error keyed to them.
@@ -388,11 +476,33 @@ const TriggerForm = ({
   }>("boards", scope);
   const boards = boardsData?.results || [];
 
-  const [triggerType, setTriggerType] = useState<"cron" | "event">("cron");
+  const [triggerType, setTriggerType] = useState<TriggerType>("cron");
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [filterBoardId, setFilterBoardId] = useState<string>("");
   const [filterColumnId, setFilterColumnId] = useState<string>("");
   const [filterChangedFields, setFilterChangedFields] = useState<string[]>([]);
+  const [inboundInputs, setInboundInputs] = useState<InboundInputDraft[]>([]);
+  const [recordKey, setRecordKey] = useState<string>("");
+  const [tokenExpiryDays, setTokenExpiryDays] = useState<number>(
+    DEFAULT_INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS,
+  );
+  const [shownToken, setShownToken] = useState<ShownToken | null>(null);
+  const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  // One reading of the clock per mount, for the token's expiry standing.
+  const [now] = useState(() => Date.now());
+  const backendUrl = useBackendUrl();
+
+  // Whether the Organization gate lets this Workspace take calls, so an Owner
+  // is told before they wire up a caller that would only ever get 404.
+  const { data: organization } = useScopedSWR<Organization>(
+    organizationEntity(orgId),
+    {},
+  );
+  const { data: workspace } = useScopedSWR<Workspace>(
+    workspaceEntity(workspaceId),
+    { orgId },
+  );
 
   const { data: boardStateData, isLoading: boardStateLoading } =
     useScopedSWR<KanbanBoardState>(
@@ -419,10 +529,20 @@ const TriggerForm = ({
     dayOfMonth: "1",
   });
 
+  const requiredInputNames = inboundInputs
+    .filter((input) => input.required && input.name.trim())
+    .map((input) => input.name.trim());
+  // The record key names an input, so renaming, removing or un-requiring that
+  // input unmarks it rather than saving a key that names nothing.
+  const effectiveRecordKey = requiredInputNames.includes(recordKey)
+    ? recordKey
+    : "";
+
   const router = useRouter();
 
   const {
     record: trigger,
+    mutateRecord,
     loadState,
     formData,
     setFormData,
@@ -435,7 +555,7 @@ const TriggerForm = ({
     setNumberField,
     setField,
     submit,
-  } = useEntityForm<TriggerFormData, { id: string }, Trigger>({
+  } = useEntityForm<TriggerFormData, SavedTrigger, Trigger>({
     initialData: {
       name: "",
       description: "",
@@ -485,12 +605,23 @@ const TriggerForm = ({
         } else {
           setScheduleMode("advanced");
         }
-      } else {
+      } else if (trigger.type === "event") {
         const eventConfig = trigger.config as EventTriggerConfig;
         setSelectedEvents(eventConfig.events);
         setFilterBoardId(eventConfig.filters?.boardId || "");
         setFilterColumnId(eventConfig.filters?.columnId || "");
         setFilterChangedFields(eventConfig.filters?.changedFields || []);
+      } else if (trigger.type === "inbound") {
+        const inboundConfig = trigger.config as InboundTriggerConfig;
+        setInboundInputs(
+          inboundConfig.inputs.map((input) => ({
+            name: input.name,
+            required: input.required,
+            description: input.description ?? "",
+          })),
+        );
+        setRecordKey(inboundConfig.recordKey ?? "");
+        setTokenExpiryDays(inboundConfig.tokenExpiryDays);
       }
     },
     retractableFields: RETRACTABLE_FIELDS,
@@ -506,6 +637,24 @@ const TriggerForm = ({
         search: data.search,
         includeMemories: data.includeMemories,
       };
+
+      if (triggerType === "inbound") {
+        return {
+          ...commonFields,
+          type: "inbound" as const,
+          config: {
+            inputs: inboundInputs.map((input) => ({
+              name: input.name.trim(),
+              required: input.required,
+              ...(input.description.trim()
+                ? { description: input.description.trim() }
+                : {}),
+            })),
+            ...(effectiveRecordKey ? { recordKey: effectiveRecordKey } : {}),
+            tokenExpiryDays,
+          },
+        };
+      }
 
       return triggerType === "cron"
         ? {
@@ -538,7 +687,20 @@ const TriggerForm = ({
             },
           };
     },
-    onSuccess: () => router.push(workspaceRoutes(orgId, workspaceId).root),
+    onSuccess: (saved) => {
+      // A new Inbound Trigger's token is in this response and never again, so
+      // it is shown before leaving the page.
+      if (saved?.token) {
+        setShownToken({
+          token: saved.token,
+          triggerId: saved.id,
+          expiresAt: saved.tokenExpiresAt,
+          leaveOnClose: true,
+        });
+        return;
+      }
+      router.push(workspaceRoutes(orgId, workspaceId).root);
+    },
     failureMessage: "Error saving trigger",
   });
 
@@ -598,6 +760,68 @@ const TriggerForm = ({
     }
   }, [triggerType, effectiveCronExpression, formData.timezone]);
 
+  const inputsProblem =
+    triggerType === "inbound" ? inboundInputsProblem(inboundInputs) : null;
+  const inboundConfigErrors = Object.entries(validationErrors)
+    .filter(([key]) => key === "config" || key.startsWith("config."))
+    .map(([, message]) => message);
+
+  const tokenStatus = trigger ? inboundTokenStatus(trigger, now) : "none";
+  // Only once everything the answer depends on has loaded: under `selected`
+  // that includes the Workspace's own flag, and a Workspace still loading (or
+  // failed to load) is unknown, not disallowed.
+  const gateClosed =
+    organization !== undefined &&
+    (organization.inboundTriggerGate !== "selected" ||
+      workspace !== undefined) &&
+    !inboundGateAdmits(
+      organization.inboundTriggerGate,
+      workspace?.inboundTriggersAllowed,
+    );
+
+  const updateInboundInputs = (
+    update: (prev: InboundInputDraft[]) => InboundInputDraft[],
+  ) => {
+    setValidationErrors((prev) => retractFieldError(prev, "config"));
+    setInboundInputs(update);
+  };
+
+  const updateInboundInput = (
+    index: number,
+    patch: Partial<InboundInputDraft>,
+  ) =>
+    updateInboundInputs((prev) =>
+      prev.map((input, i) => (i === index ? { ...input, ...patch } : input)),
+    );
+
+  const handleRegenerateToken = async () => {
+    if (!backendUrl || !triggerId) return;
+    setIsRegenerating(true);
+    const outcome = await writeAt<{ token: string; tokenExpiresAt: string }>(
+      joinUrl(scopedUrl(backendUrl, "triggers", scope), `/${triggerId}/token`),
+      { method: "POST" },
+    );
+    if (outcome.outcome === "success") {
+      setShownToken({
+        token: outcome.data.token,
+        triggerId,
+        expiresAt: outcome.data.tokenExpiresAt,
+        leaveOnClose: false,
+      });
+      await mutateRecord();
+    } else {
+      toast.error(outcome.message);
+    }
+    setIsRegenerateDialogOpen(false);
+    setIsRegenerating(false);
+  };
+
+  const closeTokenDialog = () => {
+    const leave = shownToken?.leaveOnClose;
+    setShownToken(null);
+    if (leave) router.push(workspaceRoutes(orgId, workspaceId).root);
+  };
+
   const handleEventToggle = (event: string) => {
     setValidationErrors((prev) => retractFieldError(prev, "config"));
     setSelectedEvents((prev) => {
@@ -632,9 +856,7 @@ const TriggerForm = ({
             <FieldLabel>Trigger Type</FieldLabel>
             <Select
               value={triggerType}
-              onValueChange={(value) =>
-                setTriggerType(value as "cron" | "event")
-              }
+              onValueChange={(value) => setTriggerType(value as TriggerType)}
               disabled={isSubmitting || !!triggerId}
             >
               <SelectTrigger disabled={isSubmitting || !!triggerId}>
@@ -643,6 +865,7 @@ const TriggerForm = ({
               <SelectContent>
                 <SelectItem value="cron">Cron</SelectItem>
                 <SelectItem value="event">Event</SelectItem>
+                <SelectItem value="inbound">Inbound</SelectItem>
               </SelectContent>
             </Select>
           </Field>
@@ -689,11 +912,7 @@ const TriggerForm = ({
             <ExpandableTextarea
               id="instruction"
               label="Instruction"
-              placeholder={
-                triggerType === "cron"
-                  ? "Generate a daily report of..."
-                  : "Process the incoming event and..."
-              }
+              placeholder={INSTRUCTION_PLACEHOLDERS[triggerType]}
               value={formData.instruction}
               onChange={handleChange}
               disabled={isSubmitting}
@@ -702,9 +921,7 @@ const TriggerForm = ({
               error={validationErrors.instruction}
             />
             <FieldDescription>
-              {triggerType === "cron"
-                ? "The message sent to the agent each time this trigger runs"
-                : "The message sent to the agent when the event occurs. Event data is included automatically."}
+              {INSTRUCTION_DESCRIPTIONS[triggerType]}
             </FieldDescription>
           </Field>
 
@@ -1098,6 +1315,241 @@ const TriggerForm = ({
               </Field>
             )}
 
+          {/* Inbound-specific fields (ADR-0030) */}
+          {triggerType === "inbound" && (
+            <>
+              {gateClosed && (
+                <Alert>
+                  <AlertDescription>
+                    Your Organization doesn&apos;t allow Inbound Triggers in
+                    this Workspace yet, so calls get 404 until an Org Admin
+                    allows them. You can still set this trigger up.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <Field data-invalid={inboundConfigErrors.length > 0}>
+                <FieldLabel>Inputs</FieldLabel>
+                <FieldDescription>
+                  The values a caller sends as{" "}
+                  <code>{`{ "inputs": { ... } }`}</code>. Every value is a
+                  string. A call with a missing required input, an undeclared
+                  one, or a value that isn&apos;t a string is refused.
+                </FieldDescription>
+                <div className="flex flex-col gap-3 mt-2">
+                  {inboundInputs.map((input, index) => (
+                    <div
+                      key={index}
+                      className="flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-start"
+                    >
+                      <Input
+                        aria-label={`Input ${index + 1} name`}
+                        placeholder="issueKey"
+                        className="font-mono sm:w-44"
+                        value={input.name}
+                        maxLength={INBOUND_TRIGGER_INPUT_NAME_MAX_LENGTH}
+                        onChange={(e) =>
+                          updateInboundInput(index, { name: e.target.value })
+                        }
+                        disabled={isSubmitting}
+                      />
+                      <Input
+                        aria-label={`Input ${index + 1} description`}
+                        placeholder="What the agent should know about it"
+                        className="flex-1"
+                        value={input.description}
+                        maxLength={INBOUND_TRIGGER_INPUT_DESCRIPTION_MAX_LENGTH}
+                        onChange={(e) =>
+                          updateInboundInput(index, {
+                            description: e.target.value,
+                          })
+                        }
+                        disabled={isSubmitting}
+                      />
+                      <div className="flex items-center justify-between gap-3 sm:h-9">
+                        <Field orientation="horizontal" className="w-auto">
+                          <Switch
+                            id={`input-${index}-required`}
+                            className="cursor-pointer"
+                            checked={input.required}
+                            onCheckedChange={(checked) =>
+                              updateInboundInput(index, { required: checked })
+                            }
+                            disabled={isSubmitting}
+                          />
+                          <FieldLabel htmlFor={`input-${index}-required`}>
+                            Required
+                          </FieldLabel>
+                        </Field>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="cursor-pointer shrink-0"
+                          aria-label={`Remove input ${index + 1}`}
+                          onClick={() =>
+                            updateInboundInputs((prev) =>
+                              prev.filter((_, i) => i !== index),
+                            )
+                          }
+                          disabled={isSubmitting}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="cursor-pointer"
+                      onClick={() =>
+                        updateInboundInputs((prev) => [
+                          ...prev,
+                          { name: "", required: true, description: "" },
+                        ])
+                      }
+                      disabled={
+                        isSubmitting ||
+                        inboundInputs.length >= INBOUND_TRIGGER_MAX_INPUTS
+                      }
+                    >
+                      <Plus className="h-4 w-4" /> Add input
+                    </Button>
+                  </div>
+                </div>
+                {inputsProblem && <FieldError>{inputsProblem}</FieldError>}
+                {inboundConfigErrors.map((message) => (
+                  <FieldError key={message}>{message}</FieldError>
+                ))}
+              </Field>
+
+              <Field>
+                <FieldLabel>Record key</FieldLabel>
+                <Select
+                  value={effectiveRecordKey || "__none__"}
+                  onValueChange={(value) =>
+                    setRecordKey(value === "__none__" ? "" : value)
+                  }
+                  disabled={isSubmitting}
+                >
+                  <SelectTrigger
+                    aria-label="Record key"
+                    disabled={isSubmitting}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {requiredInputNames.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  The required input that says which record a call is about,
+                  such as an issue key. Only one run per record is active at a
+                  time, and the run-rate limit counts each record separately.
+                  With none, the limit counts the whole trigger. Marking one is
+                  the expected setup.
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel>Token lifetime</FieldLabel>
+                <Select
+                  value={String(tokenExpiryDays)}
+                  onValueChange={(value) => setTokenExpiryDays(Number(value))}
+                  disabled={isSubmitting}
+                >
+                  <SelectTrigger
+                    aria-label="Token lifetime"
+                    disabled={isSubmitting}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {INBOUND_TRIGGER_TOKEN_EXPIRY_DAYS.map((days) => (
+                      <SelectItem key={days} value={String(days)}>
+                        {days} days
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  {triggerId
+                    ? "Applies to the next token you issue. The current token keeps its expiry date."
+                    : "How long the token works. You get a notification 30 and 7 days before it expires."}
+                </FieldDescription>
+              </Field>
+
+              {triggerId && trigger && (
+                <Field>
+                  <FieldLabel>Token</FieldLabel>
+                  <div className="flex flex-col gap-2 rounded-md border p-3 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge
+                        variant={INBOUND_TOKEN_STATUS_VARIANTS[tokenStatus]}
+                      >
+                        {INBOUND_TOKEN_STATUS_LABELS[tokenStatus]}
+                      </Badge>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="cursor-pointer"
+                        onClick={() => setIsRegenerateDialogOpen(true)}
+                        disabled={isSubmitting}
+                      >
+                        <RefreshCw className="h-4 w-4" />{" "}
+                        {trigger.hasToken ? "Regenerate" : "Issue token"}
+                      </Button>
+                    </div>
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-muted-foreground">
+                      <dt>Issued</dt>
+                      <dd>
+                        {trigger.tokenCreatedAt
+                          ? formatDateTime(trigger.tokenCreatedAt)
+                          : "—"}
+                      </dd>
+                      <dt>Expires</dt>
+                      <dd>
+                        {trigger.tokenExpiresAt
+                          ? formatDateTime(trigger.tokenExpiresAt)
+                          : "—"}
+                      </dd>
+                      <dt>Last used</dt>
+                      <dd>
+                        {trigger.lastUsedAt
+                          ? formatDateTime(trigger.lastUsedAt)
+                          : "Never"}
+                      </dd>
+                      <dt>Last rejected</dt>
+                      <dd>
+                        {trigger.lastRejectedAt
+                          ? formatDateTime(trigger.lastRejectedAt)
+                          : "Never"}
+                      </dd>
+                    </dl>
+                    {backendUrl && (
+                      <p className="break-all text-muted-foreground">
+                        Endpoint:{" "}
+                        <code>{inboundEndpointUrl(backendUrl, triggerId)}</code>
+                      </p>
+                    )}
+                  </div>
+                  <FieldDescription>
+                    {trigger.hasToken
+                      ? "The token was shown once, when it was issued. Regenerating stops the current one working straight away."
+                      : "This trigger has no token, so every call is refused. An Org Admin may have revoked it. Issue a new one and update the system that calls it."}
+                  </FieldDescription>
+                </Field>
+              )}
+            </>
+          )}
+
           <FormTextField
             className="w-1/2"
             label="Max Runs to Keep"
@@ -1146,7 +1598,9 @@ const TriggerForm = ({
               <div className="flex flex-col">
                 <p>Enabled</p>
                 <p className="text-xs text-muted-foreground">
-                  Trigger will run automatically
+                  {triggerType === "inbound"
+                    ? "Trigger accepts calls. A disabled one refuses them."
+                    : "Trigger will run automatically"}
                 </p>
               </div>
             </FieldLabel>
@@ -1203,7 +1657,8 @@ const TriggerForm = ({
           isSubmitting ||
           !canSubmit ||
           !isCronValid ||
-          (triggerType === "event" && selectedEvents.length === 0)
+          (triggerType === "event" && selectedEvents.length === 0) ||
+          inputsProblem !== null
         }
         deleteVisible={!!triggerId}
         deleteDisabled={isSubmitting}
@@ -1218,6 +1673,33 @@ const TriggerForm = ({
         onConfirm={handleDelete}
         loading={isDeleting}
       />
+
+      <ConfirmDialog
+        open={isRegenerateDialogOpen}
+        onOpenChange={setIsRegenerateDialogOpen}
+        title={trigger?.hasToken ? "Regenerate token" : "Issue token"}
+        description={
+          trigger?.hasToken
+            ? "The current token stops working straight away. Update the system that calls this trigger with the new one."
+            : "A new token is issued and shown once."
+        }
+        confirmLabel={trigger?.hasToken ? "Regenerate" : "Issue token"}
+        onConfirm={() => void handleRegenerateToken()}
+        loading={isRegenerating}
+      />
+
+      {shownToken && (
+        <InboundTokenDialog
+          open
+          token={shownToken.token}
+          endpointUrl={inboundEndpointUrl(
+            backendUrl ?? "",
+            shownToken.triggerId,
+          )}
+          expiresAt={shownToken.expiresAt}
+          onClose={closeTokenDialog}
+        />
+      )}
     </div>
   );
 
