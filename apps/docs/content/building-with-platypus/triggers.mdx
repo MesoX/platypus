@@ -141,11 +141,13 @@ _Cancelled_.
   the run receives only the **last** event of the burst. For `card.updated`,
   `changedFields` lists every field changed across the burst.
 - **No-progress runs stop early.** Because no one is watching a Trigger run,
-  Platypus ends it if the Agent stops making progress — repeating the same tool
-  call and getting the same result several times in a row. The run is recorded as
-  _failed_ with a reason naming the repeated tool, so it can't quietly burn its
-  whole step budget. (Only unattended work is stopped this way: Trigger runs and
-  Sub-Agents. The top-level Chat turn is not.)
+  Platypus ends it if the Agent stops making progress: it calls the same tool
+  with the same arguments and gets the same result three times during the run,
+  whether or not other calls come in between. An Agent that polls a status
+  tool and gets the same answer three times is stopped too. The run is recorded
+  as _failed_ with a reason naming the repeated tool, so it can't quietly burn
+  its whole step budget. (Only unattended work is stopped this way: Trigger
+  runs and Sub-Agents. The top-level Chat turn is not.)
 - Older run records are pruned automatically, keeping at least the newest **Max
   Runs to Keep**.
 
