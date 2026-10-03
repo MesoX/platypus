@@ -21,11 +21,13 @@ import {
   installRadixPointerPolyfills,
   jsonResponse,
 } from "@/lib/test-utils";
+import type { Actor } from "@/lib/authorization";
 
 // --- Module mocks ------------------------------------------------------------
 
-const { params, reads } = vi.hoisted(() => ({
+const { params, reads, auth } = vi.hoisted(() => ({
   params: { orgId: "org1", workspaceId: "ws1" },
+  auth: { actor: "org-admin" as Actor },
   // Keyed by `${workspaceId}|${entity}`. Each entry is handed back by
   // reference, as SWR does, so a read's `data` identity is stable across
   // renders.
@@ -40,6 +42,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/components/auth-provider", () => ({
   useBackendUrl: () => "http://test",
+  useAuth: () => auth,
 }));
 
 vi.mock("swr", () => ({ useSWRConfig: () => ({ mutate: vi.fn() }) }));
@@ -110,6 +113,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   reads.clear();
   params.workspaceId = "ws1";
+  auth.actor = "org-admin";
 });
 
 afterEach(() => {
@@ -202,6 +206,31 @@ describe("AppSidebar workspace switcher", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("Acme")).toBeInTheDocument();
     expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+
+  /** Opens the workspace switcher's menu. */
+  const openSwitcher = () => {
+    const trigger = screen.getByText("Alpha").closest("button")!;
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(trigger, { button: 0, pointerId: 1 });
+    fireEvent.click(trigger, { button: 0 });
+    return screen.getByRole("menu");
+  };
+
+  it.each([
+    ["the Operator", "operator", true],
+    ["an Org Admin", "org-admin", true],
+    ["a member who owns the Workspace", "workspace-owner", false],
+  ] as const)("offers Add workspace to %s (%s): %s", (_who, actor, shown) => {
+    installRadixPointerPolyfills();
+    auth.actor = actor;
+    seedHeader();
+    renderSidebar();
+
+    const item = within(openSwitcher()).queryByRole("menuitem", {
+      name: /Add workspace/,
+    });
+    expect(item !== null).toBe(shown);
   });
 });
 
