@@ -1,9 +1,14 @@
 import { Hono } from "hono";
 import { sValidator } from "@hono/standard-validator";
 import { db } from "../index.ts";
-import { organizationMember, user as userTable } from "../db/schema.ts";
+import {
+  organizationMember,
+  trigger as triggerTable,
+  user as userTable,
+  workspace as workspaceTable,
+} from "../db/schema.ts";
 import { organizationMemberUpdateSchema } from "@platypus/schemas";
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, inArray } from "drizzle-orm";
 import { requireAuth } from "../middleware/authentication.ts";
 import {
   isSuperAdmin,
@@ -207,10 +212,32 @@ member.delete(
       }
     }
 
-    // Deleting org membership will cascade delete their workspaces via ownerId FK
-    await db
-      .delete(organizationMember)
-      .where(eq(organizationMember.id, memberId));
+    // The member's Workspaces stay, still owned by them, so their Triggers are
+    // disabled in the same transaction: nothing else stops them running as a
+    // user who has left. Only the Workspace Owner can re-enable a Trigger, so
+    // they stay off unless the member is invited back.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(triggerTable)
+        .set({ enabled: false, updatedAt: new Date() })
+        .where(
+          inArray(
+            triggerTable.workspaceId,
+            tx
+              .select({ id: workspaceTable.id })
+              .from(workspaceTable)
+              .where(
+                and(
+                  eq(workspaceTable.organizationId, orgId),
+                  eq(workspaceTable.ownerId, targetMember.userId),
+                ),
+              ),
+          ),
+        );
+      await tx
+        .delete(organizationMember)
+        .where(eq(organizationMember.id, memberId));
+    });
 
     return c.json({ message: "Member removed from organization" });
   },

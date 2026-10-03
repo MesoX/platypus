@@ -153,6 +153,12 @@ export const canListOrgMembers = orgAdminOnly;
 export const canCreateWorkspace = orgAdminOnly;
 
 /**
+ * May this actor open Organization settings? Same rule as the settings
+ * layout's `requireOrgAdmin` route guard; used to hide links to it.
+ */
+export const canOpenOrgSettings = orgAdminOnly;
+
+/**
  * ADR-0006: may this actor toggle a Workspace's delegation flags
  * (`providerSelfManagement`, `mcpSelfManagement`)? Always an Org Admin
  * decision — the flags are what let a Workspace Owner self-manage a

@@ -558,8 +558,15 @@
     {
       "idx": 79,
       "version": "7",
-      "when": 1790873874434,
-      "tag": "0079_inbound_triggers",
+      "when": 1790990323344,
+      "tag": "0079_mcp_last_fetch_failed_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1791014981054,
+      "tag": "0080_inbound_triggers",
       "breakpoints": true
     }
   ]

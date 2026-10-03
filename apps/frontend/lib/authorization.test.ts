@@ -11,6 +11,7 @@ import {
   canManageOrgSharedResource,
   canManageSharedResource,
   canManageWorkspaceDelegation,
+  canOpenOrgSettings,
   canSendChatMessages,
   isOperator,
   resolveActor,
@@ -124,6 +125,7 @@ describe.each([
   ["canListOrgMembers", canListOrgMembers],
   ["canCreateWorkspace", canCreateWorkspace],
   ["canManageWorkspaceDelegation", canManageWorkspaceDelegation],
+  ["canOpenOrgSettings", canOpenOrgSettings],
 ] as const)("%s — Org-Admin-tier, no Workspace requirement", (_name, fn) => {
   it("the Operator is allowed", () => {
     expect(fn("operator")).toBe(true);

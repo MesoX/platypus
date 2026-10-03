@@ -105,17 +105,11 @@ for the seeding rule and the recovery path.
 
 ## Background workers
 
-| Variable                         | Purpose                                                                                                                             | Default              | Required |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------- | -------- |
-| `MEMORY_EXTRACTION_INTERVAL_MS`  | How often the memory-extraction worker runs, in milliseconds.                                                                       | `300000` (5 minutes) | No       |
-| `SCHEDULE_SCHEDULER_INTERVAL_MS` | How often the scheduler runs, in milliseconds. Each pass starts due Triggers and recovers runs and Chats abandoned by a crash.      | `60000` (1 minute)   | No       |
-| `SCHEDULE_MAX_CONCURRENT`        | Maximum scheduled (Cron) Triggers run in parallel within one scheduler pass. Event and Inbound Trigger runs don't count against it. | `5`                  | No       |
-
-<Callout type="warning">
-  A scheduler pass that starts scheduled Triggers ends only when they finish.
-  While a long scheduled run is going, no other scheduled Trigger starts and
-  neither crash sweep below runs, however short the interval.
-</Callout>
+| Variable                         | Purpose                                                                                                                                | Default              | Required |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | -------- |
+| `MEMORY_EXTRACTION_INTERVAL_MS`  | How often the memory-extraction worker runs, in milliseconds.                                                                          | `300000` (5 minutes) | No       |
+| `SCHEDULE_SCHEDULER_INTERVAL_MS` | How often the scheduler runs, in milliseconds. Each pass starts due Triggers and recovers runs and Chats abandoned by a crash.         | `60000` (1 minute)   | No       |
+| `SCHEDULE_MAX_CONCURRENT`        | Maximum scheduled (Cron) Trigger runs in flight at once, across all backend instances. Event and Inbound Trigger runs are not counted. | `5`                  | No       |
 
 ## Triggers
 

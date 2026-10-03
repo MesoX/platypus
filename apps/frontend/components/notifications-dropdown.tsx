@@ -193,27 +193,35 @@ export function NotificationsDropdown({
                           {notif.title}
                         </div>
                       )}
+                      {/* A link click, and any click in its confirmation
+                          (portalled out of this DOM, but still bubbling
+                          through React), must not toggle the row; a click on
+                          the text itself still does. */}
                       <div
-                        className={`text-xs text-muted-foreground [&_p]:m-0 [&_a]:text-primary ${isExpanded ? "" : "line-clamp-2"}`}
+                        onClick={(e) => {
+                          const target = e.target as Element;
+                          if (
+                            !e.currentTarget.contains(target) ||
+                            target.closest("button")
+                          ) {
+                            e.stopPropagation();
+                          }
+                        }}
+                        className={`text-xs text-muted-foreground [&_p]:m-0 [&_a]:text-primary [&_ul]:m-0 [&_ol]:m-0 [&_li]:py-0 ${isExpanded ? "" : "line-clamp-2"}`}
                       >
                         <Markdown
-                          allowedElements={["p", "a", "strong", "em", "code"]}
-                          components={{
-                            // Streamdown's own link renders as a button that
-                            // bubbles into the row's expand/collapse click.
-                            // A plain anchor keeps a notification link one
-                            // click, as it has always been.
-                            a: ({ children, href }) => (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {children}
-                              </a>
-                            ),
-                          }}
+                          allowedElements={[
+                            "p",
+                            "a",
+                            "strong",
+                            "em",
+                            "code",
+                            "ul",
+                            "ol",
+                            "li",
+                          ]}
+                          // Anything else keeps its text, just unstyled.
+                          unwrapDisallowed
                         >
                           {notif.body}
                         </Markdown>

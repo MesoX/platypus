@@ -1,6 +1,6 @@
 {
-  "id": "e473b34d-35c6-46a3-82f7-dd7ee233f460",
-  "prevId": "e92fb49f-5911-42c5-b1a2-b2a41e89c712",
+  "id": "6d5fa9f1-c78b-498c-83af-78d181197aa6",
+  "prevId": "e473b34d-35c6-46a3-82f7-dd7ee233f460",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3094,6 +3094,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "inbound_trigger_gate": {
+          "name": "inbound_trigger_gate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'off'"
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -3865,6 +3872,42 @@
           "primaryKey": false,
           "notNull": false
         },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "token_created_at": {
+          "name": "token_created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "token_expires_at": {
+          "name": "token_expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "token_notice": {
+          "name": "token_notice",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_rejected_at": {
+          "name": "last_rejected_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -4570,6 +4613,13 @@
         },
         "mcp_self_management": {
           "name": "mcp_self_management",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "inbound_triggers_allowed": {
+          "name": "inbound_triggers_allowed",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,

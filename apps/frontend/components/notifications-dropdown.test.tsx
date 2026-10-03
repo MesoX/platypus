@@ -7,7 +7,14 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   installRadixPointerPolyfills,
   jsonResponse,
@@ -186,5 +193,74 @@ describe("NotificationsDropdown feed", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+  });
+});
+
+describe("NotificationsDropdown body", () => {
+  const renderBody = (body: string) => {
+    feeds["/notifications"] = { results: [{ ...unread, body }] };
+    render(<NotificationsDropdown orgId="org1" workspaceId="ws1" />);
+    openDropdownMenu();
+  };
+
+  it("renders an unordered list with every item", () => {
+    renderBody("Acceptance criteria:\n- item one\n- item two\n\nSize: S");
+
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual(["item one", "item two"]);
+    expect(items[0].closest("ul")).not.toBeNull();
+    expect(screen.getByText("Size: S")).toBeInTheDocument();
+  });
+
+  it("renders an ordered list with every item", () => {
+    renderBody("1. first\n2. second");
+
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual(["first", "second"]);
+    expect(items[0].closest("ol")).not.toBeNull();
+  });
+
+  it("shows a disallowed block's text without its element", () => {
+    renderBody("## Title\n\nDetails");
+
+    expect(screen.getByText("Title")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Title" })).toBeNull();
+  });
+
+  it("confirms a link before opening it, without toggling the entry", async () => {
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    renderBody("See [the run](https://example.com/run)");
+
+    fireEvent.click(screen.getByRole("button", { name: "the run" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Open external link?",
+    });
+    expect(open).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Open link" }));
+    expect(open).toHaveBeenCalledWith(
+      "https://example.com/run",
+      "_blank",
+      "noreferrer",
+    );
+    expect(screen.queryByText("Show less")).toBeNull();
+    expect(screen.getByText("Nightly digest")).toBeInTheDocument();
+  });
+
+  it("cancels the confirmation and leaves the dropdown open", async () => {
+    renderBody("See [the run](https://example.com/run)");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "the run" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "Open external link?" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "Open external link?" })).toBe(
+      null,
+    );
+    expect(screen.getByText("Nightly digest")).toBeInTheDocument();
+    expect(screen.queryByText("Show less")).toBeNull();
   });
 });

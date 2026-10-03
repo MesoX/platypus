@@ -1,10 +1,11 @@
--- Inbound Triggers (ADR-0030). Generated on the feature branch as 0076 and
--- renumbered to 0079 when 0076-0078 merged to main first.
+-- Inbound Triggers (ADR-0030). Generated on the feature branch as 0076,
+-- renumbered to 0079 when 0076-0078 merged to main first, and to 0080 when
+-- main's 0079 (mcp last_fetch_failed_at) merged first.
 --
--- A database that ran the branch build already has these columns under the old
--- 0076 entry. Drizzle's migrator applies main's 0076-0078 there (their `when`
--- is later) and then this file, so every statement is idempotent; a fresh
--- database applies it normally. See 0068 for the same pattern.
+-- A database that ran a branch build already has these columns under the old
+-- 0076 or 0079 entry. Drizzle's migrator applies main's later migrations there
+-- (their `when` is later) and then this file, so every statement is idempotent;
+-- a fresh database applies it normally. See 0068 for the same pattern.
 ALTER TABLE "organization" ADD COLUMN IF NOT EXISTS "inbound_trigger_gate" text DEFAULT 'off' NOT NULL;--> statement-breakpoint
 ALTER TABLE "trigger" ADD COLUMN IF NOT EXISTS "token_hash" text;--> statement-breakpoint
 ALTER TABLE "trigger" ADD COLUMN IF NOT EXISTS "token_created_at" timestamp;--> statement-breakpoint

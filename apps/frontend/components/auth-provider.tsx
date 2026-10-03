@@ -72,13 +72,13 @@ interface AuthContextType {
   /** ADR-0006 delegation flags for the Workspace in scope, if any. */
   workspaceDelegation: WorkspaceDelegationFlags | null;
   /**
-   * A membership or Workspace read that failed for a reason other than
-   * access (a 5xx, the network), with no row to fall back on. The `actor`
-   * then says less than the caller may hold, so a gate shows this as a
-   * retryable failure rather than turning the caller away.
+   * A session, membership or Workspace read that failed for a reason other
+   * than access (a 5xx, the network), with nothing to fall back on. The
+   * `user` and `actor` then say less than the caller may hold, so a gate
+   * shows this as a retryable failure rather than turning the caller away.
    */
   accessReadError: unknown;
-  /** Re-reads the membership and the Workspace. */
+  /** Re-reads the session, the membership and the Workspace. */
   retryAccessReads: () => void;
 }
 
@@ -92,6 +92,24 @@ const transientReadError = (error: unknown, data: unknown): unknown =>
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// One client per backend URL for the life of the page, outside React. The
+// client owns the session store, and merely reading that store mounts it and
+// fires `/auth/get-session`. A `useMemo` in the component is recomputed on
+// every render attempt React throws away before the first commit — and while
+// a slow page hydrates it throws away thousands — so each attempt made a new
+// client and a new request: one reload sent 300+ `get-session` calls and
+// tripped the backend's rate limiter (#1216). Here the store is created once,
+// so every attempt reads the same one and it fetches once.
+const authClients = new Map<string, ReturnType<typeof createAuthClient>>();
+const getAuthClient = (backendUrl: string) => {
+  let client = authClients.get(backendUrl);
+  if (!client) {
+    client = createAuthClient({ baseURL: backendUrl, basePath: "/auth" });
+    authClients.set(backendUrl, client);
+  }
+  return client;
+};
+
 export function AuthProvider({
   children,
   backendUrl,
@@ -99,12 +117,7 @@ export function AuthProvider({
   children: ReactNode;
   backendUrl: string;
 }) {
-  const authClient = useMemo(() => {
-    return createAuthClient({
-      baseURL: backendUrl,
-      basePath: "/auth",
-    });
-  }, [backendUrl]);
+  const authClient = getAuthClient(backendUrl);
 
   const { data, isPending, error, refetch } = authClient.useSession();
   const params = useParams();
@@ -140,16 +153,24 @@ export function AuthProvider({
     fetcher,
   );
 
+  // better-auth clears the session on a 401 — the server saying signed out —
+  // and keeps it through any other failure, so only a session never read is
+  // a failure to report. Taken as signed out, it sent the reader to /sign-in.
+  const sessionReadError =
+    error && !data && error.status !== 401 ? error : null;
   // A refused membership is the answer — not a member — whatever else
   // failed to load, so it leaves the gate to turn the caller away.
-  const accessReadError = isNotFoundOrForbidden(orgMembershipError)
-    ? null
-    : (transientReadError(orgMembershipError, orgMembership) ??
-      transientReadError(workspaceError, workspace));
+  const accessReadError =
+    sessionReadError ??
+    (isNotFoundOrForbidden(orgMembershipError)
+      ? null
+      : (transientReadError(orgMembershipError, orgMembership) ??
+        transientReadError(workspaceError, workspace)));
   const retryAccessReads = useCallback(() => {
+    void refetch();
     void mutateOrgMembership();
     void mutateWorkspace();
-  }, [mutateOrgMembership, mutateWorkspace]);
+  }, [refetch, mutateOrgMembership, mutateWorkspace]);
 
   // Computed permissions
   const isSuperAdmin =

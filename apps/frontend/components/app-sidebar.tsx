@@ -11,7 +11,8 @@ import {
 } from "@/lib/api-write";
 import { toast } from "sonner";
 import type { Workspace, ChatListItem, Organization } from "@platypus/schemas";
-import { useBackendUrl } from "@/components/auth-provider";
+import { useAuth, useBackendUrl } from "@/components/auth-provider";
+import { canCreateWorkspace, canOpenOrgSettings } from "@/lib/authorization";
 import { useScopedSWR } from "@/hooks/use-scoped-swr";
 import {
   Sidebar,
@@ -62,6 +63,7 @@ import {
   ClockFading,
   CalendarDays,
   ArrowLeftRight,
+  Settings,
   Search,
   Loader2,
   X,
@@ -83,6 +85,7 @@ export function AppSidebar() {
     workspaceId: string;
   }>();
   const backendUrl = useBackendUrl();
+  const { actor } = useAuth();
   const isMobile = useIsMobile();
 
   const routes = workspaceRoutes(orgId, workspaceId);
@@ -382,19 +385,32 @@ export function AppSidebar() {
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
-                    <DropdownMenuItem asChild>
-                      <Link
-                        className="cursor-pointer"
-                        href={org.createWorkspace}
-                      >
-                        <Plus /> Add workspace
-                      </Link>
-                    </DropdownMenuItem>
+                    {/* ADR-0008: Workspace creation is org-admin-only. */}
+                    {canCreateWorkspace(actor) && (
+                      <DropdownMenuItem asChild>
+                        <Link
+                          className="cursor-pointer"
+                          href={org.createWorkspace}
+                        >
+                          <Plus /> Add workspace
+                        </Link>
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem asChild>
                       <Link className="cursor-pointer" href={org.root}>
                         <ArrowLeftRight /> Switch org
                       </Link>
                     </DropdownMenuItem>
+                    {canOpenOrgSettings(actor) && (
+                      <DropdownMenuItem asChild>
+                        <Link
+                          className="cursor-pointer"
+                          href={org.settings.root}
+                        >
+                          <Settings /> Organization settings
+                        </Link>
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>

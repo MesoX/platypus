@@ -73,6 +73,10 @@ event, and **Only cards in this Column** once you pick a Board.
   a Trigger of their own.
 </Callout>
 
+The Board and Column filters apply to notification events too, and a
+notification has no Board, so it never matches. Put notification events on
+their own Trigger with no Board filter.
+
 `card.moved` fires only when a card's column actually changes, so a column
 filter on it matches the card's **destination** column — use it to run an
 Agent whenever a card enters a specific column, without re-firing on later
@@ -88,18 +92,17 @@ filter set on the Trigger must match. See [Webhooks: the
 payload](/building-with-platypus/webhooks#the-payload) for what counts as a
 changed field.
 
-The control applies to `card.updated` alone. Other events you selected are
-unaffected — a Trigger on both `card.moved` and `card.updated` still fires on
-every move, whatever fields the control names. To act on a column change, use
-`card.moved`: it is the event for that, and it carries the previous column.
+The control applies to `card.updated` alone. To act on a column change,
+subscribe the Trigger to `card.moved` **without** `card.updated`. A move sends
+both events back to back, so a Trigger on both receives `card.updated` (with
+`changedFields: ["columnId"]`) and never sees `previousColumnId`.
 
-<Callout type="warning">
-  An Event Trigger never fires on a write made by its own Agent, from any run,
-  not only the one this Trigger started. That covers the Agent's Sub-Agents at
-  any depth, and a Chat: ask the same Agent in a Chat to create a card and a
-  `card.created` Trigger on that Agent does not run. Two Triggers on the same
-  Agent cannot hand work to each other either. A change made by a person, or by
-  a different Agent, still fires it, so test an Event Trigger that way.
+<Callout type="info">
+  A write made by an Agent never fires an Event Trigger that runs that same
+  Agent, wherever the Agent was working: in this Trigger's run, as a Sub-Agent,
+  or in a Chat. Asking Agent X in a Chat to create a card does not fire a
+  Trigger that runs X; the log records `skipped_self_actor`. A change made by a
+  person directly, or by a different Agent, still fires it.
 </Callout>
 
 ### Or declare inputs (Inbound)
@@ -149,30 +152,38 @@ When a Trigger fires, Platypus runs its Agent against the **instruction** as a
 background job — there's no live Chat window. The run is captured as a
 **trigger run** record: it starts as _Running_ (an Inbound run is _Pending_
 first, from the moment its call is accepted), accrues stats (steps, tool calls,
-token counts, how full the Context window got), and ends _Success_ or _Failed_.
-An Inbound run still _Pending_ after five minutes lost its server before it
-could start; it is marked _Failed_, so the next call for that record starts a
-new run instead of being handed the stuck one.
+token counts, how full the Context window got), and ends _Success_, _Failed_ or
+_Cancelled_. An Inbound run still _Pending_ after five minutes lost its server
+before it could start; it is marked _Failed_, so the next call for that record
+starts a new run instead of being handed the stuck one.
 
-- **Scheduled (cron) runs** are checked about once a minute; a due Trigger is
-  claimed and executed, then its next run time is recomputed from the cadence
-  (one-off Triggers disable themselves instead). Switching **Enabled** back on
-  restarts the cadence from that moment: the first run lands on the next slot
-  the schedule names, so a Trigger that was off over one of its slots does not
-  fire the moment you re-enable it to catch up. A _Failed_ run moves the
-  schedule on just as a successful one does, and a one-off Trigger disables
-  itself either way.
+- **Scheduled (cron) runs** are checked about once a minute. When a due
+  Trigger's run starts, its next run time is set from the cadence straight away,
+  not after the run finishes, so a _failed_ run moves the schedule on just as a
+  successful one does. A one-off Trigger disables itself at that point instead.
+  Switching **Enabled** back on restarts the cadence from that moment: the first
+  run lands on the next slot the schedule names, so a Trigger that was off over
+  one of its slots does not fire the moment you re-enable it to catch up.
+- **A scheduled run never overlaps the last one.** If a Trigger comes due while
+  its previous run is still going, that slot is skipped and the Trigger waits
+  for the next one. No catch-up run follows when the long run ends.
+- **Under load, due Triggers wait rather than drop.** Only so many scheduled
+  runs go at once (see
+  [`SCHEDULE_MAX_CONCURRENT`](/reference/backend-configuration#background-workers)).
+  A Trigger that comes due while they're all taken waits for a free slot and
+  runs once, late, with its next run time counted from when it started.
 - **Switching Enabled off during a run** lets that run finish, and the Trigger
   stays off afterwards.
-- **Event runs** fire when a matching event occurs, with a short debounce so a
-  burst of rapid events coalesces into one run.
+- **Event runs** fire 5 seconds after a matching event, per Trigger and per
+  record. Another event on the same record inside that window restarts it, and
+  the run receives only the **last** event of the burst. For `card.updated`,
+  `changedFields` lists every field changed across the burst.
 - **No-progress runs stop early.** Because no one is watching a Trigger run,
-  Platypus ends it if the Agent stops making progress: it calls the same tool
-  with the same arguments and gets the same result three times during the run,
-  whether or not other calls come in between. An Agent that polls a status
-  tool and gets the same answer three times is stopped too. The run is recorded
-  as _Failed_ with a reason naming the repeated tool, so it can't quietly burn
-  its whole step budget.
+  Platypus ends it if the Agent stops making progress — repeating the same tool
+  call and getting the same result several times in a row. The run is recorded as
+  _failed_ with a reason naming the repeated tool, so it can't quietly burn its
+  whole step budget. (Only unattended work is stopped this way: Trigger runs and
+  Sub-Agents. The top-level Chat turn is not.)
 - Older run records are pruned automatically, keeping at least the newest **Max
   Runs to Keep**.
 
@@ -215,15 +226,6 @@ composes a different system prompt from one day to the next while its
 Instruction, its Agent and its cadence have not changed. Turn them on where the
 Instruction is about you — a daily briefing, a summary written in your voice —
 and leave them off for a narrow, repetitive job.
-
-<Callout type="warning">
-  Triggers created before **Include Memories** existed have it **off** — before
-  then, every run carried your summaries. A Trigger whose Instruction quietly
-  relied on a summary — "the project I mentioned", "my usual format" — has
-  nothing to read it from on its next firing, and the run does not fail, it
-  answers differently. Turn **Include Memories** back on for those Triggers, or
-  write the fact into the Instruction where it belongs.
-</Callout>
 
 The control governs the summaries in the system prompt, nothing else. An Agent
 with the **Memory** Tool set keeps its memory tools either way and can
@@ -537,8 +539,8 @@ the event, the Trigger, the Trigger's Agent, the Agents that were running when
 the write happened, and one of these outcomes:
 
 - `fired` — the run is scheduled, and starts once the debounce window closes.
-- `skipped_self_actor` — the Trigger's own Agent (or one of its Sub-Agents) made
-  the write, so running it again would loop.
+- `skipped_self_actor` — the Trigger's own Agent made the write, in a Trigger
+  run, as a Sub-Agent, or in a Chat, so the Trigger does not run.
 - `debounced` — a run was already pending for the same Trigger and record, and
   this event folded into it. A separate line reports how many events a burst
   coalesced.

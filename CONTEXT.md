@@ -120,7 +120,7 @@ _Avoid_: web search card, search result block (both name only the search case; t
 A Model Context Protocol server registered at Workspace scope, or — as a Shared resource — at Organization scope. Resolves to a Tool set at Chat-turn time.
 
 **Last-known tool listing**:
-An **MCP**'s tool definitions as its server last listed them, kept on the MCP itself and served when a **Chat turn** fails to reach the server — for up to a day after that last successful fetch. Keeps the tool list the model is sent unchanged across a blip, so the cached prompt survives it; a Tool served this way connects when called, and fails as unreachable if the server is still down. Not served when the server rejects the MCP's credentials: that is no blip, and needs re-authorising. Cleared when the MCP's URL, auth or headers are edited.
+An **MCP**'s tool definitions as its server last listed them, kept on the MCP itself and served when a **Chat turn** fails to reach the server — for up to a day after that last successful fetch. Keeps the tool list the model is sent unchanged across a blip, so the cached prompt survives it; a Tool served this way connects when called, and fails as unreachable if the server is still down. Not served when the server rejects the MCP's credentials: that is no blip, and needs re-authorising. Cleared when the MCP's URL, auth or headers are edited. For a minute after a fetch fails it is served at once, without trying the server again.
 _Avoid_: tool cache (it is not consulted when the server is up), stale tools.
 
 **Read-only hint**:
@@ -162,7 +162,7 @@ A typed tile on a **Dashboard** — metric, text/markdown, image, Embed, weather
 _Avoid_: tile, panel, component.
 
 **Trigger**:
-A saved automation that runs an Agent unattended against a fixed Instruction — no Chat, nobody watching. One of three shapes: a **Cron Trigger**, firing on a schedule evaluated in the Trigger's own timezone; an **Event Trigger**, firing when a subscribed **Webhook event** occurs in the Workspace, debounced so a burst coalesces into one run, and capped per entity so no Event Trigger runs without bound against one Card or Notification; or an **Inbound Trigger**, fired by an external caller. The event's payload, or the inbound call's **Trigger inputs**, arrive above the Instruction, so the Instruction can point at them. An Agent's own writes never fire that Agent's own Event Trigger — including writes made on its behalf by a Sub-Agent, at any depth.
+A saved automation that runs an Agent unattended against a fixed Instruction — no Chat, nobody watching. One of three shapes: a **Cron Trigger**, firing on a schedule evaluated in the Trigger's own timezone and never overlapping itself — a run that comes due while its last run is still live is skipped, not queued; an **Event Trigger**, firing when a subscribed **Webhook event** occurs in the Workspace, debounced so a burst coalesces into one run, and capped per entity so no Event Trigger runs without bound against one Card or Notification; or an **Inbound Trigger**, fired by an external caller. The event's payload, or the inbound call's **Trigger inputs**, arrive above the Instruction, so the Instruction can point at them. An Agent's own writes never fire that Agent's own Event Trigger — including writes made on its behalf by a Sub-Agent, at any depth.
 _Avoid_: automation, job, scheduler, webhook (that delivers events out; it runs nothing).
 
 **Inbound Trigger**:
