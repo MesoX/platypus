@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { useSignUpOpen } from "@/hooks/use-sign-up-open";
@@ -11,13 +11,17 @@ import { Label } from "@/components/ui/label";
 import Link from "next/link";
 
 export default function SignInPage() {
-  const { authClient } = useAuth();
+  const { authClient, user } = useAuth();
   const router = useRouter();
   const signUpOpen = useSignUpOpen();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (user) router.push("/");
+  }, [user, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
