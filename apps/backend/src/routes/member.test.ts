@@ -217,6 +217,32 @@ describe("Member Routes", () => {
       expect(ids(fake)).toEqual(["m-self", "m-other"]);
     });
 
+    it("disables the Triggers in Workspaces the member owns in this organization only", async () => {
+      const fake = seedDb({
+        organization_member: [
+          membership("m-self", "admin-1", "admin"),
+          membership("m1", "u1", "member"),
+        ],
+        workspace: [
+          { id: "ws-u1", organizationId: orgId, ownerId: "u1" },
+          { id: "ws-u1-org2", organizationId: "org-2", ownerId: "u1" },
+          { id: "ws-admin", organizationId: orgId, ownerId: "admin-1" },
+        ],
+        trigger: [
+          { id: "t-u1", workspaceId: "ws-u1", enabled: true },
+          { id: "t-u1-org2", workspaceId: "ws-u1-org2", enabled: true },
+          { id: "t-admin", workspaceId: "ws-admin", enabled: true },
+        ],
+      });
+
+      const res = await send("DELETE", "m1");
+
+      expect(res.status).toBe(200);
+      expect(
+        Object.fromEntries(fake.tables.trigger.map((t) => [t.id, t.enabled])),
+      ).toEqual({ "t-u1": false, "t-u1-org2": true, "t-admin": true });
+    });
+
     it("removes an admin while another admin remains", async () => {
       const fake = world([membership("m1", "u1", "admin")]);
 

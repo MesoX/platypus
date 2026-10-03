@@ -152,10 +152,9 @@ const runTrigger = async (
   // volumes the extra round-trip is acceptable.
   //
   // The owner's Organization membership is joined too. Removing a member
-  // leaves their Workspaces in place, and HTTP authorization is the only other
-  // membership check, so without this a removed member's Triggers would keep
-  // running as them. Refusing here rather than disabling on removal keeps it
-  // reversible: re-adding the member resumes their Triggers.
+  // disables their Triggers, but a firing already selected when that happens,
+  // or any path that starts a run without consulting `enabled`, would still
+  // run as a user who has left. Refuse those here.
   const [workspace] = await db
     .select({
       organizationId: workspaceTable.organizationId,
