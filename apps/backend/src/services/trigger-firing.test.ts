@@ -92,13 +92,19 @@ const oldRun = (id: string, minutes: number, over: Row = {}): Row => ({
 const world = (
   current: TriggerRow | null,
   runs: Row[] = [],
-  { workspace = true }: { workspace?: boolean } = {},
+  {
+    workspace = true,
+    member = true,
+  }: { workspace?: boolean; member?: boolean } = {},
 ): FakeDb =>
   seedDb({
     workspace: workspace
       ? [{ id: "ws-1", organizationId: "org-1", ownerId: "user-1" }]
       : [],
     user: [{ id: "user-1", name: "Ada Lovelace" }],
+    organization_member: member
+      ? [{ id: "member-1", organizationId: "org-1", userId: "user-1" }]
+      : [],
     trigger: current ? [current] : [],
     trigger_run: runs,
   });
@@ -230,6 +236,22 @@ describe("fireTrigger", () => {
       );
 
       expect(mockGenerate).not.toHaveBeenCalled();
+      expect(triggerRow(fake)).toMatchObject({
+        lastRunAt: NOW,
+        nextRunAt: CLAIMED_NEXT,
+      });
+    });
+
+    it("refuses to run when the Workspace owner is no longer an Organization member", async () => {
+      const trigger = makeTrigger({ nextRunAt: CLAIMED_NEXT });
+      const fake = world(trigger, [], { member: false });
+
+      await expect(fireTrigger(trigger, { kind: "cron" })).resolves.toBe(
+        "failed",
+      );
+
+      expect(mockGenerate).not.toHaveBeenCalled();
+      expect(fake.tables.trigger_run).toEqual([]);
       expect(triggerRow(fake)).toMatchObject({
         lastRunAt: NOW,
         nextRunAt: CLAIMED_NEXT,

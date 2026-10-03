@@ -1,7 +1,8 @@
 import { nanoid } from "nanoid";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../index.ts";
 import {
+  organizationMember,
   trigger as triggerTable,
   user as userTable,
   workspace as workspaceTable,
@@ -149,21 +150,40 @@ const runTrigger = async (
   // under cascade delete, so a Workspace that loads always has an owner. The
   // runner re-reads the Workspace for system-prompt context — at trigger
   // volumes the extra round-trip is acceptable.
+  //
+  // The owner's Organization membership is joined too. Removing a member
+  // leaves their Workspaces in place, and HTTP authorization is the only other
+  // membership check, so without this a removed member's Triggers would keep
+  // running as them. Refusing here rather than disabling on removal keeps it
+  // reversible: re-adding the member resumes their Triggers.
   const [workspace] = await db
     .select({
       organizationId: workspaceTable.organizationId,
       ownerId: workspaceTable.ownerId,
       ownerName: userTable.name,
+      membershipId: organizationMember.id,
     })
     .from(workspaceTable)
     .innerJoin(userTable, eq(userTable.id, workspaceTable.ownerId))
+    .leftJoin(
+      organizationMember,
+      and(
+        eq(organizationMember.organizationId, workspaceTable.organizationId),
+        eq(organizationMember.userId, workspaceTable.ownerId),
+      ),
+    )
     .where(eq(workspaceTable.id, workspaceId))
     .limit(1);
 
+  // No run row inserted yet on either refusal — the firing still owes the
+  // Trigger its bookkeeping, which `fireTrigger` applies on the way out.
   if (!workspace) {
-    // No run row inserted yet — the firing still owes the Trigger its
-    // bookkeeping, which `fireTrigger` applies on the way out.
     throw new Error(`Workspace '${workspaceId}' not found for trigger '${id}'`);
+  }
+  if (!workspace.membershipId) {
+    throw new Error(
+      `Owner of workspace '${workspaceId}' is no longer a member of its organization; trigger '${id}' not run`,
+    );
   }
 
   const scope = workspaceScopeForTrigger({

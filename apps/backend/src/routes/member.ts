@@ -207,7 +207,9 @@ member.delete(
       }
     }
 
-    // Deleting org membership will cascade delete their workspaces via ownerId FK
+    // Removes membership only: the member's Workspaces stay, owned by them.
+    // Their Triggers stop firing because trigger firing checks the owner's
+    // membership.
     await db
       .delete(organizationMember)
       .where(eq(organizationMember.id, memberId));

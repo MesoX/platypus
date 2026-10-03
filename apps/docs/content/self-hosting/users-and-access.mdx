@@ -171,6 +171,10 @@ row's **Edit org role**, and can remove somebody with **Remove from Org**. A
 **Super Admin** row shows no actions there — the platform account is not an Org
 Admin's to manage.
 
+Removing a member leaves the Workspaces they own in place, but their Triggers
+stop firing: a Trigger only runs while its Workspace Owner is still a member of
+the Organization. Invite them back and the Triggers resume.
+
 ## The platform user-management screen
 
 A Super Admin gets one extra screen: **Settings → Users**, titled **User
