@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/tooltip";
 import { linkSafety } from "@/components/link-safety";
 import { isImageAttachment } from "@/lib/message-parts";
+import { useStreamdownControls } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { FileUIPart, UIMessage } from "ai";
 import { PaperclipIcon, XIcon } from "lucide-react";
@@ -116,16 +117,20 @@ export const MessageAction = ({
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      linkSafety={linkSafety}
-      {...props}
-      className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        className,
-      )}
-    />
-  ),
+  ({ className, ...props }: MessageResponseProps) => {
+    const controls = useStreamdownControls();
+    return (
+      <Streamdown
+        linkSafety={linkSafety}
+        controls={controls}
+        {...props}
+        className={cn(
+          "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          className,
+        )}
+      />
+    );
+  },
   (prevProps, nextProps) => prevProps.children === nextProps.children,
 );
 

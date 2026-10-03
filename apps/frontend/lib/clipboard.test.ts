@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { copyToClipboard } from "./clipboard";
+import { renderHook } from "@testing-library/react";
+import { copyToClipboard, useStreamdownControls } from "./clipboard";
 
 // jsdom does not define `isSecureContext` at all.
 const stubSecureContext = (secure: boolean) =>
@@ -47,14 +48,32 @@ describe("copyToClipboard", () => {
       selected = active.value.slice(active.selectionStart, active.selectionEnd);
       return command === "copy";
     });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
 
-    expect(await copyToClipboard("tok_123", container)).toBe(true);
+    expect(await copyToClipboard("tok_123")).toBe(true);
     expect(selected).toBe("tok_123");
     // The throwaway textarea is gone afterwards.
-    expect(container.querySelector("textarea")).toBeNull();
-    container.remove();
+    expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("puts the fallback inside the focused dialog, past its focus trap", async () => {
+    stubSecureContext(false);
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const button = document.createElement("button");
+    dialog.appendChild(button);
+    document.body.appendChild(dialog);
+    button.focus();
+    let parent: Element | null = null;
+    setExecCommand(() => {
+      parent = document.activeElement?.parentElement ?? null;
+      return true;
+    });
+
+    expect(await copyToClipboard("tok_123")).toBe(true);
+    expect(parent).toBe(dialog);
+    // Focus goes back to the button that asked for the copy.
+    expect(document.activeElement).toBe(button);
+    dialog.remove();
   });
 
   it("falls back when the Clipboard API refuses", async () => {
@@ -71,5 +90,21 @@ describe("copyToClipboard", () => {
     setExecCommand(() => false);
 
     expect(await copyToClipboard("tok_123")).toBe(false);
+  });
+});
+
+describe("useStreamdownControls", () => {
+  it("keeps Streamdown's defaults in a secure context", () => {
+    stubSecureContext(true);
+    expect(renderHook(useStreamdownControls).result.current).toBeUndefined();
+  });
+
+  it("hides the copy buttons over plain HTTP, where they cannot work", () => {
+    stubSecureContext(false);
+    expect(renderHook(useStreamdownControls).result.current).toEqual({
+      code: { copy: false },
+      table: { copy: false },
+      mermaid: { copy: false },
+    });
   });
 });

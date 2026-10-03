@@ -554,7 +554,11 @@ describe("Trigger runs copy-run-id control", () => {
     vi.stubGlobal("isSecureContext", true);
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // jsdom has no execCommand; drop the one a test installed.
+    Reflect.deleteProperty(document, "execCommand");
+  });
 
   it("never renders the run id as visible text", async () => {
     await renderRuns([run()]);
@@ -583,8 +587,12 @@ describe("Trigger runs copy-run-id control", () => {
     expect(toastSuccessSpy).toHaveBeenCalledWith("Copied to clipboard");
   });
 
-  it("shows an error toast when the clipboard write rejects", async () => {
+  it("shows an error toast when neither the clipboard nor the fallback copies", async () => {
     writeText.mockReset().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(document, "execCommand", {
+      value: vi.fn(() => false),
+      configurable: true,
+    });
     await renderRuns([run()]);
 
     await act(async () => {

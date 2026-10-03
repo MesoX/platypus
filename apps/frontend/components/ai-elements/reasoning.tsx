@@ -12,6 +12,7 @@ import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
+import { useStreamdownControls } from "@/lib/clipboard";
 import { Shimmer } from "./shimmer";
 
 type ReasoningContextValue = {
@@ -165,19 +166,24 @@ export type ReasoningContentProps = ComponentProps<
 };
 
 export const ReasoningContent = memo(
-  ({ className, children, ...props }: ReasoningContentProps) => (
-    <CollapsibleContent
-      className={cn(
-        // Indented past the icon slot to the chat text's left edge.
-        "mt-4 pl-8 text-sm",
-        "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
-        className,
-      )}
-      {...props}
-    >
-      <Streamdown linkSafety={linkSafety}>{children}</Streamdown>
-    </CollapsibleContent>
-  ),
+  ({ className, children, ...props }: ReasoningContentProps) => {
+    const controls = useStreamdownControls();
+    return (
+      <CollapsibleContent
+        className={cn(
+          // Indented past the icon slot to the chat text's left edge.
+          "mt-4 pl-8 text-sm",
+          "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+          className,
+        )}
+        {...props}
+      >
+        <Streamdown linkSafety={linkSafety} controls={controls}>
+          {children}
+        </Streamdown>
+      </CollapsibleContent>
+    );
+  },
 );
 
 Reasoning.displayName = "Reasoning";

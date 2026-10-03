@@ -68,7 +68,7 @@ import { ChatMessage } from "./chat-message";
 import { MessageEditor } from "./message-editor";
 import { ChatReconnectingNotice } from "./chat-reconnecting-notice";
 import { toast } from "sonner";
-import { copyToClipboard } from "@/lib/clipboard";
+import { copyWithToast } from "@/lib/clipboard";
 import { ChatComposer } from "./chat-composer";
 import { ChatSkeleton } from "./chat-skeleton";
 import { ListError } from "./list-state";
@@ -484,12 +484,9 @@ export const Chat = ({
 
   const handleCopyMessage = useCallback(
     async (content: string, messageId: string) => {
-      if (await copyToClipboard(content)) {
-        toast.info("Copied to clipboard");
+      if (await copyWithToast(content)) {
         setCopiedMessageId(messageId);
         scheduleCopiedReset(() => setCopiedMessageId(null), 2000);
-      } else {
-        toast.error("Failed to copy to clipboard");
       }
     },
     [setCopiedMessageId, scheduleCopiedReset],

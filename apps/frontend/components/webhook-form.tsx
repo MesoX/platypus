@@ -30,7 +30,7 @@ import { joinUrl } from "@/lib/utils";
 import { retractExactKeys } from "@/lib/form-errors";
 import { writeAt } from "@/lib/api-write";
 import { toast } from "sonner";
-import { copyToClipboard } from "@/lib/clipboard";
+import { copyWithToast } from "@/lib/clipboard";
 import { useBackendUrl } from "@/components/auth-provider";
 import { Eye, EyeOff, Copy, RefreshCw, Plus, X } from "lucide-react";
 import { workspaceRoutes } from "@/lib/routes";
@@ -248,11 +248,10 @@ const WebhookForm = ({ orgId, workspaceId, webhookId }: WebhookFormProps) => {
 
   const handleCopySecret = async () => {
     if (!webhook?.signingSecret) return;
-    if (await copyToClipboard(webhook.signingSecret)) {
-      toast.success("Signing secret copied to clipboard");
-    } else {
-      toast.error("Failed to copy signing secret");
-    }
+    await copyWithToast(
+      webhook.signingSecret,
+      "Signing secret copied to clipboard",
+    );
   };
 
   const headerRowErrorKey = (key: string) => `headers.${key}`;

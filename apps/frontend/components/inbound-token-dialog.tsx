@@ -71,9 +71,8 @@ const CopyRow = ({
         size="icon"
         className="shrink-0 cursor-pointer"
         aria-label={`Copy ${label.toLowerCase()}`}
-        onClick={async (event) => {
-          const row = event.currentTarget.parentElement ?? undefined;
-          if (await copyToClipboard(value, row)) {
+        onClick={async () => {
+          if (await copyToClipboard(value)) {
             toast.success(copiedMessage);
           } else {
             // Leave the value selected so Ctrl+C still gets it.
