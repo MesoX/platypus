@@ -67,6 +67,10 @@ import {
 } from "@/hooks/use-shared-resource-actions";
 import { useDeleteFlow } from "@/hooks/use-delete-flow";
 import { orgRoutes, workspaceRoutes } from "@/lib/routes";
+import {
+  NeedsSandboxBadge,
+  SkillImportButton,
+} from "@/components/skill-bundle";
 
 // The list serves two surfaces: a Workspace (workspaceId provided) where it
 // shows workspace-scoped Skills plus attached org-scoped Shared Skills as
@@ -256,6 +260,7 @@ export const SkillsList = ({
                       <div className="flex items-center gap-2">
                         <ItemTitle>{skill.name}</ItemTitle>
                         <UserInvocableBadge skill={skill} />
+                        <NeedsSandboxBadge skill={skill} />
                         <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary text-[10px] font-medium text-secondary-foreground uppercase tracking-wider">
                           <Building className="size-3" />
                           Organization
@@ -288,6 +293,7 @@ export const SkillsList = ({
                       <div className="flex items-center gap-2">
                         <ItemTitle>{skill.name}</ItemTitle>
                         <UserInvocableBadge skill={skill} />
+                        <NeedsSandboxBadge skill={skill} />
                       </div>
                       <ItemDescription className="text-xs line-clamp-2">
                         {skill.description}
@@ -369,6 +375,10 @@ export const SkillsList = ({
             <Plus /> Create skill
           </Link>
         </Button>
+        <SkillImportButton
+          scope={workspaceId ? { orgId, workspaceId } : { orgId }}
+          onImported={() => void mutate()}
+        />
         {canAttach && workspaceId && (
           <AttachSharedAction
             orgId={orgId}

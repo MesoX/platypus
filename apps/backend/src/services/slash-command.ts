@@ -2,9 +2,11 @@ import { createIdGenerator } from "ai";
 import { SKILL_NAME_SOURCE } from "@platypus/schemas";
 import { db } from "../index.ts";
 import { LOAD_SKILL_TOOL_NAME } from "../tools/turn-tool-names.ts";
+import { SANDBOX_TOOLSET_ID } from "../tools/index.ts";
 import type { PlatypusUIMessage } from "../types.ts";
 import { resolveScoped } from "./scoped-resource.ts";
 import { resolveAssignedSkillByName } from "./skill-resolution.ts";
+import { skillLoadResult, type SkillLoadResult } from "./skill-sandbox.ts";
 
 /**
  * A user-invoked Skill, named from the chat input.
@@ -58,36 +60,42 @@ export const slashCommandOf = (
  */
 export type SlashCommandQueries = {
   /**
-   * The Skill ids assigned to this Agent, or `null` where the Agent does not
-   * resolve in this Workspace (ADR-0007).
+   * The Skill ids and Tool set ids assigned to this Agent, or `null` where the
+   * Agent does not resolve in this Workspace (ADR-0007).
    */
-  getAgentSkillIds(
+  getAgentAssignments(
     agentId: string,
     orgId: string,
     workspaceId: string,
-  ): Promise<string[] | null>;
+  ): Promise<{ skillIds: string[]; toolSetIds: string[] } | null>;
   /**
-   * The assigned Skill of this name, or `null` for a name that resolves to
-   * nothing this Agent holds. `disableModelInvocation` is not consulted: it
-   * gates the model's catalogue, and this caller is the user (#713).
+   * What `loadSkill` would return for the assigned Skill of this name, or
+   * `null` for a name that resolves to nothing this Agent holds.
+   * `disableModelInvocation` is not consulted: it gates the model's catalogue,
+   * and this caller is the user (#713).
    */
   resolveAssignedSkill(
     name: string,
     ctx: { orgId: string; workspaceId: string },
     permittedSkillIds: string[],
-  ): Promise<{ name: string; body: string } | null>;
+    hasSandboxToolSet: boolean,
+  ): Promise<SkillLoadResult | null>;
 };
 
 const drizzleSlashCommandQueries: SlashCommandQueries = {
-  async getAgentSkillIds(agentId, orgId, workspaceId) {
+  async getAgentAssignments(agentId, orgId, workspaceId) {
     const found = await resolveScoped(db, "agent", agentId, {
       orgId,
       workspaceId,
     });
-    return found?.row.skillIds ?? null;
+    if (!found) return null;
+    return {
+      skillIds: found.row.skillIds ?? [],
+      toolSetIds: found.row.toolSetIds ?? [],
+    };
   },
 
-  async resolveAssignedSkill(name, ctx, permittedSkillIds) {
+  async resolveAssignedSkill(name, ctx, permittedSkillIds, hasSandboxToolSet) {
     const resolution = await resolveAssignedSkillByName(
       db,
       name,
@@ -95,7 +103,10 @@ const drizzleSlashCommandQueries: SlashCommandQueries = {
       permittedSkillIds,
     );
     return resolution.kind === "resolved"
-      ? { name: resolution.row.name, body: resolution.row.body }
+      ? skillLoadResult(db, resolution.row, {
+          workspaceId: ctx.workspaceId,
+          hasSandboxToolSet,
+        })
       : null;
   },
 };
@@ -119,10 +130,7 @@ const generateToolCallId = createIdGenerator({ prefix: "call", size: 24 });
  * answer — what a model-initiated call looks like. A standalone assistant
  * message would render as two.
  */
-const loadSkillSeedMessage = (skill: {
-  name: string;
-  body: string;
-}): PlatypusUIMessage => ({
+const loadSkillSeedMessage = (skill: SkillLoadResult): PlatypusUIMessage => ({
   id: generateMessageId(),
   role: "assistant",
   parts: [
@@ -131,7 +139,7 @@ const loadSkillSeedMessage = (skill: {
       toolCallId: generateToolCallId(),
       state: "output-available",
       input: { name: skill.name },
-      output: { name: skill.name, body: skill.body },
+      output: skill,
     },
   ],
 });
@@ -167,13 +175,14 @@ export const seedUserInvokedSkill = async (
   const name = slashCommandOf(messages);
   if (!name) return messages;
 
-  const skillIds = await queries.getAgentSkillIds(agentId, orgId, workspaceId);
-  if (!skillIds || skillIds.length === 0) return messages;
+  const agent = await queries.getAgentAssignments(agentId, orgId, workspaceId);
+  if (!agent || agent.skillIds.length === 0) return messages;
 
   const skill = await queries.resolveAssignedSkill(
     name,
     { orgId, workspaceId },
-    skillIds,
+    agent.skillIds,
+    agent.toolSetIds.includes(SANDBOX_TOOLSET_ID),
   );
   if (!skill) return messages;
 

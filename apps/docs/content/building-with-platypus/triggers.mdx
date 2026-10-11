@@ -51,16 +51,16 @@ Choose a **Schedule Mode**:
 - **Advanced** — enter a raw **Cron Expression** (`minute hour day-of-month month
 day-of-week`), e.g. `0 9 * * *` for "every day at 9:00 AM".
 
-Set the **Timezone** (defaults to your browser's) — the schedule is evaluated in
-that zone. A **Next Run Preview** shows when it will fire next. Toggle **One-off
+Set the **Timezone** — the schedule is evaluated in that zone. A new Trigger
+defaults to the **Timezone** on your profile, then your browser's, then `UTC`;
+editing a Trigger shows the zone it was saved with. A **Next Run Preview** shows when it will fire next. Toggle **One-off
 Trigger** to run once, at the first time the schedule names.
 
 A One-off Trigger is spent once it fires. It stays switched off for good: you
 cannot re-enable it or change its schedule, only rename or delete it, so its
 form greys out the schedule and **Enabled**. To run it again, create a new one.
 A fired One-off Trigger drops out of the Triggers list and the Workspace home
-count; switch on **Show fired** above the list to see it, with the status of
-its run. **Show fired** is greyed out while the list shows only **Event** or
+count; switch on **Show fired** above the list to see it. **Show fired** is greyed out while the list shows only **Event** or
 **Inbound** Triggers, since only a Cron Trigger can be a One-off. It is deleted, together with its run, **7 days** after that run ends,
 whether the run succeeded or not.
 
@@ -76,9 +76,10 @@ refused; delete one or wait for one to fire.
 
 An Agent with the **Triggers** Tool set can create One-off Triggers too, for
 example when you ask it to remind you of something tomorrow. It reports back the
-time the Trigger will fire, in UTC and in the Trigger's timezone. If it does not
-know your timezone it asks you, so tell it rather than letting the time be read
-as UTC.
+time the Trigger will fire, in UTC and in the Trigger's timezone. Set a
+**Timezone** on your profile and the Agent schedules in it; without one, it asks
+you, so tell it rather than letting the time be read in the deployment's default
+zone.
 
 Once saved, the Triggers list describes the schedule in plain English with its
 timezone, such as "At 09:00 AM (UTC)". Hover it to see the underlying cron
@@ -530,8 +531,14 @@ Workspace are there, newest first, each row naming the Trigger it came from and
 linking to it. Older runs are pruned per Trigger, keeping at least its newest
 **Max Runs to Keep** — see [What a run does](#what-a-run-does).
 
-That is the page that answers "what fired here recently?" and "which Trigger
-just failed?". Two filters narrow it, and both live in the address bar, so a
+To see whether a Trigger is failing, you don't need this page: every Trigger in
+the Workspace home list shows a **Last run** line with its newest run's status
+and how long ago it started. Hover the time for the exact date. A Trigger that
+has never run shows no Last run line. The list refreshes when you return to the
+tab, so a _Running_ status there can lag behind the run.
+
+Trigger runs is for history and detail: "what fired here recently?" and "why
+did that run fail?". Two filters narrow it, and both live in the address bar, so a
 filtered view survives a refresh and can be sent to a colleague as a link:
 
 - **Trigger** — all Triggers, or one of them. **View runs** on a Trigger's

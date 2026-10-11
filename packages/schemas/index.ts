@@ -625,15 +625,29 @@ export const SKILL_NAME_SOURCE = "[a-z0-9]+(?:-[a-z0-9]+)*";
 
 // The bounds the Skill form's counters and `maxLength` attributes read, so the
 // input and the server rule cannot drift apart.
-export const SKILL_NAME_MIN_LENGTH = 5;
+export const SKILL_NAME_MIN_LENGTH = 1;
 export const SKILL_NAME_MAX_LENGTH = 64;
-export const SKILL_DESCRIPTION_MIN_LENGTH = 24;
+export const SKILL_DESCRIPTION_MIN_LENGTH = 1;
 export const SKILL_DESCRIPTION_MAX_LENGTH = 1024;
-export const SKILL_BODY_MIN_LENGTH = 48;
+export const SKILL_BODY_MIN_LENGTH = 1;
 export const SKILL_BODY_MAX_LENGTH = 50000;
 export const SKILL_ARGUMENT_HINT_MAX_LENGTH = 120;
 
 const skillNameRegex = new RegExp(`^${SKILL_NAME_SOURCE}$`);
+
+/**
+ * One file bundled with a Skill other than `SKILL.md`, as the API lists it.
+ * `isText` was decided from the content at import, never the extension.
+ */
+export const skillFileSchema = z.object({
+  id: z.string(),
+  path: z.string(),
+  size: z.number(),
+  sha256: z.string(),
+  isText: z.boolean(),
+});
+
+export type SkillFile = z.infer<typeof skillFileSchema>;
 
 // A Skill is scoped to either a Workspace or an Organization (mutually
 // exclusive), mirroring the dual-scope shape of `provider`/`mcp`. Org-scoped
@@ -659,6 +673,15 @@ export const skillBaseSchema = z.object({
     .max(SKILL_ARGUMENT_HINT_MAX_LENGTH)
     .nullable()
     .optional(),
+  // Every `SKILL.md` frontmatter key not mapped to a field above, kept as-is
+  // from an imported bundle. Read-only.
+  frontmatter: z.record(z.string(), z.unknown()).default({}),
+  bundleHash: z.string().nullable().optional(),
+  // Whether the bundle has scripts, a `#!` file or binary files, which only a
+  // Sandbox can use. Derived from content at import. Read-only.
+  needsSandbox: z.boolean().default(false),
+  // Present on a single Skill's read, absent from lists.
+  files: z.array(skillFileSchema).optional(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -1230,7 +1253,8 @@ export const CONTEXT_WINDOW_MAX = 10_000_000;
  * Excludes anything that mutates state (`fsWrite`, `fsEdit`, `shellExec`),
  * sub-Agent delegation (its result is the point of the call, not disposable
  * page content), and `loadSkill` (its result is instructions the model is
- * meant to keep following, not data to discard).
+ * meant to keep following, not data to discard). `readSkillFile` is clearable:
+ * the model can read the bundled file again.
  *
  * This is the core half of clearability, not the whole of it: an MCP tool
  * whose server declares `readOnlyHint` is also clearable (ADR-0021, issue
@@ -1244,6 +1268,7 @@ export const CLEARABLE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "fetchUrl",
   "fsRead",
   "fsList",
+  "readSkillFile",
 ]);
 
 /**
@@ -2281,6 +2306,21 @@ export const webhookEventSchema = z.enum([
 
 export type WebhookEvent = z.infer<typeof webhookEventSchema>;
 
+// Timezone
+
+/** An IANA timezone name: any zone `Intl.DateTimeFormat` accepts, plus `UTC`. */
+export const timezoneSchema = z.string().refine(
+  (tz) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: tz });
+      return tz !== "";
+    } catch {
+      return false;
+    }
+  },
+  { message: "Invalid timezone" },
+);
+
 // Trigger
 
 export const triggerTypeSchema = z.enum(["cron", "event", "inbound"]);
@@ -2448,6 +2488,9 @@ export const triggerSchema = z.object({
   firedAt: z.date().nullable().optional(),
   // The newest run's status, on list reads; null before the first run.
   lastRunStatus: triggerRunStatusSchema.nullable().optional(),
+  // When that newest run started, on list reads; null before the first run.
+  // Unlike `lastRunAt`, it always describes the same run as `lastRunStatus`.
+  lastRunStartedAt: z.date().nullable().optional(),
   // Inbound Triggers only. The token itself is never returned after it is
   // issued; these describe it.
   tokenStatus: bearerTokenStatusSchema.optional(),

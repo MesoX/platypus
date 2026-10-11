@@ -144,7 +144,7 @@ A **Tool gate**'s answer about one tool call: `allow`, `ask` or `deny`, optional
 _Avoid_: score, confidence (a decision model's output, which a gate turns into a Verdict; core never sees it), decision.
 
 **Skill**:
-A named capability with a description, attached to an Agent. Its instructions are loaded on demand rather than carried in the prompt, by either of two routes: the model requests it through the `loadSkill` Tool, or a User names it with a **Slash command**. A Skill marked user-invocable only is left out of the catalogue the model is shown and stays reachable by the second route alone. Lives at Workspace scope, or — as a Shared resource — at Organization scope.
+A named capability with a description, attached to an Agent. A Skill is a bundle: its instructions plus any reference files, scripts and assets that travel with them. Its instructions are loaded on demand rather than carried in the prompt, by either of two routes: the model requests it through the `loadSkill` Tool, or a User names it with a **Slash command**. Its other files are read on demand too, or, where the Agent has a **Sandbox**, copied into it so scripts can run. A Skill marked user-invocable only is left out of the catalogue the model is shown and stays reachable by the second route alone. Lives at Workspace scope, or — as a Shared resource — at Organization scope.
 
 **Slash command**:
 A User naming a **Skill** from the chat input: a message whose first text part opens with `/<skill-name>`, at position 0, which is what makes one command per message a property of the grammar rather than a rule. The token stays in the message text and that text is its only carrier — no structured part rides alongside it — so the Transcript shows what was typed and an edit round-trips it. Resolution appends a `loadSkill` call and its result as a trailing assistant message, so the body reaches the model as Tool content with a Tool's provenance, never as words the User said. A name that resolves to no Skill is ordinary text, not an error.
@@ -242,6 +242,9 @@ _Avoid_: memory retrieval per turn (in a Chat the fragment renders every turn; t
 
 **Context** (User Context):
 Free-text notes a User attaches at global or per-Workspace scope, rendered into the system prompt. Nothing to do with the model's **Context window** — the word carries both meanings and they are never interchangeable.
+
+**User timezone**:
+The IANA zone a User sets on their profile, which Agents and Triggers read on that User's behalf — the Owner's on a headless or A2A run. Set, it is stated in the **System prompt** and is the zone the time Tools report in and an Agent-created Trigger is scheduled in. Unset, the model is not told a zone and those Tools fall back to the deployment default (`TIMEZONE`, else `UTC`).
 
 **Operator**:
 The actor who controls a Platypus deployment — process environment, compose files, and infrastructure. Equivalent to the platform super-admin (`user.role = "admin"`), who bypasses all in-app authorization. Installs and enables Plugins and sets their deploy-time Plugin config, and declares deployment-time allowlists (e.g. the eligible Docker Sandbox networks) that bound what an Org Admin can configure in-app.

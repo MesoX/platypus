@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
 import { requireAuth } from "../middleware/authentication.ts";
 import { isSuperAdmin } from "../middleware/authorization.ts";
-import { assertValidStorageKey } from "../storage/keys.ts";
+import { assertValidStorageKey, isSkillStorageKey } from "../storage/keys.ts";
 import { FILES_ROUTE_PREFIX } from "../storage/file-reference.ts";
 import {
   organizationMember,
@@ -10,6 +10,7 @@ import {
 } from "../db/schema.ts";
 import type { Variables } from "../server.ts";
 import { getStorage } from "../storage/index.ts";
+import { servedFileHeaders } from "../storage/response-headers.ts";
 
 const files = new Hono<{ Variables: Variables }>();
 
@@ -55,6 +56,12 @@ files.get("/*", requireAuth, async (c) => {
   // so reject anything Platypus could not have stored before it reaches a
   // backend. Throws, so the `onError` seam answers 400 (ADR-0010).
   assertValidStorageKey(key);
+
+  // A bundled Skill file is served only through its Skill's own download
+  // route, as an attachment (ADR-0036) — never from here, for anyone.
+  if (isSkillStorageKey(key)) {
+    return c.json({ error: "Access denied" }, 403);
+  }
 
   // Parse org and workspace from the key
   const keyParts = parseStorageKey(key);
@@ -119,6 +126,11 @@ files.get("/*", requireAuth, async (c) => {
   // the browser pick a different one from the bytes, so a file stored as an
   // expected type could still be treated as something else on our own origin.
   c.header("X-Content-Type-Options", "nosniff");
+  // Some stored types are documents the browser would run on this origin if
+  // opened in a tab; `servedFileHeaders` says what each type needs.
+  for (const [name, value] of Object.entries(servedFileHeaders(contentType))) {
+    c.header(name, value);
+  }
   c.header("Cache-Control", "private, max-age=31536000, immutable");
   c.header("Content-Length", data.length.toString());
 

@@ -1,6 +1,6 @@
 {
   "name": "platypus",
-  "version": "3.18.0",
+  "version": "3.19.0",
   "private": true,
   "scripts": {
     "build": "turbo run build",
@@ -45,6 +45,9 @@
     "overrides": {
       "nextra>zod": "4.3.6",
       "nextra-theme-docs>zod": "4.3.6"
+    },
+    "patchedDependencies": {
+      "drizzle-kit@0.31.11": "patches/drizzle-kit@0.31.11.patch"
     }
   }
 }
