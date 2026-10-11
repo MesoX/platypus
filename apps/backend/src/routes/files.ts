@@ -10,6 +10,7 @@ import {
 } from "../db/schema.ts";
 import type { Variables } from "../server.ts";
 import { getStorage } from "../storage/index.ts";
+import { servedFileHeaders } from "../storage/response-headers.ts";
 
 const files = new Hono<{ Variables: Variables }>();
 
@@ -125,6 +126,11 @@ files.get("/*", requireAuth, async (c) => {
   // the browser pick a different one from the bytes, so a file stored as an
   // expected type could still be treated as something else on our own origin.
   c.header("X-Content-Type-Options", "nosniff");
+  // Some stored types are documents the browser would run on this origin if
+  // opened in a tab; `servedFileHeaders` says what each type needs.
+  for (const [name, value] of Object.entries(servedFileHeaders(contentType))) {
+    c.header(name, value);
+  }
   c.header("Cache-Control", "private, max-age=31536000, immutable");
   c.header("Content-Length", data.length.toString());
 

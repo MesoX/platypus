@@ -147,6 +147,34 @@ describe("S3Storage", () => {
         Metadata: { "content-type": "image/png" },
       });
     });
+
+    it("should store an SVG with an attachment disposition", async () => {
+      sendMock.mockResolvedValueOnce({});
+      const storage = new S3Storage();
+
+      await storage.put(
+        "org/ws/chat/msg/0-abc.svg",
+        Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+        "image/svg+xml",
+      );
+
+      const cmd = sendMock.mock.calls[0][0] as MockCommand;
+      expect(cmd.input.ContentDisposition).toBe("attachment");
+    });
+
+    it("should store a PNG without a disposition", async () => {
+      sendMock.mockResolvedValueOnce({});
+      const storage = new S3Storage();
+
+      await storage.put(
+        "org/ws/chat/msg/0-abc.png",
+        Buffer.from("x"),
+        "image/png",
+      );
+
+      const cmd = sendMock.mock.calls[0][0] as MockCommand;
+      expect(cmd.input.ContentDisposition).toBeUndefined();
+    });
   });
 
   describe("get", () => {

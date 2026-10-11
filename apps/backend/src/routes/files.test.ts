@@ -212,5 +212,48 @@ describe("Files Routes", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     });
+
+    // A stored type the browser would run as a document when opened in a tab
+    // is isolated from this origin; `response-headers.ts` has the per-type
+    // rule, this checks the route applies it to what storage returned.
+    describe("protective headers", () => {
+      const serve = async (key: string, contentType: string, body: string) => {
+        mockSession({ id: "user-1", email: "test@example.com", role: "user" });
+        mockDb.limit.mockResolvedValueOnce([{ role: "member" }]);
+        mockDb.limit.mockResolvedValueOnce([{ ownerId: "user-1" }]);
+        mockStorageGet.mockResolvedValueOnce({
+          data: Buffer.from(body),
+          contentType,
+        });
+        const res = await app.request(`/files/org-1/ws-1/chat-1/msg-1/${key}`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+        return res;
+      };
+
+      it("should serve an SVG as a sandboxed download", async () => {
+        const res = await serve(
+          "0-abc12345.svg",
+          "image/svg+xml",
+          '<svg xmlns="http://www.w3.org/2000/svg"/>',
+        );
+        expect(res.headers.get("Content-Disposition")).toBe("attachment");
+        expect(res.headers.get("Content-Security-Policy")).toBe(
+          "sandbox; default-src 'none'",
+        );
+      });
+
+      it("should sandbox an image without forcing a download", async () => {
+        const res = await serve("0-abc12345.png", "image/png", "png bytes");
+        expect(res.headers.get("Content-Security-Policy")).toBe("sandbox");
+        expect(res.headers.get("Content-Disposition")).toBeNull();
+      });
+
+      it("should not sandbox a PDF", async () => {
+        const res = await serve("0-abc12345.pdf", "application/pdf", "%PDF-");
+        expect(res.headers.get("Content-Security-Policy")).toBeNull();
+        expect(res.headers.get("Content-Disposition")).toBeNull();
+      });
+    });
   });
 });

@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/client-s3";
 import type { StorageBackend } from "./types.ts";
 import { assertValidStoragePrefix } from "./keys.ts";
+import { servedFileHeaders } from "./response-headers.ts";
 import { logger } from "../logger.ts";
 
 /**
@@ -55,6 +56,11 @@ export class S3Storage implements StorageBackend {
         Key: key,
         Body: data,
         ContentType: contentType,
+        // With STORAGE_PUBLIC_URL the bucket serves the file itself, so the
+        // disposition `/files/*` would send has to be stored on the object.
+        // A CSP cannot be; the deployment docs ask the bucket or CDN for it.
+        ContentDisposition:
+          servedFileHeaders(contentType)["Content-Disposition"],
         Metadata: {
           "content-type": contentType,
         },
