@@ -1,20 +1,29 @@
 import type { z } from "zod";
-import type { SQL } from "drizzle-orm";
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../index.ts";
 import { skill as skillTable, agent as agentTable } from "../db/schema.ts";
 import { skillCreateSchema, skillUpdateSchema } from "@platypus/schemas";
 import type { ScopeContext } from "../scope.ts";
-import { ConflictError, NotFoundError } from "../errors.ts";
+import { ConflictError, LockedError, NotFoundError } from "../errors.ts";
+import { skillStorageKeyPrefix } from "../storage/keys.ts";
+import { deleteStoredPrefix } from "../storage/utils.ts";
 import { scrubDeletedAgentReference } from "./agent-references.ts";
 import {
   orgScopedWhere,
-  requireOrgScoped,
   requireSharedDeletable,
   requireWorkspaceMutable,
+  resolveScopedByName,
   workspaceScopedWhere,
 } from "./scoped-resource.ts";
+import { bundleHash } from "./skill-bundle-format.ts";
+import {
+  fieldsOf,
+  listSkillFiles,
+  rehashSkill,
+  scopeColumnsOf,
+  writableSkillWhere,
+} from "./skill-bundle.ts";
 
 /**
  * The Skill write model: create/update/delete that both route surfaces adapt
@@ -136,9 +145,12 @@ export async function createSkill(
     .values({
       id: nanoid(),
       ...data,
-      ...(scope.kind === "workspace"
-        ? { workspaceId: scope.ctx.workspaceId, organizationId: null }
-        : { organizationId: scope.orgId, workspaceId: null }),
+      bundleHash: bundleHash({
+        fields: fieldsOf(data),
+        frontmatter: {},
+        files: [],
+      }),
+      ...scopeColumnsOf(scope),
     })
     .returning();
 
@@ -162,27 +174,19 @@ export async function updateSkill(
 ): Promise<SkillRow> {
   const { agentIds, ...data } = fields;
 
-  let where: SQL;
-  if (scope.kind === "workspace") {
-    // A Shared Skill is a single source of truth edited only on the
-    // Organization surface (ADR-0007); requireWorkspaceMutable throws
-    // NotFound (→404) when the Skill is not visible here, then Locked (→403)
-    // when it is org-scoped.
-    await requireWorkspaceMutable(db, "skill", skillId, scope.ctx);
-    where = workspaceScopedWhere("skill", skillId, scope.ctx.workspaceId);
-  } else {
-    // The existence check the Organization surface used to defer to an empty
-    // UPDATE result (#605): requireOrgScoped throws NotFound (→404) before the
-    // write ever runs.
-    await requireOrgScoped(db, "skill", skillId, scope.orgId);
-    where = orgScopedWhere("skill", skillId, scope.orgId);
-  }
+  const where = await writableSkillWhere(scope, skillId);
 
-  const [row] = await db
-    .update(skillTable)
-    .set({ ...data, updatedAt: new Date() })
-    .where(where)
-    .returning();
+  // The body and mapped fields are part of the bundle hash; the files are not
+  // touched by this form, so they stay where they are. The rehash shares the
+  // update's transaction so a concurrent Replace bundle can't slip between them.
+  const row = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(skillTable)
+      .set({ ...data, updatedAt: new Date() })
+      .where(where)
+      .returning();
+    return updated && rehashSkill(tx, updated);
+  });
 
   // The pre-checks above prove the row exists, but a concurrent delete can still
   // win the race between the check and the UPDATE; the Organization surface
@@ -204,33 +208,51 @@ export async function updateSkill(
  * Workspace-private: reusing the name of an attached Shared Skill creates this
  * Workspace's own version rather than editing the Organization's row. The scope
  * comes from `ctx`, never the body.
+ *
+ * Throws `LockedError` when the name resolves to a Shared Skill with bundled
+ * files: the Workspace version would carry none of them yet silently take
+ * precedence over the bundle, and forking a bundle is not supported yet
+ * (#1005). On the Workspace's own bundled Skill the files are kept and the
+ * hash recomputed.
  */
 export async function upsertSkill(
   ctx: ScopeContext,
   fields: { name: string; description: string; body: string },
 ): Promise<SkillRow> {
+  const existing = await resolveScopedByName(db, "skill", fields.name, ctx);
+  if (
+    existing?.scope === "organization" &&
+    (await listSkillFiles(db, existing.row.id)).length > 0
+  ) {
+    throw new LockedError(
+      `Skill '${fields.name}' is a shared skill with bundled files, and a workspace version of it can't be created yet`,
+    );
+  }
+
   const now = new Date();
-  const [row] = await db
-    .insert(skillTable)
-    .values({
-      id: nanoid(),
-      workspaceId: ctx.workspaceId,
-      name: fields.name,
-      description: fields.description,
-      body: fields.body,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [skillTable.workspaceId, skillTable.name],
-      set: {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(skillTable)
+      .values({
+        id: nanoid(),
+        workspaceId: ctx.workspaceId,
+        name: fields.name,
         description: fields.description,
         body: fields.body,
+        createdAt: now,
         updatedAt: now,
-      },
-    })
-    .returning();
-  return row;
+      })
+      .onConflictDoUpdate({
+        target: [skillTable.workspaceId, skillTable.name],
+        set: {
+          description: fields.description,
+          body: fields.body,
+          updatedAt: now,
+        },
+      })
+      .returning();
+    return rehashSkill(tx, row);
+  });
 }
 
 /**
@@ -271,6 +293,9 @@ export async function deleteSkill(
     await db
       .delete(skillTable)
       .where(workspaceScopedWhere("skill", skillId, scope.ctx.workspaceId));
+    await deleteStoredPrefix(
+      skillStorageKeyPrefix({ orgId: scope.ctx.orgId, skillId }),
+    );
     return;
   }
 
@@ -294,4 +319,7 @@ export async function deleteSkill(
   if (result.length === 0) {
     throw new NotFoundError("Skill not found");
   }
+  await deleteStoredPrefix(
+    skillStorageKeyPrefix({ orgId: scope.orgId, skillId }),
+  );
 }
