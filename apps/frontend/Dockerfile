@@ -16,8 +16,10 @@ WORKDIR /app
 ARG COREPACK_VERSION
 RUN npm install -g corepack@$COREPACK_VERSION && corepack enable pnpm
 
-# Copy monorepo files
+# Copy monorepo files. `patches/` holds the pnpm.patchedDependencies the root
+# package.json names; install fails without them.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json turbo.json .npmrc ./
+COPY patches ./patches
 # Copy package.json files for all workspaces
 COPY apps/frontend/package.json ./apps/frontend/
 COPY apps/backend/package.json ./apps/backend/
