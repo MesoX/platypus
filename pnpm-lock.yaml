@@ -331,6 +331,9 @@ importers:
       '@streamdown/code':
         specifier: ^2.0.0
         version: 2.0.0(react@19.3.0)
+      '@streamdown/mermaid':
+        specifier: ^1.0.3
+        version: 1.0.3(react@19.3.0)
       ai:
         specifier: ^7.0.113
         version: 7.0.113(zod@4.6.5)
@@ -1249,11 +1252,11 @@ packages:
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild-kit/esm-loader@2.6.5':
     resolution: {integrity: sha512-FxEMIkJKnodyA1OaCUoEvbYRkoZlLZ4d/eXFu9Fh8CbBBgP5EmZxrfTRyN0qpXZ4vOvqnE5YdRdcrmUUXuU+dA==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -3511,6 +3514,11 @@ packages:
   '@streamdown/code@2.0.0':
     resolution: {integrity: sha512-sSyX/9gOOcivbP7204+sfAam+gotxjUNV+T4EuN3aa6i5x1LaqtB6Ln/Mxzd1XGvm0vNApO4oKLZs+7gzFI1kQ==}
     engines: {node: '>=20'}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+
+  '@streamdown/mermaid@1.0.3':
+    resolution: {integrity: sha512-TgdL9Evm4CiaBaADjQVCaXe5eEZpJpTZ7JYw/OY1OO2JCmlc/6DN2DISXj+KUYAzRw+GgJioCoorpuCN/OIXyA==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
 
@@ -11050,6 +11058,11 @@ snapshots:
     dependencies:
       react: 19.3.0
       shiki: 4.5.0
+
+  '@streamdown/mermaid@1.0.3(react@19.3.0)':
+    dependencies:
+      mermaid: 11.17.2
+      react: 19.3.0
 
   '@swc/helpers@0.5.23':
     dependencies:
