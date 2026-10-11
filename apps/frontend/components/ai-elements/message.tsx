@@ -15,6 +15,7 @@ import type { FileUIPart, UIMessage } from "ai";
 import { PaperclipIcon, XIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
 import { memo } from "react";
+import { code } from "@streamdown/code";
 import { mermaid } from "@streamdown/mermaid";
 import { Streamdown } from "streamdown";
 
@@ -124,7 +125,7 @@ export const MessageResponse = memo(
       <Streamdown
         linkSafety={linkSafety}
         controls={controls}
-        plugins={{ mermaid }}
+        plugins={{ code, mermaid }}
         {...props}
         className={cn(
           "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
