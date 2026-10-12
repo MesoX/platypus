@@ -3295,9 +3295,11 @@ export const a2aTokenSchema = z.object({
 
 export type A2aToken = z.infer<typeof a2aTokenSchema>;
 
-/** A row of a Workspace's endpoint list: the endpoint and its Agent's name. */
+/** A row of a Workspace's endpoint list: the endpoint, its Agent's name and its live token count. */
 export const a2aEndpointListItemSchema = a2aEndpointSchema.extend({
   agentName: z.string(),
+  /** Its tokens that have not expired; `0` means no client can call it. */
+  liveTokenCount: z.number().int().nonnegative(),
 });
 
 export type A2aEndpointListItem = z.infer<typeof a2aEndpointListItemSchema>;
