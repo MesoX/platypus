@@ -8,7 +8,10 @@ import { mcpCreateSchema, mcpUpdateSchema } from "@platypus/schemas";
 import type { ScopeContext } from "../scope.ts";
 import { NotFoundError } from "../errors.ts";
 import { scrubDeletedAgentReference } from "./agent-references.ts";
-import { OAUTH_TOKEN_CLEAR_FIELDS } from "./mcp-connection.ts";
+import {
+  OAUTH_CLIENT_CLEAR_FIELDS,
+  OAUTH_TOKEN_CLEAR_FIELDS,
+} from "./mcp-oauth-provider.ts";
 import { assertMcpSlugAvailable, deriveMcpSlug } from "./mcp-namespace.ts";
 import {
   orgScopedWhere,
@@ -104,7 +107,7 @@ const CONNECTION_FIELDS = [
  * server-specific and would otherwise be sent to whatever server now sits at
  * the new URL — while the DCR/static `oauthClientId`/`oauthClientSecret` are
  * also cleared, matching what both routes did inline before this module
- * existed.
+ * existed. A changed `oauthClientId` clears the tokens as well.
  */
 export async function updateMcp(
   scope: McpScope,
@@ -134,6 +137,11 @@ export async function updateMcp(
   }
 
   const urlChanged = existing.url !== fields.url;
+  // Tokens are issued to one client, so a new client ID needs a new sign-in.
+  // The form sends "" for no client ID, which the row may hold as null.
+  const clientIdChanged =
+    fields.oauthClientId !== undefined &&
+    (fields.oauthClientId || null) !== (existing.oauthClientId || null);
   // A different endpoint or credential can mean a different tool list, so the
   // Last-known tool listing is only good for the connection it was fetched
   // over (ADR-0029). An omitted field is left as it is by the write, so it is
@@ -154,11 +162,9 @@ export async function updateMcp(
     .set({
       ...fields,
       slug,
-      ...(urlChanged && {
-        ...OAUTH_TOKEN_CLEAR_FIELDS,
-        oauthClientId: null,
-        oauthClientSecret: null,
-      }),
+      ...((urlChanged || clientIdChanged) && OAUTH_TOKEN_CLEAR_FIELDS),
+      ...(clientIdChanged && { oauthClientDynamicallyRegistered: false }),
+      ...(urlChanged && OAUTH_CLIENT_CLEAR_FIELDS),
       ...(connectionChanged && {
         lastKnownToolListing: null,
         lastKnownToolListingFetchedAt: null,

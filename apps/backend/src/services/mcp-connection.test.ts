@@ -36,6 +36,8 @@ const baseMcp: McpRecord = {
   bearerToken: null,
   oauthClientId: null,
   oauthClientSecret: null,
+  oauthClientDynamicallyRegistered: false,
+  oauthAuthorizationServer: null,
   oauthRequestedScope: null,
   lastKnownToolListing: null,
   lastKnownToolListingFetchedAt: null,
@@ -223,7 +225,7 @@ describe("mcp-connection", () => {
   });
 
   describe("clearOAuthTokens", () => {
-    it("nulls the four oauth token columns for the given where clause", async () => {
+    it("nulls the oauth token columns for the given where clause", async () => {
       mockDb.returning.mockResolvedValueOnce([{ id: "mcp-1" }]);
 
       await clearOAuthTokens(asDb(mockDb), someWhere);
@@ -234,6 +236,7 @@ describe("mcp-connection", () => {
           oauthRefreshToken: null,
           oauthTokenExpiresAt: null,
           oauthScope: null,
+          oauthAuthorizationServer: null,
         }),
       );
     });
@@ -290,6 +293,36 @@ describe("mcp-connection", () => {
         kind: "redirect",
         authorizationUrl: "https://provider.example.com/authorize?x=1",
       });
+    });
+
+    it.each([
+      ["drops a dynamically registered client", true],
+      ["keeps an Operator-entered client", false],
+    ])("on force, %s", async (_label, dynamicallyRegistered) => {
+      vi.mocked(mcpAuth).mockResolvedValueOnce("AUTHORIZED");
+      mockDb.returning.mockResolvedValueOnce([]);
+
+      await authorizeMcpOAuth(
+        asDb(mockDb),
+        {
+          ...baseMcp,
+          authType: "OAuth",
+          oauthClientId: "client-1",
+          oauthClientDynamicallyRegistered: dynamicallyRegistered,
+        },
+        { force: true, clearTokensWhere: someWhere },
+      );
+
+      const clientCleared: unknown = expect.objectContaining({
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthClientDynamicallyRegistered: false,
+      });
+      if (dynamicallyRegistered) {
+        expect(mockDb.set).toHaveBeenCalledWith(clientCleared);
+      } else {
+        expect(mockDb.set).not.toHaveBeenCalledWith(clientCleared);
+      }
     });
 
     it("reports alreadyAuthorized without clearing tokens when not forced", async () => {

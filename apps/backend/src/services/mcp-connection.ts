@@ -13,6 +13,8 @@ import {
   oauthFetchFn,
   buildOAuthCallbackUrl,
   buildMcpTransportConfig,
+  OAUTH_CLIENT_CLEAR_FIELDS,
+  OAUTH_TOKEN_CLEAR_FIELDS,
   type McpRecord,
 } from "./mcp-oauth-provider.ts";
 import { resolveMcpTestToolNames } from "./mcp-test-tools.ts";
@@ -51,13 +53,7 @@ import { withDeadline } from "../utils/abort-race.ts";
  *   the bare 404 that used to deny the row's existence.
  */
 
-/** Fields to null-out when clearing OAuth tokens. */
-export const OAUTH_TOKEN_CLEAR_FIELDS = {
-  oauthAccessToken: null,
-  oauthRefreshToken: null,
-  oauthTokenExpiresAt: null,
-  oauthScope: null,
-} as const;
+export { OAUTH_TOKEN_CLEAR_FIELDS };
 
 type Database = typeof db;
 
@@ -195,7 +191,7 @@ export type McpOAuthAuthorizeResult =
   | { kind: "error"; message: string; status: 400 | 500 };
 
 /**
- * Clears the four OAuth token columns for the row(s) matching `where` — the
+ * Clears the OAuth token columns for the row(s) matching `where` — the
  * single spelling of the `force=true` reauthorize choreography and the
  * `/oauth/revoke` handler, so both surfaces share the null-patch and neither
  * hand-rolls it again. Returns the updated rows so a caller that needs the
@@ -219,8 +215,8 @@ export const clearOAuthTokens = (
  * "Reauthorize" even when Platypus still holds a valid refresh token (the SDK
  * would otherwise silently refresh and report `AUTHORIZED`, which the
  * frontend currently shows as a failure because no authorizationUrl is
- * returned). The DCR/static `oauthClientId`/`oauthClientSecret` are preserved
- * so the same OAuth client is reused.
+ * returned). A static `oauthClientId`/`oauthClientSecret` is preserved; a
+ * dynamically registered one is dropped and registered again.
  */
 export const authorizeMcpOAuth = async (
   database: Database,
@@ -243,6 +239,15 @@ export const authorizeMcpOAuth = async (
   if (opts.force) {
     await clearOAuthTokens(database, opts.clearTokensWhere);
     record = { ...record, ...OAUTH_TOKEN_CLEAR_FIELDS };
+    // A client the library registered is registered again, so an MCP whose
+    // server moved to another authorization server gets a client it knows.
+    if (record.oauthClientDynamicallyRegistered) {
+      await database
+        .update(mcpTable)
+        .set({ ...OAUTH_CLIENT_CLEAR_FIELDS, updatedAt: new Date() })
+        .where(opts.clearTokensWhere);
+      record = { ...record, ...OAUTH_CLIENT_CLEAR_FIELDS };
+    }
   }
 
   try {

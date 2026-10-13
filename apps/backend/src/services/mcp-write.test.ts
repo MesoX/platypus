@@ -132,6 +132,7 @@ describe("mcp write model", () => {
         oauthScope: null,
         oauthClientId: null,
         oauthClientSecret: null,
+        oauthAuthorizationServer: null,
       });
     });
 
@@ -156,6 +157,47 @@ describe("mcp write model", () => {
       expect(set).not.toHaveProperty("oauthAccessToken");
       expect(set).not.toHaveProperty("oauthClientId");
     });
+
+    it.each([
+      ["a new client ID", "old-client", "new-client", true],
+      ["the same client ID", "old-client", "old-client", false],
+      ["an empty client ID over none", null, "", false],
+    ])(
+      "clears the OAuth tokens for %s",
+      async (_label, stored, sent, cleared) => {
+        mockDb.limit
+          .mockResolvedValueOnce([
+            {
+              id: "mcp-1",
+              workspaceId: "ws-1",
+              url: "http://mcp.example.com",
+              oauthClientId: stored,
+            },
+          ])
+          .mockResolvedValueOnce([]);
+        mockDb.returning.mockResolvedValueOnce([{ id: "mcp-1" }]);
+
+        await updateMcp({ kind: "workspace", ctx: workspaceCtx }, "mcp-1", {
+          ...updateFields(),
+          url: "http://mcp.example.com",
+          oauthClientId: sent,
+        });
+
+        const set = mockDb.set.mock.calls[0][0] as Record<string, unknown>;
+        if (cleared) {
+          expect(set).toMatchObject({
+            oauthAccessToken: null,
+            oauthRefreshToken: null,
+            oauthAuthorizationServer: null,
+            oauthClientId: sent,
+            oauthClientDynamicallyRegistered: false,
+          });
+        } else {
+          expect(set).not.toHaveProperty("oauthAccessToken");
+          expect(set).not.toHaveProperty("oauthClientDynamicallyRegistered");
+        }
+      },
+    );
 
     describe("the Last-known tool listing (ADR-0029)", () => {
       const existing = {
