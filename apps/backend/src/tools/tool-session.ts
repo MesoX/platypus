@@ -502,6 +502,10 @@ export const openToolSession = async (
     const openClient = async (): Promise<OpenMcpClient> => {
       const client = await createMCPClient({
         transport: buildMcpTransportConfig(mcp),
+        // Start with the legacy `initialize` handshake every server speaks. The
+        // 2026-07-28 `server/discover` probe throws, rather than falling back,
+        // when a server answers that it has modern serving disabled.
+        protocolVersionDiscovery: false,
       });
       // Once only, so a connection closed early — abandoned by a fetch that
       // failed on it — is not closed a second time by dispose.

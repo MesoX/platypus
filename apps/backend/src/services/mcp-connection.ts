@@ -109,6 +109,8 @@ export const probeMcpConnection = async (
       }
       opening = createMCPClient({
         transport: buildMcpTransportConfig(storedMcp),
+        // The same legacy handshake a Chat turn uses (see tool-session.ts).
+        protocolVersionDiscovery: false,
       });
     } else {
       opening = createMCPClient({
@@ -122,6 +124,7 @@ export const probeMcpConnection = async (
               : {}),
           },
         },
+        protocolVersionDiscovery: false,
       });
     }
 

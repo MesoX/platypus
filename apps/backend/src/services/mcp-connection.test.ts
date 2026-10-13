@@ -88,10 +88,14 @@ describe("mcp-connection", () => {
 
       const call = vi.mocked(createMCPClient).mock.calls[0]?.[0] as {
         transport: { headers?: Record<string, string> };
+        protocolVersionDiscovery?: boolean;
       };
       expect(call.transport.headers).toEqual(
         expect.objectContaining({ Authorization: "Bearer secret-token" }),
       );
+      // Legacy `initialize` first: a server with modern serving disabled
+      // makes the `server/discover` probe throw instead of falling back.
+      expect(call.protocolVersionDiscovery).toBe(false);
     });
 
     it("returns a 404 result when the OAuth mcpId has no resolved row", async () => {
