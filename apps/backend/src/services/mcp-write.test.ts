@@ -190,14 +190,42 @@ describe("mcp write model", () => {
             oauthRefreshToken: null,
             oauthAuthorizationServer: null,
             oauthClientId: sent,
+            // No secret sent: the stored one belonged to the old client.
+            oauthClientSecret: null,
             oauthClientDynamicallyRegistered: false,
           });
         } else {
           expect(set).not.toHaveProperty("oauthAccessToken");
+          expect(set).not.toHaveProperty("oauthClientSecret");
           expect(set).not.toHaveProperty("oauthClientDynamicallyRegistered");
         }
       },
     );
+
+    it("keeps a secret sent with a new client ID", async () => {
+      mockDb.limit
+        .mockResolvedValueOnce([
+          {
+            id: "mcp-1",
+            workspaceId: "ws-1",
+            url: "http://mcp.example.com",
+            oauthClientId: "old-client",
+          },
+        ])
+        .mockResolvedValueOnce([]);
+      mockDb.returning.mockResolvedValueOnce([{ id: "mcp-1" }]);
+
+      await updateMcp({ kind: "workspace", ctx: workspaceCtx }, "mcp-1", {
+        ...updateFields(),
+        oauthClientId: "new-client",
+        oauthClientSecret: "new-secret",
+      });
+
+      expect(mockDb.set.mock.calls[0][0]).toMatchObject({
+        oauthClientId: "new-client",
+        oauthClientSecret: "new-secret",
+      });
+    });
 
     describe("the Last-known tool listing (ADR-0029)", () => {
       const existing = {

@@ -239,9 +239,29 @@ describe("McpForm save payload", () => {
       name: "Docs",
       url: "http://mcp.test",
       authType: "OAuth",
-      oauthClientId: "client-id",
+      // Unedited, so not sent: a sign-in may have registered a newer one.
       oauthRequestedScope: "calendar email",
     });
+  });
+
+  it("sends a Client ID the user edited", async () => {
+    setData({
+      id: "m1",
+      name: "Docs",
+      url: "http://mcp.test",
+      authType: "OAuth",
+      oauthClientId: "client-id",
+    } as unknown as MCP);
+    const fetchMock = stubAcceptedSave({ id: "m1" });
+    render(<McpForm orgId="org1" mcpId="m1" />);
+
+    fireEvent.change(screen.getByLabelText("Client ID"), {
+      target: { value: "new-client" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(savedBody(fetchMock)).toMatchObject({ oauthClientId: "new-client" });
   });
 });
 

@@ -164,6 +164,10 @@ export async function updateMcp(
       slug,
       ...((urlChanged || clientIdChanged) && OAUTH_TOKEN_CLEAR_FIELDS),
       ...(clientIdChanged && { oauthClientDynamicallyRegistered: false }),
+      // A blank secret field means "keep", but the kept secret belonged to the
+      // old client.
+      ...(clientIdChanged &&
+        fields.oauthClientSecret === undefined && { oauthClientSecret: null }),
       ...(urlChanged && OAUTH_CLIENT_CLEAR_FIELDS),
       ...(connectionChanged && {
         lastKnownToolListing: null,

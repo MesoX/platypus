@@ -145,6 +145,10 @@ const McpForm = ({
   };
   useEffect(() => stopPopupPoll, []);
   const [isRevoking, setIsRevoking] = useState(false);
+  // The Client ID the form was seeded with; only an edit of it is saved. A
+  // sign-in may since have registered a client this form never saw, and saving
+  // the stale value over it would sign the MCP out.
+  const seededClientId = useRef("");
 
   const router = useRouter();
 
@@ -189,19 +193,22 @@ const McpForm = ({
     id: mcpId,
     // OAuth status is read from `mcp` itself, not seeded: Authorize/Revoke
     // revalidate the record, and that must not wipe unsaved edits.
-    fromRecord: (mcp) => ({
-      name: mcp.name,
-      url: mcp.url || "",
-      authType: mcp.authType,
-      bearerToken: mcp.bearerToken || "",
-      oauthClientId: mcp.oauthClientId || "",
-      oauthClientSecret: "",
-      oauthRequestedScope: mcp.oauthRequestedScope || "",
-      headerRows: Object.entries(mcp.headers ?? {}).map(([key, value]) => ({
-        key,
-        value,
-      })),
-    }),
+    fromRecord: (mcp) => {
+      seededClientId.current = mcp.oauthClientId || "";
+      return {
+        name: mcp.name,
+        url: mcp.url || "",
+        authType: mcp.authType,
+        bearerToken: mcp.bearerToken || "",
+        oauthClientId: seededClientId.current,
+        oauthClientSecret: "",
+        oauthRequestedScope: mcp.oauthRequestedScope || "",
+        headerRows: Object.entries(mcp.headers ?? {}).map(([key, value]) => ({
+          key,
+          value,
+        })),
+      };
+    },
     retractableFields: RETRACTABLE_FIELDS,
     buildPayload: (data) => ({
       // Scope discriminator — the backend routes also enforce this from the
@@ -212,7 +219,11 @@ const McpForm = ({
       headers: buildHeadersObject(),
       authType: data.authType,
       bearerToken: data.authType === "Bearer" ? data.bearerToken : undefined,
-      oauthClientId: data.authType === "OAuth" ? data.oauthClientId : undefined,
+      oauthClientId:
+        data.authType === "OAuth" &&
+        data.oauthClientId !== seededClientId.current
+          ? data.oauthClientId
+          : undefined,
       oauthClientSecret:
         data.authType === "OAuth" && data.oauthClientSecret
           ? data.oauthClientSecret

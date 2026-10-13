@@ -1,7 +1,4 @@
-import {
-  experimental_createMCPClient as createMCPClient,
-  auth as mcpAuth,
-} from "@ai-sdk/mcp";
+import { auth as mcpAuth } from "@ai-sdk/mcp";
 import { isDeepStrictEqual } from "node:util";
 import { eq, type SQL } from "drizzle-orm";
 import type { mcpTestSchema } from "@platypus/schemas";
@@ -13,6 +10,7 @@ import {
   oauthFetchFn,
   buildOAuthCallbackUrl,
   buildMcpTransportConfig,
+  openMcpClient,
   OAUTH_CLIENT_CLEAR_FIELDS,
   OAUTH_TOKEN_CLEAR_FIELDS,
   type McpRecord,
@@ -53,8 +51,6 @@ import { withDeadline } from "../utils/abort-race.ts";
  *   the bare 404 that used to deny the row's existence.
  */
 
-export { OAUTH_TOKEN_CLEAR_FIELDS };
-
 type Database = typeof db;
 
 export type McpTestInput = z.infer<typeof mcpTestSchema>;
@@ -93,7 +89,7 @@ export const probeMcpConnection = async (
   data: McpTestInput,
   storedMcp: McpRecord | null,
 ): Promise<McpProbeResult> => {
-  let opening: ReturnType<typeof createMCPClient> | undefined;
+  let opening: ReturnType<typeof openMcpClient> | undefined;
 
   try {
     if (data.authType === "OAuth" && data.mcpId) {
@@ -107,24 +103,17 @@ export const probeMcpConnection = async (
           status: 400,
         };
       }
-      opening = createMCPClient({
-        transport: buildMcpTransportConfig(storedMcp),
-        // The same legacy handshake a Chat turn uses (see tool-session.ts).
-        protocolVersionDiscovery: false,
-      });
+      opening = openMcpClient(buildMcpTransportConfig(storedMcp));
     } else {
-      opening = createMCPClient({
-        transport: {
-          type: "http",
-          url: data.url,
-          headers: {
-            ...data.headers,
-            ...(data.authType === "Bearer"
-              ? { Authorization: `Bearer ${data.bearerToken}` }
-              : {}),
-          },
+      opening = openMcpClient({
+        type: "http",
+        url: data.url,
+        headers: {
+          ...data.headers,
+          ...(data.authType === "Bearer"
+            ? { Authorization: `Bearer ${data.bearerToken}` }
+            : {}),
         },
-        protocolVersionDiscovery: false,
       });
     }
 
@@ -199,15 +188,20 @@ export type McpOAuthAuthorizeResult =
  * `/oauth/revoke` handler, so both surfaces share the null-patch and neither
  * hand-rolls it again. Returns the updated rows so a caller that needs the
  * refreshed value (the `force` branch of {@link authorizeMcpOAuth}) does not
- * re-read.
+ * re-read. `dropClient` also drops the OAuth client registration.
  */
 export const clearOAuthTokens = (
   database: Database,
   where: SQL,
+  dropClient = false,
 ): Promise<McpRecord[]> =>
   database
     .update(mcpTable)
-    .set({ ...OAUTH_TOKEN_CLEAR_FIELDS, updatedAt: new Date() })
+    .set({
+      ...OAUTH_TOKEN_CLEAR_FIELDS,
+      ...(dropClient && OAUTH_CLIENT_CLEAR_FIELDS),
+      updatedAt: new Date(),
+    })
     .where(where)
     .returning();
 
@@ -240,17 +234,15 @@ export const authorizeMcpOAuth = async (
 
   let record = mcpRecord;
   if (opts.force) {
-    await clearOAuthTokens(database, opts.clearTokensWhere);
-    record = { ...record, ...OAUTH_TOKEN_CLEAR_FIELDS };
     // A client the library registered is registered again, so an MCP whose
     // server moved to another authorization server gets a client it knows.
-    if (record.oauthClientDynamicallyRegistered) {
-      await database
-        .update(mcpTable)
-        .set({ ...OAUTH_CLIENT_CLEAR_FIELDS, updatedAt: new Date() })
-        .where(opts.clearTokensWhere);
-      record = { ...record, ...OAUTH_CLIENT_CLEAR_FIELDS };
-    }
+    const dropClient = record.oauthClientDynamicallyRegistered;
+    await clearOAuthTokens(database, opts.clearTokensWhere, dropClient);
+    record = {
+      ...record,
+      ...OAUTH_TOKEN_CLEAR_FIELDS,
+      ...(dropClient && OAUTH_CLIENT_CLEAR_FIELDS),
+    };
   }
 
   try {
