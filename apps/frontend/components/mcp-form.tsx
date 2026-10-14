@@ -145,9 +145,9 @@ const McpForm = ({
   };
   useEffect(() => stopPopupPoll, []);
   const [isRevoking, setIsRevoking] = useState(false);
-  // The Client ID the form was seeded with; only an edit of it is saved. A
-  // sign-in may since have registered a client this form never saw, and saving
-  // the stale value over it would sign the MCP out.
+  // The Client ID the form was seeded with or last saved; only an edit of it
+  // is saved. A sign-in may since have registered a client this form never
+  // saw, and saving the stale value over it would sign the MCP out.
   const seededClientId = useRef("");
 
   const router = useRouter();
@@ -177,7 +177,11 @@ const McpForm = ({
     handleChange: onFieldChange,
     toFieldChange: toFieldChangeBase,
     submit,
-  } = useEntityForm<McpFormData, { id: string }, McpRecord>({
+  } = useEntityForm<
+    McpFormData,
+    { id: string; oauthClientId?: string | null },
+    McpRecord
+  >({
     initialData: {
       name: "",
       url: "",
@@ -193,21 +197,21 @@ const McpForm = ({
     id: mcpId,
     // OAuth status is read from `mcp` itself, not seeded: Authorize/Revoke
     // revalidate the record, and that must not wipe unsaved edits.
-    fromRecord: (mcp) => {
+    fromRecord: (mcp) => ({
+      name: mcp.name,
+      url: mcp.url || "",
+      authType: mcp.authType,
+      bearerToken: mcp.bearerToken || "",
+      oauthClientId: mcp.oauthClientId || "",
+      oauthClientSecret: "",
+      oauthRequestedScope: mcp.oauthRequestedScope || "",
+      headerRows: Object.entries(mcp.headers ?? {}).map(([key, value]) => ({
+        key,
+        value,
+      })),
+    }),
+    onSeed: (mcp) => {
       seededClientId.current = mcp.oauthClientId || "";
-      return {
-        name: mcp.name,
-        url: mcp.url || "",
-        authType: mcp.authType,
-        bearerToken: mcp.bearerToken || "",
-        oauthClientId: seededClientId.current,
-        oauthClientSecret: "",
-        oauthRequestedScope: mcp.oauthRequestedScope || "",
-        headerRows: Object.entries(mcp.headers ?? {}).map(([key, value]) => ({
-          key,
-          value,
-        })),
-      };
     },
     retractableFields: RETRACTABLE_FIELDS,
     buildPayload: (data) => ({
@@ -291,6 +295,14 @@ const McpForm = ({
    */
   const saveMcp = async (): Promise<string | null> => {
     const saved = await submit({ silent: true });
+    // The form stays open after Authorize's save, so it takes the Client ID
+    // the backend stored, not the one it sent: a new URL clears the client
+    // while the field still shows it.
+    if (saved) {
+      const stored = saved.oauthClientId ?? "";
+      seededClientId.current = stored;
+      setFormData((prev) => ({ ...prev, oauthClientId: stored }));
+    }
     return saved?.id ?? null;
   };
 

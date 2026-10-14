@@ -1,6 +1,6 @@
 import { auth as mcpAuth } from "@ai-sdk/mcp";
 import { isDeepStrictEqual } from "node:util";
-import { eq, type SQL } from "drizzle-orm";
+import { and, eq, type SQL } from "drizzle-orm";
 import type { mcpTestSchema } from "@platypus/schemas";
 import type { z } from "zod";
 import { db } from "../index.ts";
@@ -180,7 +180,7 @@ export const probeMcpConnection = async (
 export type McpOAuthAuthorizeResult =
   | { kind: "redirect"; authorizationUrl: string }
   | { kind: "alreadyAuthorized" }
-  | { kind: "error"; message: string; status: 400 | 500 };
+  | { kind: "error"; message: string; status: 400 | 404 | 500 };
 
 /**
  * Clears the OAuth token columns for the row(s) matching `where` — the
@@ -188,22 +188,30 @@ export type McpOAuthAuthorizeResult =
  * `/oauth/revoke` handler, so both surfaces share the null-patch and neither
  * hand-rolls it again. Returns the updated rows so a caller that needs the
  * refreshed value (the `force` branch of {@link authorizeMcpOAuth}) does not
- * re-read. `dropClient` also drops the OAuth client registration.
+ * re-read. `dropRegisteredClient` also drops a dynamically registered client.
  */
-export const clearOAuthTokens = (
+export const clearOAuthTokens = async (
   database: Database,
   where: SQL,
-  dropClient = false,
+  dropRegisteredClient = false,
 ): Promise<McpRecord[]> =>
-  database
-    .update(mcpTable)
-    .set({
-      ...OAUTH_TOKEN_CLEAR_FIELDS,
-      ...(dropClient && OAUTH_CLIENT_CLEAR_FIELDS),
-      updatedAt: new Date(),
-    })
-    .where(where)
-    .returning();
+  // One transaction: a row left with tokens but no client would refresh with
+  // a client the tokens were never issued to.
+  database.transaction(async (tx) => {
+    if (dropRegisteredClient) {
+      // Decided by the row as it is now, not as the caller loaded it: an
+      // Operator may have entered a client of their own since.
+      await tx
+        .update(mcpTable)
+        .set({ ...OAUTH_CLIENT_CLEAR_FIELDS, updatedAt: new Date() })
+        .where(and(where, eq(mcpTable.oauthClientDynamicallyRegistered, true)));
+    }
+    return tx
+      .update(mcpTable)
+      .set({ ...OAUTH_TOKEN_CLEAR_FIELDS, updatedAt: new Date() })
+      .where(where)
+      .returning();
+  });
 
 /**
  * Runs the OAuth authorize choreography for an already-resolved, visible MCP
@@ -236,13 +244,16 @@ export const authorizeMcpOAuth = async (
   if (opts.force) {
     // A client the library registered is registered again, so an MCP whose
     // server moved to another authorization server gets a client it knows.
-    const dropClient = record.oauthClientDynamicallyRegistered;
-    await clearOAuthTokens(database, opts.clearTokensWhere, dropClient);
-    record = {
-      ...record,
-      ...OAUTH_TOKEN_CLEAR_FIELDS,
-      ...(dropClient && OAUTH_CLIENT_CLEAR_FIELDS),
-    };
+    const [cleared] = await clearOAuthTokens(
+      database,
+      opts.clearTokensWhere,
+      true,
+    );
+    // Deleted or moved since it was resolved.
+    if (!cleared) {
+      return { kind: "error", message: "MCP not found", status: 404 };
+    }
+    record = cleared;
   }
 
   try {

@@ -202,7 +202,22 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
           }),
         updatedAt: new Date(),
       })
-      .where(eq(mcpTable.id, this.mcpRecord.id));
+      .where(
+        // A refresh writes only over the sign-in it refreshed: a sign-out or
+        // Client ID change since must not get the old client's tokens back.
+        // A code exchange read no tokens and starts a new sign-in.
+        this._refreshTokenRead
+          ? this.sameSignIn(this._refreshTokenRead)
+          : eq(mcpTable.id, this.mcpRecord.id),
+      );
+  }
+
+  /** This MCP, while it still holds the sign-in `refreshToken` belongs to. */
+  private sameSignIn(refreshToken: string) {
+    return and(
+      eq(mcpTable.id, this.mcpRecord.id),
+      eq(mcpTable.oauthRefreshToken, refreshToken),
+    );
   }
 
   async clientInformation() {
@@ -243,12 +258,7 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
         ...(scope !== "tokens" && OAUTH_CLIENT_CLEAR_FIELDS),
         updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(mcpTable.id, this.mcpRecord.id),
-          eq(mcpTable.oauthRefreshToken, this._refreshTokenRead),
-        ),
-      );
+      .where(this.sameSignIn(this._refreshTokenRead));
   }
 
   // @ai-sdk/mcp refuses the code exchange and token refresh without a record
@@ -266,7 +276,8 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
     const record = await this.oauthRow();
     if (record?.oauthAuthorizationServer)
       return record.oauthAuthorizationServer;
-    if (record?.oauthRefreshToken) return this.adoptAuthorizationServer(record);
+    if (record?.oauthRefreshToken)
+      return this.adoptAuthorizationServer(record, record.oauthRefreshToken);
     return undefined;
   }
 
@@ -294,7 +305,10 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
    * that server, and kept only when it agrees with that server.
    */
   // ponytail: one-off backfill; delete once no OAuth MCP with a refresh token has a NULL oauth_authorization_server.
-  private async adoptAuthorizationServer(record: OAuthClientColumns) {
+  private async adoptAuthorizationServer(
+    record: OAuthClientColumns,
+    refreshToken: string,
+  ) {
     const client = toClientInformation(record);
     if (!client || !this._authorizationServerUrl) return undefined;
     let adopted: OAuthAuthorizationServerInformation | undefined;
@@ -324,11 +338,16 @@ export class DatabaseOAuthClientProvider implements OAuthClientProvider {
     ) {
       return undefined;
     }
-    await db
+    // Only onto the sign-in it was discovered for: one that finished meanwhile
+    // already holds its own record, and the refresh token in hand is spent.
+    // Refreshing with it anyway would trip reuse detection and revoke the new
+    // sign-in too.
+    const updated = await db
       .update(mcpTable)
       .set({ oauthAuthorizationServer: adopted })
-      .where(eq(mcpTable.id, this.mcpRecord.id));
-    return adopted;
+      .where(this.sameSignIn(refreshToken))
+      .returning({ id: mcpTable.id });
+    return updated.length ? adopted : undefined;
   }
 
   redirectToAuthorization(authorizationUrl: URL) {

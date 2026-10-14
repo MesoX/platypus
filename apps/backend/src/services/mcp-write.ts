@@ -100,6 +100,40 @@ const CONNECTION_FIELDS = [
 ] as const satisfies ReadonlyArray<keyof McpUpdateFields & keyof McpRow>;
 
 /**
+ * The OAuth columns a save resets, spread after the saved fields so it wins
+ * over them. Tokens are issued to one client at one server, so a new URL or
+ * Client ID needs a new sign-in.
+ */
+const oauthResetPatch = (existing: McpRow, fields: McpUpdateFields) => {
+  // The old client belongs to the old server too; one entered in this same
+  // save is for the new server and is kept.
+  if (existing.url !== fields.url) {
+    return {
+      ...OAUTH_TOKEN_CLEAR_FIELDS,
+      ...OAUTH_CLIENT_CLEAR_FIELDS,
+      ...(fields.oauthClientId !== undefined && {
+        oauthClientId: fields.oauthClientId,
+      }),
+      ...(fields.oauthClientSecret !== undefined && {
+        oauthClientSecret: fields.oauthClientSecret,
+      }),
+    };
+  }
+  // The form sends "" for no client ID, which the row may hold as null.
+  const clientIdChanged =
+    fields.oauthClientId !== undefined &&
+    (fields.oauthClientId || null) !== (existing.oauthClientId || null);
+  if (!clientIdChanged) return {};
+  return {
+    ...OAUTH_TOKEN_CLEAR_FIELDS,
+    oauthClientDynamicallyRegistered: false,
+    // A blank secret field means "keep", but the kept secret belonged to the
+    // old client.
+    ...(fields.oauthClientSecret === undefined && { oauthClientSecret: null }),
+  };
+};
+
+/**
  * Updates an MCP at the given scope. Throws `NotFoundError` when the MCP is
  * not visible at this scope, and (Workspace scope only) `LockedError` when it
  * is a Shared MCP edited only on the Organization surface (ADR-0007). If the
@@ -136,12 +170,6 @@ export async function updateMcp(
     orgId = scope.orgId;
   }
 
-  const urlChanged = existing.url !== fields.url;
-  // Tokens are issued to one client, so a new client ID needs a new sign-in.
-  // The form sends "" for no client ID, which the row may hold as null.
-  const clientIdChanged =
-    fields.oauthClientId !== undefined &&
-    (fields.oauthClientId || null) !== (existing.oauthClientId || null);
   // A different endpoint or credential can mean a different tool list, so the
   // Last-known tool listing is only good for the connection it was fetched
   // over (ADR-0029). An omitted field is left as it is by the write, so it is
@@ -162,13 +190,7 @@ export async function updateMcp(
     .set({
       ...fields,
       slug,
-      ...((urlChanged || clientIdChanged) && OAUTH_TOKEN_CLEAR_FIELDS),
-      ...(clientIdChanged && { oauthClientDynamicallyRegistered: false }),
-      // A blank secret field means "keep", but the kept secret belonged to the
-      // old client.
-      ...(clientIdChanged &&
-        fields.oauthClientSecret === undefined && { oauthClientSecret: null }),
-      ...(urlChanged && OAUTH_CLIENT_CLEAR_FIELDS),
+      ...oauthResetPatch(existing, fields),
       ...(connectionChanged && {
         lastKnownToolListing: null,
         lastKnownToolListingFetchedAt: null,

@@ -255,6 +255,27 @@ describe("mcp-oauth-provider", () => {
         );
       });
 
+      it("does not write a refresh back over a sign-out made meanwhile", async () => {
+        const fake = world({ oauthAccessToken: "a", oauthRefreshToken: "r" });
+        const p = provider();
+        await p.tokens();
+        Object.assign(row(fake, "mcp", "mcp-1")!, {
+          oauthAccessToken: null,
+          oauthRefreshToken: null,
+        });
+
+        await p.saveTokens({
+          access_token: "a2",
+          refresh_token: "r2",
+          token_type: "bearer",
+        });
+
+        expect(row(fake, "mcp", "mcp-1")).toMatchObject({
+          oauthAccessToken: null,
+          oauthRefreshToken: null,
+        });
+      });
+
       it("clears the optional token fields a refresh does not return", async () => {
         const fake = world({
           oauthRefreshToken: "old",
@@ -412,6 +433,30 @@ describe("mcp-oauth-provider", () => {
           // from the MCP without the resource metadata URL that call had.
           expect(vi.mocked(mcpAuth).mock.calls[0][1].serverUrl).toBe(
             info.authorizationServerUrl,
+          );
+        });
+
+        it("neither overwrites nor refreshes over a sign-in that finished during discovery", async () => {
+          const fake = world(legacy);
+          const newer = { ...info, tokenEndpoint: "https://new.example.com/t" };
+          vi.mocked(mcpAuth).mockImplementationOnce(async (stub) => {
+            Object.assign(row(fake, "mcp", "mcp-1")!, {
+              oauthRefreshToken: "r2",
+              oauthAuthorizationServer: newer,
+            });
+            await stub.saveAuthorizationServerInformation?.(info);
+            return "REDIRECT";
+          });
+
+          // undefined, so the library does not refresh with the spent token.
+          await expect(
+            refreshing(
+              info.authorizationServerUrl,
+            ).authorizationServerInformation(),
+          ).resolves.toBeUndefined();
+
+          expect(row(fake, "mcp", "mcp-1")?.oauthAuthorizationServer).toEqual(
+            newer,
           );
         });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { eq } from "drizzle-orm";
-import { mockDb, resetMockDb, asDb } from "../test-utils.ts";
+import { eq, type SQL } from "drizzle-orm";
+import { mockDb, resetMockDb, asDb, seedDb } from "../test-utils.ts";
+import { markerOperators } from "../fake-db.ts";
 import {
   experimental_createMCPClient as createMCPClient,
   auth as mcpAuth,
@@ -282,7 +283,9 @@ describe("mcp-connection", () => {
           return Promise.resolve("REDIRECT");
         },
       );
-      mockDb.returning.mockResolvedValueOnce([]);
+      mockDb.returning.mockResolvedValueOnce([
+        { ...baseMcp, authType: "OAuth" },
+      ]);
       const result = await authorizeMcpOAuth(
         asDb(mockDb),
         { ...baseMcp, authType: "OAuth" },
@@ -299,34 +302,73 @@ describe("mcp-connection", () => {
       });
     });
 
-    it.each([
-      ["drops a dynamically registered client", true],
-      ["keeps an Operator-entered client", false],
-    ])("on force, %s", async (_label, dynamicallyRegistered) => {
-      vi.mocked(mcpAuth).mockResolvedValueOnce("AUTHORIZED");
+    it("reports 404 without signing in when the MCP is gone before the force clear", async () => {
       mockDb.returning.mockResolvedValueOnce([]);
 
-      await authorizeMcpOAuth(
+      const result = await authorizeMcpOAuth(
         asDb(mockDb),
-        {
-          ...baseMcp,
-          authType: "OAuth",
-          oauthClientId: "client-1",
-          oauthClientDynamicallyRegistered: dynamicallyRegistered,
-        },
+        { ...baseMcp, authType: "OAuth" },
         { force: true, clearTokensWhere: someWhere },
       );
 
-      const clientCleared: unknown = expect.objectContaining({
-        oauthClientId: null,
-        oauthClientSecret: null,
+      expect(result).toEqual({
+        kind: "error",
+        message: "MCP not found",
+        status: 404,
+      });
+      expect(mcpAuth).not.toHaveBeenCalled();
+    });
+
+    // The loaded record says the opposite: the row as it is now decides, so a
+    // client an Operator entered after the load is never dropped.
+    it.each([
+      ["drops a dynamically registered client", true, null],
+      ["keeps an Operator-entered client", false, "client-1"],
+    ])("on force, %s", async (_label, dynamicallyRegistered, clientId) => {
+      vi.mocked(mcpAuth).mockResolvedValueOnce("AUTHORIZED");
+      const signedIn = {
+        ...baseMcp,
+        authType: "OAuth" as const,
+        oauthAccessToken: "a",
+        oauthClientId: "client-1",
+        oauthClientSecret: "secret-1",
+      };
+      const fake = seedDb({
+        mcp: [
+          {
+            ...signedIn,
+            oauthClientDynamicallyRegistered: dynamicallyRegistered,
+          },
+          { ...signedIn, id: "mcp-2", oauthClientDynamicallyRegistered: true },
+        ],
+      });
+
+      await authorizeMcpOAuth(
+        fake.handle as Parameters<typeof authorizeMcpOAuth>[0],
+        {
+          ...signedIn,
+          oauthClientDynamicallyRegistered: !dynamicallyRegistered,
+        },
+        {
+          force: true,
+          // A condition the fake can read, unlike the real `someWhere`.
+          clearTokensWhere: markerOperators().eq(
+            mcpTable.id,
+            "mcp-1",
+          ) as unknown as SQL,
+        },
+      );
+
+      const [mine, other] = fake.tables.mcp;
+      expect(mine).toMatchObject({
+        oauthAccessToken: null,
+        oauthClientId: clientId,
         oauthClientDynamicallyRegistered: false,
       });
-      if (dynamicallyRegistered) {
-        expect(mockDb.set).toHaveBeenCalledWith(clientCleared);
-      } else {
-        expect(mockDb.set).not.toHaveBeenCalledWith(clientCleared);
-      }
+      expect(other).toMatchObject({
+        oauthAccessToken: "a",
+        oauthClientId: "client-1",
+      });
     });
 
     it("reports alreadyAuthorized without clearing tokens when not forced", async () => {

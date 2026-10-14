@@ -136,6 +136,35 @@ describe("mcp write model", () => {
       });
     });
 
+    it("keeps a client entered for the new URL in the same save", async () => {
+      mockDb.limit
+        .mockResolvedValueOnce([
+          {
+            id: "mcp-1",
+            workspaceId: "ws-1",
+            url: "http://old.example.com",
+            oauthClientId: "old-client",
+          },
+        ]) // requireWorkspaceMutable
+        .mockResolvedValueOnce([]); // assertMcpSlugAvailable
+      mockDb.returning.mockResolvedValueOnce([{ id: "mcp-1" }]);
+
+      await updateMcp({ kind: "workspace", ctx: workspaceCtx }, "mcp-1", {
+        ...updateFields(),
+        url: "http://new.example.com",
+        oauthClientId: "new-client",
+        oauthClientSecret: "new-secret",
+      });
+
+      const set = mockDb.set.mock.calls[0][0] as Record<string, unknown>;
+      expect(set).toMatchObject({
+        oauthAccessToken: null,
+        oauthClientId: "new-client",
+        oauthClientSecret: "new-secret",
+        oauthClientDynamicallyRegistered: false,
+      });
+    });
+
     it("leaves OAuth tokens untouched when the URL is unchanged", async () => {
       mockDb.limit
         .mockResolvedValueOnce([
