@@ -10,11 +10,11 @@ import {
   oauthFetchFn,
   buildOAuthCallbackUrl,
   buildMcpTransportConfig,
-  openMcpClient,
   OAUTH_CLIENT_CLEAR_FIELDS,
   OAUTH_TOKEN_CLEAR_FIELDS,
   type McpRecord,
 } from "./mcp-oauth-provider.ts";
+import { openMcpClient } from "./mcp-client.ts";
 import { resolveMcpTestToolNames } from "./mcp-test-tools.ts";
 import { logger } from "../logger.ts";
 import { TOOL_SET_RESOLVE_TIMEOUT_MS } from "../tools/index.ts";

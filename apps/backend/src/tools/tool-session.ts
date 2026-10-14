@@ -13,10 +13,8 @@ import {
 import type { mcp as mcpTable } from "../db/schema.ts";
 import { logger } from "../logger.ts";
 import { CORE_BUILTIN_OWNER, getToolSetPlugin } from "../plugins/registry.ts";
-import {
-  buildMcpTransportConfig,
-  openMcpClient,
-} from "../services/mcp-oauth-provider.ts";
+import { openMcpClient } from "../services/mcp-client.ts";
+import { buildMcpTransportConfig } from "../services/mcp-oauth-provider.ts";
 import { normalizeToolResults } from "../services/tool-result.ts";
 import {
   CallerAbortedError,

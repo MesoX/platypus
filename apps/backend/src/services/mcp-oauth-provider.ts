@@ -1,7 +1,5 @@
 import {
   auth as mcpAuth,
-  experimental_createMCPClient as createMCPClient,
-  type MCPClientConfig,
   type OAuthAuthorizationServerInformation,
   type OAuthClientProvider,
   type OAuthTokens,
@@ -76,14 +74,6 @@ export const buildMcpTransportConfig = (mcp: McpRecord) => {
 
   return config;
 };
-
-/**
- * Opens a client on a live MCP server with the legacy `initialize` handshake
- * every server speaks. The 2026-07-28 `server/discover` probe throws, rather
- * than falling back, when a server answers that it has modern serving disabled.
- */
-export const openMcpClient = (transport: MCPClientConfig["transport"]) =>
-  createMCPClient({ transport, protocolVersionDiscovery: false });
 
 /**
  * Wraps the global fetch to work around a bug in @ai-sdk/mcp where
