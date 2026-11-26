@@ -1605,7 +1605,7 @@ const LIMIT_CLAIMS: LimitClaim[] = [
   },
   {
     doc: "building-with-platypus/agents.mdx",
-    anchor: "**Description** — a short summary",
+    anchor: "**Description** — what the Agent does",
     source: "packages/schemas/index.ts (agentSchema.description)",
     expected: stringField(agentSchema, "description"),
   },
