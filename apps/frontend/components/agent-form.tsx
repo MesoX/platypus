@@ -602,6 +602,7 @@ function AgentForm({
             disabled={isSubmitting || readOnly}
             maxLength={AGENT_DESCRIPTION_MAX_LENGTH}
             error={validationErrors.description}
+            description="What the agent does, what to give it and what it returns. Other agents read it before delegating, and it goes into the system prompt of every agent that uses this one as a sub-agent, so a longer description costs tokens on each of their turns."
           />
           <FormTextField
             label="Input Placeholder"
@@ -828,6 +829,7 @@ function AgentForm({
                       name={`subagent-${agent.id}`}
                       label={agent.name}
                       description={agent.description || "No description"}
+                      descriptionClassName="line-clamp-6"
                       leading={<AgentAvatar agent={agent} className="size-6" />}
                       checked={formData.subAgentIds.includes(agent.id)}
                       onCheckedChange={(checked) =>

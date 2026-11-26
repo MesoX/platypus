@@ -296,7 +296,7 @@ describe("Agent Routes", () => {
 
       const res = await send("POST", baseUrl, {
         ...createBody,
-        description: "a".repeat(129),
+        description: "a".repeat(1025),
       });
 
       expect(res.status).toBe(400);

@@ -261,6 +261,7 @@ function SkillForm({
                   name={`agent-${agent.id}`}
                   label={agent.name}
                   description={agent.description || "No description"}
+                  descriptionClassName="line-clamp-6"
                   leading={<AgentAvatar agent={agent} className="size-6" />}
                   checked={selectedAgentIds.includes(agent.id)}
                   onCheckedChange={(checked) =>

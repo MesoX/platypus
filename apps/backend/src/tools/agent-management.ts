@@ -31,7 +31,9 @@ export function createAgentManagementTools(
       "Create a new agent in the current workspace. Returns the created agent.",
     inputSchema: z.object({
       name: agentFields.name.describe("Agent display name"),
-      description: agentFields.description.describe("Short description"),
+      description: agentFields.description.describe(
+        "What the agent does, what input it expects and what it returns",
+      ),
       providerId: agentFields.providerId.describe("Provider ID to use"),
       modelId: agentFields.modelId.describe(MODEL_ID_DESCRIPTION),
       instructions: agentFields.instructions.describe(INSTRUCTIONS_DESCRIPTION),
@@ -82,7 +84,9 @@ export function createAgentManagementTools(
       name: agentFields.name.optional().describe("Agent display name"),
       description: agentFields.description
         .optional()
-        .describe("Short description"),
+        .describe(
+          "What the agent does, what input it expects and what it returns",
+        ),
       providerId: agentFields.providerId
         .optional()
         .describe("Provider ID to use"),
